@@ -844,8 +844,15 @@ def renew_client(server_id, inbound_id, email):
     volume_gb = int(data.get('volume_gb', 0))
     start_after_first_use = bool(data.get('start_after_first_use', False))
     
-    if days < 1 or days > 3650:
-        return jsonify({"success": False, "error": "Days must be between 1 and 3650"})
+    # When start_after_first_use is enabled, allow days=0 (expiry starts after first connection)
+    # Otherwise, days must be at least 1
+    if start_after_first_use:
+        if days < 0 or days > 3650:
+            return jsonify({"success": False, "error": "Days must be between 0 and 3650"})
+    else:
+        if days < 1 or days > 3650:
+            return jsonify({"success": False, "error": "Days must be between 1 and 3650"})
+    
     if volume_gb < 0 or volume_gb > 10000:
         return jsonify({"success": False, "error": "Volume must be between 0 and 10000 GB"})
     
