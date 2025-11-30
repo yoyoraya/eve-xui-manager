@@ -142,10 +142,8 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 - **Important**: Change these after first login!
 
 ## Recent Changes
-- November 2025: Added bilingual support (English/Persian) with language toggle
-- November 2025: Added Jalali/Shamsi date conversion for Persian calendar
+- November 2025: Removed bilingual support - English-only interface
 - November 2025: Compact inbound display (network, security, clients, traffic on one line)
-- November 2025: English set as default language with LTR/RTL support
 - November 2025: Added professional login system
 - November 2025: Implemented admin management page
 - November 2025: Added sidebar navigation
@@ -155,16 +153,9 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 - November 2025: Traffic display improved (upload/download combined)
 - November 2025: Mobile responsive design
 
-## Bilingual Support
-- Default language: English (LTR)
-- Secondary language: Persian/Farsi (RTL)
-- Language toggle in sidebar navigation
-- Session-based language preference via `/api/lang/<lang>` endpoint
-- Jalali/Persian calendar dates when using Persian language
-
 ## User Preferences
 - Dark theme preferred
-- Bilingual interface (English/Persian)
+- English-only interface (LTR)
 - Clean, modern design
 - Multi-server architecture
 - Professional authentication
