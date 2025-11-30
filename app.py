@@ -731,6 +731,77 @@ def test_server(server_id):
         "panel_type": detected_type
     })
 
+@app.route('/api/add-client', methods=['POST'])
+@login_required
+def add_client():
+    data = request.json
+    server_id = data.get('server_id')
+    inbound_id = data.get('inbound_id')
+    email = data.get('email', '').strip()
+    client_id = data.get('client_id', '').strip() if data.get('client_id') else None
+    
+    if not server_id or not inbound_id or not email:
+        return jsonify({"success": False, "error": "Missing required fields"}), 400
+    
+    server = Server.query.get_or_404(server_id)
+    session_obj, error = get_xui_session(server)
+    
+    if error:
+        return jsonify({"success": False, "error": f"Connection failed: {error}"})
+    
+    try:
+        # Check for duplicate email across all inbounds in this server
+        if server.panel_type == 'sanaei':
+            url = f"{server.host}/panel/api/inbounds/list"
+        else:
+            url = f"{server.host}/xui/API/inbounds/"
+        
+        response = session_obj.get(url, verify=False, timeout=10)
+        inbounds = response.json().get('obj', []) if server.panel_type == 'sanaei' else response.json().get('obj', [])
+        
+        for inbound in inbounds:
+            settings = json.loads(inbound.get('settings', '{}'))
+            clients = settings.get('clients', [])
+            for client in clients:
+                if client.get('email') == email:
+                    return jsonify({"success": False, "error": f"Email '{email}' already exists on this server"})
+        
+        # Create new client
+        new_client = {
+            "email": email,
+            "enable": True,
+            "expiryTime": 0,
+            "totalGB": 0,
+            "reset": 0
+        }
+        
+        if client_id:
+            new_client["password"] = client_id  # For Trojan
+            new_client["id"] = client_id  # For VLESS/VMESS
+        
+        if server.panel_type == 'sanaei':
+            url = f"{server.host}/panel/api/inbounds/addClient"
+            payload = {
+                "id": inbound_id,
+                "settings": json.dumps({"clients": [new_client]})
+            }
+        else:
+            url = f"{server.host}/xui/API/inbounds/addClient/"
+            payload = {
+                "id": inbound_id,
+                "settings": json.dumps({"clients": [new_client]})
+            }
+        
+        response = session_obj.post(url, json=payload, verify=False, timeout=10)
+        
+        if response.status_code == 200:
+            return jsonify({"success": True, "message": f"Client '{email}' created successfully"})
+        else:
+            return jsonify({"success": False, "error": f"Failed to create client: {response.text}"})
+    
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
