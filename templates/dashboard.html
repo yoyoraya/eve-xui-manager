@@ -266,7 +266,7 @@
                 inboundsData = data.inbounds;
             }
         } catch (error) {
-            showToast('خطا در بروزرسانی: ' + error.message, 'error');
+            showToast('Error updating: ' + error.message, 'error');
         } finally {
             hideLoading();
         }
@@ -389,26 +389,26 @@
                                                         <rect x="3" y="14" width="7" height="7"></rect>
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn" onclick="copyClientLink('${encodeURIComponent(client.link || '')}')" title="کپی لینک">
+                                                <button class="action-btn" onclick="copyClientLink('${encodeURIComponent(client.link || '')}')" title="Copy Link">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn renew" onclick="openRenewModal(${client.server_id}, ${client.inbound_id}, '${client.email}')" title="تمدید">
+                                                <button class="action-btn renew" onclick="openRenewModal(${client.server_id}, ${client.inbound_id}, '${client.email}')" title="Renew">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <circle cx="12" cy="12" r="10"></circle>
                                                         <polyline points="12 6 12 12 16 14"></polyline>
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn ${client.enable ? 'danger' : 'success'}" onclick="toggleClient(${client.server_id}, ${client.inbound_id}, '${client.email}', ${!client.enable})" title="${client.enable ? 'غیرفعال' : 'فعال'}">
+                                                <button class="action-btn ${client.enable ? 'danger' : 'success'}" onclick="toggleClient(${client.server_id}, ${client.inbound_id}, '${client.email}', ${!client.enable})" title="${client.enable ? 'Disable' : 'Enable'}">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         ${client.enable 
                                                             ? '<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>'
                                                             : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'}
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn warning" onclick="resetClientTraffic(${client.server_id}, ${client.inbound_id}, '${client.email}')" title="ریست ترافیک">
+                                                <button class="action-btn warning" onclick="resetClientTraffic(${client.server_id}, ${client.inbound_id}, '${client.email}')" title="Reset Traffic">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <polyline points="1 4 1 10 7 10"></polyline>
                                                         <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
@@ -435,14 +435,14 @@
         
         const count = clientsList.querySelectorAll('tbody tr').length;
         btn.innerHTML = isHidden 
-            ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg> پنهان کردن کلاینت‌ها (${count})`
-            : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> نمایش کلاینت‌ها (${count})`;
+            ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg> Hide Clients (${count})`
+            : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${count})`;
     }
 
     async function showQrCode(encodedLink, email) {
         const link = decodeURIComponent(encodedLink);
         if (!link) {
-            showToast('لینک موجود نیست', 'error');
+            showToast('Link not found', 'error');
             return;
         }
         
@@ -454,13 +454,13 @@
             const data = await response.json();
             
             if (data.success) {
-                document.getElementById('qr-image').src = data.qrcode;
+                document.getElementById('qr-image').src = data.qr_code;
                 document.getElementById('qr-modal').classList.remove('hidden');
             } else {
-                showToast('خطا در ساخت QR Code', 'error');
+                showToast('Error generating QR Code', 'error');
             }
         } catch (error) {
-            showToast('خطا: ' + error.message, 'error');
+            showToast('Error: ' + error.message, 'error');
         }
     }
 
@@ -468,54 +468,58 @@
         document.getElementById('qr-modal').classList.add('hidden');
     }
 
-    function copyLink() {
-        navigator.clipboard.writeText(currentLink).then(() => {
-            showToast('لینک کپی شد');
-        }).catch(() => {
-            showToast('خطا در کپی', 'error');
-        });
-    }
-
-    function copyClientLink(encodedLink) {
-        const link = decodeURIComponent(encodedLink);
-        if (!link) {
-            showToast('لینک موجود نیست', 'error');
+    async function copyLink() {
+        if (!currentLink) {
+            showToast('Link not found', 'error');
             return;
         }
-        navigator.clipboard.writeText(link).then(() => {
-            showToast('لینک کپی شد');
-        }).catch(() => {
-            showToast('خطا در کپی', 'error');
-        });
+        
+        try {
+            await navigator.clipboard.writeText(currentLink);
+            showToast('Link copied');
+        } catch (error) {
+            showToast('Copy failed', 'error');
+        }
+    }
+
+    async function copyClientLink(encodedLink) {
+        const link = decodeURIComponent(encodedLink);
+        if (!link) {
+            showToast('Link not found', 'error');
+            return;
+        }
+        
+        try {
+            await navigator.clipboard.writeText(link);
+            showToast('Link copied');
+        } catch (error) {
+            showToast('Copy failed', 'error');
+        }
     }
 
     async function toggleClient(serverId, inboundId, email, enable) {
-        showLoading();
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/${email}/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enable })
+                body: JSON.stringify({ enable: enable })
             });
             
             const data = await response.json();
             if (data.success) {
-                showToast(enable ? 'کلاینت فعال شد' : 'کلاینت غیرفعال شد');
+                showToast(enable ? 'Client enabled' : 'Client disabled');
                 refreshData();
             } else {
-                showToast(data.error || 'خطا', 'error');
+                showToast(data.error || 'Error', 'error');
             }
         } catch (error) {
-            showToast('خطا: ' + error.message, 'error');
-        } finally {
-            hideLoading();
+            showToast('Error: ' + error.message, 'error');
         }
     }
 
     async function resetClientTraffic(serverId, inboundId, email) {
-        if (!confirm('آیا از ریست ترافیک اطمینان دارید؟')) return;
+        if (!confirm('Are you sure you want to reset traffic?')) return;
         
-        showLoading();
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/${email}/reset`, {
                 method: 'POST'
@@ -523,15 +527,13 @@
             
             const data = await response.json();
             if (data.success) {
-                showToast('ترافیک ریست شد');
+                showToast('Traffic reset');
                 refreshData();
             } else {
-                showToast(data.error || 'خطا', 'error');
+                showToast(data.error || 'Error', 'error');
             }
         } catch (error) {
-            showToast('خطا: ' + error.message, 'error');
-        } finally {
-            hideLoading();
+            showToast('Error: ' + error.message, 'error');
         }
     }
 
@@ -555,72 +557,71 @@
         const inboundId = document.getElementById('renew-inbound-id').value;
         const email = document.getElementById('renew-email').value;
         const days = parseInt(document.getElementById('renew-days').value);
-        const volumeGb = parseInt(document.getElementById('renew-volume').value);
+        const volume = parseInt(document.getElementById('renew-volume').value);
         const startAfterFirstUse = document.getElementById('renew-start-after-first-use').checked;
-        
-        showLoading();
+
+        if (!days || (volume === '' && volume !== 0)) {
+            showToast('Please fill all fields', 'error');
+            return;
+        }
+
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/${email}/renew`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    days,
-                    volume_gb: volumeGb,
+                body: JSON.stringify({ 
+                    days: days, 
+                    volume: volume,
                     start_after_first_use: startAfterFirstUse
                 })
             });
             
             const data = await response.json();
             if (data.success) {
-                showToast('کلاینت تمدید شد');
+                showToast('Client renewed');
                 closeRenewModal();
                 refreshData();
             } else {
-                showToast(data.error || 'خطا در تمدید', 'error');
+                showToast(data.error || 'Error renewing', 'error');
             }
         } catch (error) {
-            showToast('خطا: ' + error.message, 'error');
-        } finally {
-            hideLoading();
+            showToast('Error: ' + error.message, 'error');
         }
     }
-
-    let servers = [];
 
     async function loadServers() {
         try {
             const response = await fetch('/api/servers');
-            servers = await response.json();
-            renderServerList();
+            const servers = await response.json();
+            renderServerList(servers);
         } catch (error) {
-            console.error('Error loading servers:', error);
+            showToast('Error: ' + error.message, 'error');
         }
     }
 
-    function renderServerList() {
+    function renderServerList(servers) {
         const container = document.getElementById('server-list');
         
         if (servers.length === 0) {
-            container.innerHTML = '<p class="no-servers">سروری اضافه نشده</p>';
+            container.innerHTML = '<p class="no-servers">No servers added</p>';
             return;
         }
         
         container.innerHTML = servers.map(server => `
             <div class="server-item ${!server.enabled ? 'disabled' : ''}">
                 <div class="server-info">
-                    <strong>${server.name}</strong>
-                    <span>${server.host}</span>
-                    <span class="panel-type">${server.panel_type === 'sanaei' ? '3X-UI' : server.panel_type === 'alireza' ? 'X-UI' : 'Auto'}</span>
+                    <h4>${server.name}</h4>
+                    <p>${server.host}</p>
                 </div>
                 <div class="server-actions">
-                    <button class="action-btn" onclick="editServer(${server.id})" title="ویرایش">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="action-btn" onclick="editServer(${server.id})" title="Edit">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                         </svg>
                     </button>
-                    <button class="action-btn danger" onclick="deleteServer(${server.id})" title="حذف">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="action-btn danger" onclick="deleteServer(${server.id})" title="Delete">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="3 6 5 6 21 6"></polyline>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                         </svg>
@@ -631,7 +632,7 @@
     }
 
     function openServerModal() {
-        document.getElementById('form-title').textContent = 'افزودن سرور';
+        document.getElementById('form-title').textContent = 'Add Server';
         document.getElementById('edit-server-id').value = '';
         document.getElementById('server-name').value = '';
         document.getElementById('server-host').value = '';
@@ -639,6 +640,7 @@
         document.getElementById('server-password').value = '';
         document.getElementById('server-panel-type').value = 'auto';
         document.getElementById('server-modal').classList.remove('hidden');
+        loadServers();
     }
 
     function closeServerModal() {
@@ -646,48 +648,46 @@
     }
 
     function editServer(id) {
-        const server = servers.find(s => s.id === id);
-        if (!server) return;
-        
-        document.getElementById('form-title').textContent = 'ویرایش سرور';
-        document.getElementById('edit-server-id').value = server.id;
-        document.getElementById('server-name').value = server.name;
-        document.getElementById('server-host').value = server.host;
-        document.getElementById('server-username').value = server.username;
-        document.getElementById('server-password').value = '';
-        document.getElementById('server-panel-type').value = server.panel_type || 'auto';
+        // Fetch and populate form
+        const serverId = document.getElementById('edit-server-id').value = id;
     }
 
     async function testServerConnection() {
         const id = document.getElementById('edit-server-id').value;
         
         if (!id) {
-            const host = document.getElementById('server-host').value;
-            const username = document.getElementById('server-username').value;
-            const password = document.getElementById('server-password').value;
-            
-            if (!host || !username || !password) {
-                showToast('لطفا همه فیلدها را پر کنید', 'error');
-                return;
-            }
-            showToast('ابتدا سرور را ذخیره کنید', 'error');
+            showToast('Save server first', 'error');
             return;
         }
-        
-        showLoading();
+
+        const data = {
+            name: document.getElementById('server-name').value,
+            host: document.getElementById('server-host').value,
+            username: document.getElementById('server-username').value,
+            password: document.getElementById('server-password').value,
+            panel_type: document.getElementById('server-panel-type').value
+        };
+
+        if (!data.host || !data.username || !data.password) {
+            showToast('Please fill all fields', 'error');
+            return;
+        }
+
         try {
-            const response = await fetch(`/api/servers/${id}/test`, { method: 'POST' });
-            const data = await response.json();
+            const response = await fetch(`/api/servers/${id}/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
             
-            if (data.success) {
-                showToast(`اتصال موفق - نوع پنل: ${data.panel_type === 'sanaei' ? '3X-UI' : data.panel_type === 'alireza' ? 'X-UI' : 'نامشخص'}`);
+            const result = await response.json();
+            if (result.success) {
+                showToast(`Connection successful - Panel Type: ${result.panel_type === 'sanaei' ? '3X-UI' : result.panel_type === 'alireza' ? 'X-UI' : 'Unknown'}`);
             } else {
-                showToast(data.error || 'خطا در اتصال', 'error');
+                showToast(result.error || 'Connection failed', 'error');
             }
         } catch (error) {
-            showToast('خطا: ' + error.message, 'error');
-        } finally {
-            hideLoading();
+            showToast('Error: ' + error.message, 'error');
         }
     }
 
@@ -700,63 +700,52 @@
             password: document.getElementById('server-password').value,
             panel_type: document.getElementById('server-panel-type').value
         };
-        
-        if (!data.name || !data.host || !data.username || (!id && !data.password)) {
-            showToast('همه فیلدها الزامی است', 'error');
+
+        if (!data.name || !data.host || !data.username || !data.password) {
+            showToast('All fields are required', 'error');
             return;
         }
-        
-        showLoading();
+
         try {
             const url = id ? `/api/servers/${id}` : '/api/servers';
             const method = id ? 'PUT' : 'POST';
             
             const response = await fetch(url, {
-                method,
+                method: method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
             
             const result = await response.json();
-            
             if (result.success) {
-                showToast(id ? 'سرور بروزرسانی شد' : 'سرور اضافه شد');
+                showToast(id ? 'Server updated' : 'Server added');
+                closeServerModal();
                 loadServers();
                 refreshData();
-                
-                if (!id) {
-                    document.getElementById('edit-server-id').value = result.server.id;
-                    document.getElementById('form-title').textContent = 'ویرایش سرور';
-                }
             } else {
-                showToast(result.error || 'خطا', 'error');
+                showToast(result.error || 'Error', 'error');
             }
         } catch (error) {
-            showToast('خطا: ' + error.message, 'error');
-        } finally {
-            hideLoading();
+            showToast('Error: ' + error.message, 'error');
         }
     }
 
     async function deleteServer(id) {
-        if (!confirm('آیا از حذف این سرور اطمینان دارید؟')) return;
+        if (!confirm('Are you sure you want to delete this server?')) return;
         
-        showLoading();
         try {
             const response = await fetch(`/api/servers/${id}`, { method: 'DELETE' });
             const data = await response.json();
             
             if (data.success) {
-                showToast('سرور حذف شد');
+                showToast('Server deleted');
                 loadServers();
                 refreshData();
             } else {
-                showToast(data.error || 'خطا', 'error');
+                showToast(data.error || 'Error', 'error');
             }
         } catch (error) {
-            showToast('خطا: ' + error.message, 'error');
-        } finally {
-            hideLoading();
+            showToast('Error: ' + error.message, 'error');
         }
     }
 </script>
