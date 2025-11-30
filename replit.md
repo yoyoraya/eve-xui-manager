@@ -127,9 +127,74 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 ## Panel Type Detection & X-UI API Routes
 
 ### Sanaei 3X-UI
-- API Base: `/panel/api/`
-- Endpoints: `/panel/api/inbounds/list`, `/panel/api/inbounds/onlines`
-- Documentation: https://documenter.getpostman.com/view/5146551/2sB3QCTuB6
+
+#### Authentication
+- `POST /login` - Login with `{username: '', password: ''}`
+
+#### Inbounds API
+Base path: `/panel/api/inbounds`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/list` | Get all inbounds |
+| GET | `/get/:id` | Get inbound by ID |
+| GET | `/getClientTraffics/:email` | Get client traffics by email |
+| GET | `/getClientTrafficsById/:id` | Get client traffics by inbound ID |
+| POST | `/add` | Add new inbound |
+| POST | `/del/:id` | Delete inbound by ID |
+| POST | `/update/:id` | Update inbound by ID |
+| POST | `/clientIps/:email` | Get client IP addresses |
+| POST | `/clearClientIps/:email` | Clear client IP addresses |
+| POST | `/addClient` | Add client to inbound |
+| POST | `/:id/delClient/:clientId` | Delete client by clientId* |
+| POST | `/updateClient/:clientId` | Update client by clientId* |
+| POST | `/:id/resetClientTraffic/:email` | Reset a client's traffic usage |
+| POST | `/resetAllTraffics` | Reset traffics for all inbounds |
+| POST | `/resetAllClientTraffics/:id` | Reset traffics for all clients in inbound |
+| POST | `/delDepletedClients/:id` | Delete depleted clients in inbound (-1: all) |
+| POST | `/import` | Import inbound configuration |
+| POST | `/onlines` | Get currently online clients (emails list) |
+| POST | `/lastOnline` | Get last online status of clients |
+| POST | `/updateClientTraffic/:email` | Update traffic for specific client |
+| POST | `/{id}/delClientByEmail/{email}` | Delete client by email |
+
+*clientId mapping:
+- `client.id` for VMESS/VLESS
+- `client.password` for TROJAN
+- `client.email` for Shadowsocks
+
+#### Server API
+Base path: `/panel/api/server`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/status` | Get server status |
+| GET | `/getXrayVersion` | Get available Xray versions |
+| GET | `/getConfigJson` | Download current config.json |
+| GET | `/getDb` | Download database file (x-ui.db) |
+| GET | `/getNewUUID` | Generate new UUID |
+| GET | `/getNewX25519Cert` | Generate new X25519 certificate |
+| GET | `/getNewmldsa65` | Generate new ML-DSA-65 certificate |
+| GET | `/getNewmlkem768` | Generate new ML-KEM-768 key pair |
+| GET | `/getNewVlessEnc` | Generate new VLESS encryption keys |
+| POST | `/stopXrayService` | Stop Xray service |
+| POST | `/restartXrayService` | Restart Xray service |
+| POST | `/installXray/:version` | Install/Update Xray to given version |
+| POST | `/updateGeofile` | Update GeoIP/GeoSite data files |
+| POST | `/updateGeofile/:fileName` | Update specific Geo file |
+| POST | `/logs/:count` | Get system logs (with level, syslog) |
+| POST | `/xraylogs/:count` | Get Xray logs (with filters) |
+| POST | `/importDB` | Import database |
+| POST | `/getNewEchCert` | Generate new ECH certificate (requires sni) |
+
+#### Extra API
+Base path: `/panel/api`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/backuptotgbot` | Backup DB/config and send to Telegram Bot |
+
+Documentation: https://documenter.getpostman.com/view/5146551/2sB3QCTuB6
 
 ### Alireza X-UI (علیرضا)
 - API Base: `/xui/API/`
