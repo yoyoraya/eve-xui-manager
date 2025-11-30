@@ -411,6 +411,14 @@ def process_inbounds(inbounds, server):
                     total_bytes = total_gb
                     remaining_bytes = max(0, total_bytes - client_total_used)
                 
+                # "Start After First Use" Feature Detection
+                # When a client has expiryTime=0 or negative timestamp, it means the expiry date
+                # should be set AFTER the first connection. This is detected by checking:
+                # - expiryTime == 0 (zero timestamp)
+                # - reset > 0 (flag indicating pending "start after first use")
+                # - expiryTimeStr == 'StartAfterFirstUse' (string indicator)
+                # - expiryOption == 'after_first_use' (option field indicator)
+                # The panel will update the expiry time after the client's first connection.
                 is_start_after_first_use = False
                 if expiry_timestamp == 0 and client.get('enable', True):
                     if client.get('reset', 0) > 0:

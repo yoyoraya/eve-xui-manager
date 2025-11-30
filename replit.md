@@ -124,17 +124,79 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 - `POST /api/client/<server_id>/<inbound_id>/<email>/renew` - Renew client
 - `GET /api/client/qrcode?link=<link>` - Generate QR code
 
-## Panel Type Detection
+## Panel Type Detection & X-UI API Routes
 
 ### Sanaei 3X-UI
 - API Base: `/panel/api/`
 - Endpoints: `/panel/api/inbounds/list`, `/panel/api/inbounds/onlines`
 - Documentation: https://documenter.getpostman.com/view/5146551/2sB3QCTuB6
 
-### Alireza X-UI
-- API Base: `/xui/`
-- Endpoints: `/xui/inbound/list`, `/xui/API/inbounds`
-- Documentation: https://github.com/alireza0/x-ui
+### Alireza X-UI (علیرضا)
+- API Base: `/xui/API/`
+
+#### Authentication
+- `POST /login` - Login with `{username: '', password: ''}`
+
+#### Inbounds API
+Base path: `/xui/API/inbounds`
+
+| Method | Path | Action |
+|--------|------|--------|
+| GET | `/` | Get all inbounds |
+| GET | `/get/:id` | Get inbound by ID |
+| POST | `/add` | Add new inbound |
+| POST | `/del/:id` | Delete inbound by ID |
+| POST | `/update/:id` | Update inbound by ID |
+| POST | `/addClient/` | Add client to inbound |
+| POST | `/:id/delClient/:clientId` | Delete client by clientId* |
+| POST | `/updateClient/:clientId` | Update client by clientId* |
+| GET | `/getClientTraffics/:email` | Get client traffic by email |
+| GET | `/getClientTrafficsById/:id` | Get client traffic by ID |
+| POST | `/:id/resetClientTraffic/:email` | Reset client traffic |
+| POST | `/resetAllTraffics` | Reset all traffics |
+| POST | `/resetAllClientTraffics/:id` | Reset all client traffics in inbound |
+| POST | `/delDepletedClients/:id` | Delete depleted clients (-1: all) |
+| POST | `/onlines` | Get online users (list of emails) |
+
+*clientId mapping:
+- `client.id` for VMess/VLESS
+- `client.password` for Trojan
+- `client.email` for Shadowsocks
+
+#### Server API
+Base path: `/xui/API/server`
+
+| Method | Path | Action |
+|--------|------|--------|
+| GET | `/status` | Get server status |
+| GET | `/getXrayVersion` | Get available Xray versions |
+| GET | `/getConfigJson` | Download config.json |
+| GET | `/getDb` | Download database file |
+| GET | `/getNewUUID` | Generate new UUID |
+| GET | `/getNewX25519Cert` | Generate X25519 certificate |
+| GET | `/getNewmldsa65` | Generate ML-DSA-65 certificate |
+| GET | `/getNewVlessEnc` | Generate VLESS encryption keys |
+| POST | `/stopXrayService` | Stop Xray service |
+| POST | `/restartXrayService` | Restart Xray service |
+| POST | `/installXray/:version` | Install/Update Xray version |
+| POST | `/logs/:count` | Get system logs |
+| POST | `/xraylogs/:count` | Get Xray logs |
+| POST | `/importDB` | Import database |
+
+Documentation: https://github.com/alireza0/x-ui
+
+## "Start After First Use" Feature
+
+When a client has **expiryTime = 0 or negative timestamp**, it means the expiry date should be set **after the first connection**. This is detected by:
+- `expiryTime == 0`
+- `reset > 0` (indicates a pending "start after first use")
+- `expiryTimeStr == 'StartAfterFirstUse'`
+- `expiryOption == 'after_first_use'`
+
+When renewing a client with "Start after first use":
+- Set expiry timestamp to `0` (zero)
+- Set `reset` field to trigger the feature
+- The panel will update expiry time after the first connection
 
 ## Default Credentials
 - Username: `admin`
