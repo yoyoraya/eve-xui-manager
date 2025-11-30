@@ -4,12 +4,12 @@
 {% block page_title %}Server Management{% endblock %}
 
 {% block header_actions %}
-<button class="btn btn-primary" onclick="openAddClientModal()">
+<button class="btn btn-primary" onclick="openAddServerModal()">
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="5" x2="12" y2="19"></line>
         <line x1="5" y1="12" x2="19" y2="12"></line>
     </svg>
-    Add Client
+    Add Server
 </button>
 {% endblock %}
 
@@ -52,41 +52,6 @@
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeServerModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="saveServer()">Save</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="modal-overlay hidden" id="client-modal">
-    <div class="modal">
-        <div class="modal-header">
-            <h2>Add Client</h2>
-            <button class="modal-close" onclick="closeAddClientModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div class="form-group">
-                <label>Select Server</label>
-                <select id="client-server-select">
-                    <option value="">-- Choose a Server --</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Select Inbound</label>
-                <select id="client-inbound-select" disabled>
-                    <option value="">-- Choose an Inbound --</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Email</label>
-                <input type="email" id="client-email" placeholder="client@example.com">
-            </div>
-            <div class="form-group">
-                <label>Client ID / Password</label>
-                <input type="text" id="client-id" placeholder="Auto-generated if empty">
-            </div>
-            <div class="form-actions">
-                <button class="btn btn-secondary" onclick="closeAddClientModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="saveClient()">Create Client</button>
             </div>
         </div>
     </div>
@@ -259,104 +224,6 @@
         } finally {
             btn.disabled = false;
             btn.classList.remove('loading');
-        }
-    }
-    
-    function openAddClientModal() {
-        document.getElementById('client-email').value = '';
-        document.getElementById('client-id').value = '';
-        document.getElementById('client-server-select').value = '';
-        document.getElementById('client-inbound-select').value = '';
-        document.getElementById('client-inbound-select').disabled = true;
-        loadServerSelectOptions();
-        document.getElementById('client-modal').classList.remove('hidden');
-    }
-    
-    function closeAddClientModal() {
-        document.getElementById('client-modal').classList.add('hidden');
-    }
-    
-    function loadServerSelectOptions() {
-        const select = document.getElementById('client-server-select');
-        select.innerHTML = '<option value="">-- Choose a Server --</option>';
-        servers.forEach(server => {
-            if (server.enabled) {
-                const option = document.createElement('option');
-                option.value = server.id;
-                option.textContent = server.name;
-                select.appendChild(option);
-            }
-        });
-    }
-    
-    document.getElementById('client-server-select').addEventListener('change', function() {
-        const serverId = this.value;
-        const inboundSelect = document.getElementById('client-inbound-select');
-        
-        if (!serverId) {
-            inboundSelect.innerHTML = '<option value="">-- Choose an Inbound --</option>';
-            inboundSelect.disabled = true;
-            return;
-        }
-        
-        inboundSelect.disabled = false;
-        showLoading();
-        
-        fetch(`/api/refresh`)
-            .then(response => response.json())
-            .then(data => {
-                const serverData = data.servers.find(s => s.server_id == serverId);
-                if (serverData) {
-                    inboundSelect.innerHTML = '<option value="">-- Choose an Inbound --</option>';
-                    serverData.inbounds.forEach(inbound => {
-                        const option = document.createElement('option');
-                        option.value = inbound.id;
-                        option.textContent = `${inbound.protocol} - Port ${inbound.port}`;
-                        inboundSelect.appendChild(option);
-                    });
-                }
-            })
-            .catch(() => showToast('Error loading inbounds', 'error'))
-            .finally(() => hideLoading());
-    });
-    
-    async function saveClient() {
-        const serverId = document.getElementById('client-server-select').value;
-        const inboundId = document.getElementById('client-inbound-select').value;
-        const email = document.getElementById('client-email').value.trim();
-        const clientId = document.getElementById('client-id').value.trim();
-        
-        if (!serverId || !inboundId || !email) {
-            showToast('Please fill in all required fields', 'error');
-            return;
-        }
-        
-        showLoading();
-        
-        try {
-            const response = await fetch('/api/add-client', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    server_id: serverId,
-                    inbound_id: inboundId,
-                    email: email,
-                    client_id: clientId || null
-                })
-            });
-            
-            const result = await response.json();
-            
-            if (result.success) {
-                showToast('✓ Client created successfully', 'success');
-                closeAddClientModal();
-            } else {
-                showToast(`✗ ${result.error}`, 'error');
-            }
-        } catch (error) {
-            showToast('Error creating client', 'error');
-        } finally {
-            hideLoading();
         }
     }
 </script>
