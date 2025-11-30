@@ -25,12 +25,12 @@
 }
 
 body {
-    font-family: 'Vazirmatn', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background: var(--bg-dark);
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.6;
-    direction: rtl;
+    direction: ltr;
 }
 
 .app-layout {
@@ -41,12 +41,12 @@ body {
 .sidebar {
     width: var(--sidebar-width);
     background: var(--bg-card);
-    border-left: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     position: fixed;
     top: 0;
-    right: 0;
+    left: 0;
     height: 100vh;
     z-index: 100;
     transition: transform 0.3s ease;
@@ -217,7 +217,7 @@ body.sidebar-open {
 
 .main-content {
     flex: 1;
-    margin-right: var(--sidebar-width);
+    margin-left: var(--sidebar-width);
     display: flex;
     flex-direction: column;
     min-height: 100vh;
@@ -1176,26 +1176,7 @@ input:checked + .slider:before {
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* LTR Support */
-body.ltr {
-    direction: ltr;
-}
-
-body.ltr .sidebar {
-    right: auto;
-    left: 0;
-    border-left: none;
-    border-right: 1px solid var(--border-color);
-}
-
-body.ltr .main-content {
-    margin-right: 0;
-    margin-left: var(--sidebar-width);
-}
-
-body.ltr .inbound-meta {
-    flex-direction: row;
-}
+/* LTR Support - Already in LTR mode by default */
 
 /* Language Toggle */
 .nav-divider {
@@ -1283,7 +1264,7 @@ body.ltr .inbound-meta {
 
 @media (max-width: 768px) {
     .sidebar {
-        transform: translateX(100%);
+        transform: translateX(-100%);
     }
     
     .sidebar.open {
@@ -1291,7 +1272,7 @@ body.ltr .inbound-meta {
     }
     
     .main-content {
-        margin-right: 0;
+        margin-left: 0;
     }
     
     .mobile-menu-btn {
@@ -1335,6 +1316,7 @@ body.ltr .inbound-meta {
     .header-controls {
         width: 100%;
         justify-content: flex-end;
+        flex-wrap: wrap;
     }
     
     .refresh-toggle {
@@ -1363,23 +1345,39 @@ body.ltr .inbound-meta {
         gap: 12px;
     }
     
+    .inbound-meta-compact {
+        gap: 8px;
+        padding: 6px 8px;
+        font-size: 0.75rem;
+    }
+    
+    .meta-tag {
+        font-size: 0.7rem;
+    }
+    
     .clients-table {
         font-size: 0.75rem;
+        min-width: 500px;
     }
     
     .clients-table th,
     .clients-table td {
-        padding: 10px 8px;
+        padding: 8px 6px;
     }
     
     .action-btn {
-        width: 26px;
-        height: 26px;
+        width: 24px;
+        height: 24px;
     }
     
     .modal {
         margin: 10px;
         max-height: 95vh;
+        max-width: 95%;
+    }
+    
+    .modal-sm {
+        max-width: 95%;
     }
     
     .admins-grid {
@@ -1389,29 +1387,30 @@ body.ltr .inbound-meta {
 
 @media (max-width: 480px) {
     .stats-grid {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr;
         gap: 10px;
     }
     
     .stat-card {
         padding: 12px;
-        flex-direction: column;
+        flex-direction: row;
         align-items: center;
-        text-align: center;
-        gap: 8px;
+        text-align: left;
+        gap: 12px;
     }
     
     .stat-icon {
         width: 36px;
         height: 36px;
+        flex-shrink: 0;
     }
     
     .stat-value {
-        font-size: 1.1rem;
+        font-size: 1rem;
     }
     
     .stat-label {
-        font-size: 0.7rem;
+        font-size: 0.65rem;
     }
     
     .inbound-header {
@@ -1421,22 +1420,74 @@ body.ltr .inbound-meta {
     
     .inbound-title {
         width: 100%;
+        flex-wrap: wrap;
+    }
+    
+    .inbound-meta-compact {
+        flex-direction: column;
+        gap: 6px;
+    }
+    
+    .meta-tag {
+        font-size: 0.65rem;
     }
     
     .action-buttons {
         justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+    
+    .action-btn {
+        width: 22px;
+        height: 22px;
     }
     
     .header-actions {
         width: 100%;
-        gap: 8px;
+        gap: 6px;
+        justify-content: flex-end;
+    }
+    
+    .header-controls {
+        width: 100%;
+    }
+    
+    .btn {
+        padding: 6px 10px;
+        font-size: 0.7rem;
     }
     
     .btn span {
         display: none;
     }
     
-    .header-controls .btn span {
+    .btn svg {
+        width: 12px;
+        height: 12px;
+    }
+    
+    .page-title {
+        font-size: 1rem;
+    }
+    
+    .top-header {
+        gap: 12px;
+    }
+    
+    .modal {
+        margin: 5px;
+        max-width: 98%;
+    }
+    
+    .modal-body {
+        padding: 16px;
+    }
+    
+    .toggle-label {
+        display: none;
+    }
+    
+    .timer-control {
         display: none;
     }
 }
