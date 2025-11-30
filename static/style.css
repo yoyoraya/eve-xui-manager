@@ -649,11 +649,10 @@ input:checked + .slider:before {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.8rem;
-    min-width: 600px;
 }
 
 .clients-table th {
-    text-align: right;
+    text-align: left;
     padding: 12px 10px;
     background: var(--bg-card);
     color: var(--text-secondary);
@@ -1356,8 +1355,8 @@ input:checked + .slider:before {
     }
     
     .clients-table {
-        font-size: 0.75rem;
-        min-width: 500px;
+        font-size: 0.7rem;
+        width: 100%;
     }
     
     .clients-table th,
@@ -1365,9 +1364,13 @@ input:checked + .slider:before {
         padding: 8px 6px;
     }
     
+    .email-cell {
+        max-width: 80px;
+    }
+    
     .action-btn {
-        width: 24px;
-        height: 24px;
+        width: 22px;
+        height: 22px;
     }
     
     .modal {
@@ -1432,14 +1435,63 @@ input:checked + .slider:before {
         font-size: 0.65rem;
     }
     
+    .clients-table-wrapper {
+        overflow-x: visible;
+    }
+    
+    .clients-table {
+        width: 100%;
+        font-size: 0.65rem;
+    }
+    
+    .clients-table th {
+        padding: 6px 4px;
+        font-size: 0.6rem;
+    }
+    
+    .clients-table td {
+        padding: 6px 4px;
+    }
+    
+    .email-cell {
+        max-width: 60px;
+        font-size: 0.65rem;
+    }
+    
+    .expiry-badge {
+        font-size: 0.6rem;
+        padding: 2px 4px;
+    }
+    
+    .client-status {
+        font-size: 0.6rem;
+        padding: 2px 4px;
+    }
+    
+    .traffic-combined-cell {
+        gap: 1px;
+    }
+    
+    .traffic-combined-cell .up,
+    .traffic-combined-cell .down {
+        font-size: 0.65rem;
+    }
+    
+    .volume-info .remaining,
+    .volume-info .total {
+        font-size: 0.6rem;
+    }
+    
     .action-buttons {
         justify-content: flex-start;
         flex-wrap: wrap;
+        gap: 2px;
     }
     
     .action-btn {
-        width: 22px;
-        height: 22px;
+        width: 20px;
+        height: 20px;
+        font-size: 0.6rem;
     }
     
     .header-actions {
