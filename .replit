@@ -4,6 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
+packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "tcl", "tk", "zlib"]
 
 [workflows]
 runButton = "Project"
@@ -34,5 +35,5 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 44279
+localPort = 34137
 externalPort = 3000
