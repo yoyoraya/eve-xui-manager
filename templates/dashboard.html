@@ -687,7 +687,8 @@
                     server_id: inbound.server_id,
                     inbound_id: inbound.id
                 });
-                option.textContent = `${inbound.protocol} (${inbound.port})`;
+                const activeClients = inbound.clients.filter(c => c.enable).length;
+                option.textContent = `${inbound.remark} - ${inbound.protocol} (${inbound.port}) [${activeClients}]`;
                 inboundSelect.appendChild(option);
             });
         } else {
