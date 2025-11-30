@@ -418,6 +418,15 @@ input:checked + .slider:before {
     background: var(--border-color);
 }
 
+.btn-success {
+    background: var(--success);
+    color: white;
+}
+
+.btn-success:hover {
+    background: #16a34a;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);

@@ -963,6 +963,56 @@ def renew_client(server_id, inbound_id, email):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
+@app.route('/api/client/<int:server_id>/<int:inbound_id>/add', methods=['POST'])
+@login_required
+def add_client(server_id, inbound_id):
+    server = Server.query.get_or_404(server_id)
+    session_obj, error = get_xui_session(server)
+    
+    if error:
+        return jsonify({"success": False, "error": error})
+    
+    data = request.json or {}
+    email = data.get('email', '').strip()
+    days = int(data.get('days', 30))
+    volume_gb = int(data.get('volume', 0))
+    start_after_first_use = bool(data.get('start_after_first_use', False))
+    
+    if not email:
+        return jsonify({"success": False, "error": "Email is required"})
+    
+    if days < 0 or days > 3650:
+        return jsonify({"success": False, "error": "Days must be between 0 and 3650"})
+    
+    if volume_gb < 0 or volume_gb > 10000:
+        return jsonify({"success": False, "error": "Volume must be between 0 and 10000 GB"})
+    
+    try:
+        if server.panel_type == 'alireza':
+            add_url = f"{server.host}/xui/API/inbounds/addClient"
+        else:
+            add_url = f"{server.host}/panel/api/inbounds/addClient"
+        
+        client_data = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [{
+                "email": email,
+                "enable": True,
+                "expiryTime": -1 * (days * 86400000) if start_after_first_use else int((datetime.now() + timedelta(days=days)).timestamp() * 1000) if days > 0 else 0,
+                "totalGB": volume_gb * 1024 * 1024 * 1024 if volume_gb > 0 else 0,
+                "reset": 0
+            }]})
+        }
+        
+        resp = session_obj.post(add_url, json=client_data, verify=False, timeout=10)
+        
+        if resp.status_code == 200 and resp.json().get('success'):
+            return jsonify({"success": True})
+        
+        return jsonify({"success": False, "error": resp.json().get('msg', 'Failed to add client')})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 @app.route('/api/client/qrcode')
 @login_required
 def get_qrcode():

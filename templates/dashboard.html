@@ -23,6 +23,12 @@
         </svg>
         Refresh
     </button>
+    <button class="btn btn-success" onclick="openAddClientModal()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14M5 12h14"></path>
+        </svg>
+        Add Client
+    </button>
 </div>
 {% endblock %}
 
@@ -201,6 +207,53 @@
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeRenewModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="submitRenewal()">Renew</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="add-client-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2>Add Client</h2>
+            <button class="modal-close" onclick="closeAddClientModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="add-client-server-id">
+            <input type="hidden" id="add-client-inbound-id">
+            
+            <div class="form-group">
+                <label>Select Inbound</label>
+                <select id="add-client-inbound-select" class="form-select">
+                    <option value="">-- Select Inbound --</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="add-client-email" placeholder="user@example.com" class="form-input">
+            </div>
+            
+            <div class="form-group">
+                <label>Days (0 = Unlimited)</label>
+                <input type="number" id="add-client-days" value="30" min="0" max="365" class="form-input">
+            </div>
+            
+            <div class="form-group">
+                <label>Volume (GB) (0 = Unlimited)</label>
+                <input type="number" id="add-client-volume" value="0" min="0" max="10000" class="form-input">
+            </div>
+            
+            <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="add-client-start-after-first-use">
+                    <span>Start after first use</span>
+                </label>
+            </div>
+            
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeAddClientModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitAddClient()">Add Client</button>
             </div>
         </div>
     </div>
@@ -587,6 +640,78 @@
                 refreshData();
             } else {
                 showToast(data.error || 'Error renewing', 'error');
+            }
+        } catch (error) {
+            showToast('Error: ' + error.message, 'error');
+        }
+    }
+
+    function openAddClientModal() {
+        const inboundSelect = document.getElementById('add-client-inbound-select');
+        inboundSelect.innerHTML = '<option value="">-- Select Inbound --</option>';
+        
+        if (inboundsData && inboundsData.length > 0) {
+            inboundsData.forEach(inbound => {
+                const option = document.createElement('option');
+                option.value = JSON.stringify({
+                    server_id: inbound.server_id,
+                    inbound_id: inbound.id
+                });
+                option.textContent = `${inbound.server_name} - ${inbound.protocol} (${inbound.port})`;
+                inboundSelect.appendChild(option);
+            });
+        } else {
+            const option = document.createElement('option');
+            option.textContent = 'No inbounds available';
+            option.disabled = true;
+            inboundSelect.appendChild(option);
+        }
+        
+        document.getElementById('add-client-email').value = '';
+        document.getElementById('add-client-days').value = 30;
+        document.getElementById('add-client-volume').value = 0;
+        document.getElementById('add-client-start-after-first-use').checked = false;
+        document.getElementById('add-client-modal').classList.remove('hidden');
+    }
+
+    function closeAddClientModal() {
+        document.getElementById('add-client-modal').classList.add('hidden');
+    }
+
+    async function submitAddClient() {
+        const inboundSelect = document.getElementById('add-client-inbound-select');
+        const selectedValue = inboundSelect.value;
+        const email = document.getElementById('add-client-email').value.trim();
+        const days = parseInt(document.getElementById('add-client-days').value);
+        const volume = parseInt(document.getElementById('add-client-volume').value);
+        const startAfterFirstUse = document.getElementById('add-client-start-after-first-use').checked;
+
+        if (!selectedValue || !email) {
+            showToast('Please select inbound and enter email', 'error');
+            return;
+        }
+
+        try {
+            const { server_id, inbound_id } = JSON.parse(selectedValue);
+            
+            const response = await fetch(`/api/client/${server_id}/${inbound_id}/add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    email: email,
+                    days: days, 
+                    volume: volume,
+                    start_after_first_use: startAfterFirstUse
+                })
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                showToast('Client added successfully');
+                closeAddClientModal();
+                refreshData();
+            } else {
+                showToast(data.error || 'Error adding client', 'error');
             }
         } catch (error) {
             showToast('Error: ' + error.message, 'error');
