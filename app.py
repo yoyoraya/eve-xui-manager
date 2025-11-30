@@ -15,6 +15,11 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL", "sqlite:///servers.db")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 5,
+    'pool_recycle': 1800,
+    'pool_pre_ping': True
+}
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 db = SQLAlchemy(app)
