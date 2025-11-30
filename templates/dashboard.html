@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X-UI Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <h1>X-UI Dashboard</h1>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-refresh" onclick="refreshData()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                    <div class="status-badge {% if connected %}connected{% else %}disconnected{% endif %}">
+                        <span class="status-dot"></span>
+                        {% if connected %}Connected{% else %}Disconnected{% endif %}
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        {% if error %}
+        <div class="alert alert-error">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <div>
+                <strong>Connection Error</strong>
+                <p>{{ error }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if stats %}
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon blue">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-label">Total Inbounds</span>
+                    <span class="stat-value" id="stat-inbounds">{{ stats.total_inbounds }}</span>
+                    <span class="stat-sub">{{ stats.active_inbounds }} active</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-label">Total Clients</span>
+                    <span class="stat-value" id="stat-clients">{{ stats.total_clients }}</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon purple">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                        <polyline points="17 6 23 6 23 12"></polyline>
+                    </svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-label">Total Upload</span>
+                    <span class="stat-value" id="stat-upload">{{ stats.total_upload }}</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline>
+                        <polyline points="17 18 23 18 23 12"></polyline>
+                    </svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-label">Total Download</span>
+                    <span class="stat-value" id="stat-download">{{ stats.total_download }}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="inbounds-section">
+            <div class="section-header">
+                <h2>Inbounds</h2>
+                <span class="badge">{{ inbounds|length }} total</span>
+            </div>
+
+            {% if inbounds %}
+            <div class="inbounds-list" id="inbounds-container">
+                {% for inbound in inbounds %}
+                <div class="inbound-card {% if not inbound.enable %}disabled{% endif %}">
+                    <div class="inbound-header">
+                        <div class="inbound-title">
+                            <span class="protocol-badge {{ inbound.protocol|lower }}">{{ inbound.protocol }}</span>
+                            <h3>{{ inbound.remark }}</h3>
+                            <span class="port-badge">:{{ inbound.port }}</span>
+                        </div>
+                        <div class="inbound-status">
+                            {% if inbound.enable %}
+                            <span class="status-pill active">Active</span>
+                            {% else %}
+                            <span class="status-pill inactive">Disabled</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="inbound-meta">
+                        <div class="meta-item">
+                            <span class="meta-label">Network</span>
+                            <span class="meta-value">{{ inbound.network }}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Security</span>
+                            <span class="meta-value">{{ inbound.security }}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Clients</span>
+                            <span class="meta-value">{{ inbound.client_count }}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Expiry</span>
+                            <span class="meta-value">{{ inbound.expiryTime }}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="traffic-stats">
+                        <div class="traffic-item upload">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="17 11 12 6 7 11"></polyline>
+                                <polyline points="12 6 12 18"></polyline>
+                            </svg>
+                            <span>{{ inbound.total_up }}</span>
+                        </div>
+                        <div class="traffic-item download">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="7 13 12 18 17 13"></polyline>
+                                <polyline points="12 6 12 18"></polyline>
+                            </svg>
+                            <span>{{ inbound.total_down }}</span>
+                        </div>
+                        <div class="traffic-item total">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                            <span>{{ inbound.total_traffic }}</span>
+                        </div>
+                    </div>
+
+                    {% if inbound.clients %}
+                    <div class="clients-section">
+                        <button class="toggle-clients" onclick="toggleClients(this)">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                            Show Clients ({{ inbound.clients|length }})
+                        </button>
+                        <div class="clients-list hidden">
+                            <table class="clients-table">
+                                <thead>
+                                    <tr>
+                                        <th>Email</th>
+                                        <th>Status</th>
+                                        <th>Expiry</th>
+                                        <th>Upload</th>
+                                        <th>Download</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for client in inbound.clients %}
+                                    <tr class="{% if not client.enable %}disabled-row{% endif %}">
+                                        <td>{{ client.email }}</td>
+                                        <td>
+                                            {% if client.enable %}
+                                            <span class="client-status active">Active</span>
+                                            {% else %}
+                                            <span class="client-status inactive">Disabled</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ client.expiryTime }}</td>
+                                        <td class="traffic-cell upload">{{ client.up }}</td>
+                                        <td class="traffic-cell download">{{ client.down }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                <h3>No Inbounds Found</h3>
+                <p>Connect to your X-UI panel to view inbounds and client statistics.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <footer class="footer">
+            <p>X-UI Dashboard Monitor</p>
+            <p class="footer-sub">Last updated: <span id="last-update">{{ now if now else 'Never' }}</span></p>
+        </footer>
+    </div>
+
+    <div class="loading-overlay hidden" id="loading">
+        <div class="spinner"></div>
+        <p>Refreshing data...</p>
+    </div>
+
+    <script>
+        function toggleClients(btn) {
+            const clientsList = btn.nextElementSibling;
+            const isHidden = clientsList.classList.contains('hidden');
+            
+            clientsList.classList.toggle('hidden');
+            btn.innerHTML = isHidden 
+                ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg> Hide Clients (${clientsList.querySelectorAll('tr').length - 1})`
+                : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${clientsList.querySelectorAll('tr').length - 1})`;
+        }
+
+        async function refreshData() {
+            const loading = document.getElementById('loading');
+            loading.classList.remove('hidden');
+            
+            try {
+                const response = await fetch('/api/refresh');
+                const data = await response.json();
+                
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                alert('Failed to refresh data: ' + error.message);
+            } finally {
+                loading.classList.add('hidden');
+            }
+        }
+
+        document.getElementById('last-update').textContent = new Date().toLocaleString();
+
+        setInterval(refreshData, 60000);
+    </script>
+</body>
+</html>
