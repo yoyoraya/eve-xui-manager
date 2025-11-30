@@ -419,8 +419,6 @@ def process_inbounds(inbounds, server):
                 if is_start_after_first_use:
                     expiry_info = {"text": "Start after first use", "days": -1, "type": "start_after_use"}
                 
-                expiry_jalali = to_jalali(expiry_timestamp) if expiry_timestamp > 0 else None
-                
                 client_data = {
                     "email": client.get('email', 'N/A'),
                     "id": client.get('id', client.get('password', 'N/A')),
@@ -431,7 +429,6 @@ def process_inbounds(inbounds, server):
                     "expiryType": expiry_info['type'],
                     "expiryDays": expiry_info['days'],
                     "expiryTimestamp": expiry_timestamp,
-                    "expiryJalali": expiry_jalali,
                     "isStartAfterFirstUse": is_start_after_first_use,
                     "totalGB": total_gb,
                     "totalGB_formatted": format_bytes(total_gb) if total_gb > 0 else "Unlimited",
