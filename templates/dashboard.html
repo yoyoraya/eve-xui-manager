@@ -219,8 +219,12 @@
             <button class="modal-close" onclick="closeAddClientModal()">&times;</button>
         </div>
         <div class="modal-body">
-            <input type="hidden" id="add-client-server-id">
-            <input type="hidden" id="add-client-inbound-id">
+            <div class="form-group">
+                <label>Select Server</label>
+                <select id="add-client-server-select" class="form-select" onchange="onServerSelected()">
+                    <option value="">-- Select Server --</option>
+                </select>
+            </div>
             
             <div class="form-group">
                 <label>Select Inbound</label>
@@ -646,25 +650,19 @@
         }
     }
 
+    let allServers = [];
+
     function openAddClientModal() {
-        const inboundSelect = document.getElementById('add-client-inbound-select');
-        inboundSelect.innerHTML = '<option value="">-- Select Inbound --</option>';
+        document.getElementById('add-client-server-select').innerHTML = '<option value="">-- Select Server --</option>';
+        document.getElementById('add-client-inbound-select').innerHTML = '<option value="">-- Select Inbound --</option>';
         
-        if (inboundsData && inboundsData.length > 0) {
-            inboundsData.forEach(inbound => {
+        if (allServers && allServers.length > 0) {
+            allServers.forEach(server => {
                 const option = document.createElement('option');
-                option.value = JSON.stringify({
-                    server_id: inbound.server_id,
-                    inbound_id: inbound.id
-                });
-                option.textContent = `${inbound.server_name} - ${inbound.protocol} (${inbound.port})`;
-                inboundSelect.appendChild(option);
+                option.value = server.id;
+                option.textContent = server.name;
+                document.getElementById('add-client-server-select').appendChild(option);
             });
-        } else {
-            const option = document.createElement('option');
-            option.textContent = 'No inbounds available';
-            option.disabled = true;
-            inboundSelect.appendChild(option);
         }
         
         document.getElementById('add-client-email').value = '';
@@ -674,11 +672,38 @@
         document.getElementById('add-client-modal').classList.remove('hidden');
     }
 
+    function onServerSelected() {
+        const serverId = document.getElementById('add-client-server-select').value;
+        const inboundSelect = document.getElementById('add-client-inbound-select');
+        inboundSelect.innerHTML = '<option value="">-- Select Inbound --</option>';
+        
+        if (!serverId) return;
+        
+        const serverInbounds = inboundsData.filter(i => i.server_id == serverId);
+        if (serverInbounds.length > 0) {
+            serverInbounds.forEach(inbound => {
+                const option = document.createElement('option');
+                option.value = JSON.stringify({
+                    server_id: inbound.server_id,
+                    inbound_id: inbound.id
+                });
+                option.textContent = `${inbound.protocol} (${inbound.port})`;
+                inboundSelect.appendChild(option);
+            });
+        } else {
+            const option = document.createElement('option');
+            option.textContent = 'No inbounds available';
+            option.disabled = true;
+            inboundSelect.appendChild(option);
+        }
+    }
+
     function closeAddClientModal() {
         document.getElementById('add-client-modal').classList.add('hidden');
     }
 
     async function submitAddClient() {
+        const serverId = document.getElementById('add-client-server-select').value;
         const inboundSelect = document.getElementById('add-client-inbound-select');
         const selectedValue = inboundSelect.value;
         const email = document.getElementById('add-client-email').value.trim();
@@ -686,8 +711,8 @@
         const volume = parseInt(document.getElementById('add-client-volume').value);
         const startAfterFirstUse = document.getElementById('add-client-start-after-first-use').checked;
 
-        if (!selectedValue || !email) {
-            showToast('Please select inbound and enter email', 'error');
+        if (!serverId || !selectedValue || !email) {
+            showToast('Please select server, inbound and enter email', 'error');
             return;
         }
 
@@ -722,6 +747,7 @@
         try {
             const response = await fetch('/api/servers');
             const servers = await response.json();
+            allServers = servers;
             renderServerList(servers);
         } catch (error) {
             showToast('Error: ' + error.message, 'error');

@@ -989,27 +989,52 @@ def add_client(server_id, inbound_id):
     
     try:
         if server.panel_type == 'alireza':
-            add_url = f"{server.host}/xui/API/inbounds/addClient"
+            get_url = f"{server.host}/xui/inbound/get/{inbound_id}"
         else:
-            add_url = f"{server.host}/panel/api/inbounds/addClient"
+            get_url = f"{server.host}/panel/api/inbounds/get/{inbound_id}"
         
-        client_data = {
-            "id": inbound_id,
-            "settings": json.dumps({"clients": [{
-                "email": email,
-                "enable": True,
-                "expiryTime": -1 * (days * 86400000) if start_after_first_use else int((datetime.now() + timedelta(days=days)).timestamp() * 1000) if days > 0 else 0,
-                "totalGB": volume_gb * 1024 * 1024 * 1024 if volume_gb > 0 else 0,
-                "reset": 0
-            }]})
+        get_resp = session_obj.get(get_url, verify=False, timeout=10)
+        
+        if get_resp.status_code != 200:
+            return jsonify({"success": False, "error": "Failed to get inbound data"})
+        
+        resp_json = get_resp.json()
+        inbound_data = resp_json.get('obj', resp_json.get('data', {}))
+        settings = json.loads(inbound_data.get('settings', '{}'))
+        clients = settings.get('clients', [])
+        
+        for client in clients:
+            if client.get('email') == email:
+                return jsonify({"success": False, "error": f"Email '{email}' already exists"})
+        
+        new_client = {
+            "email": email,
+            "enable": True,
+            "expiryTime": -1 * (days * 86400000) if start_after_first_use else int((datetime.now() + timedelta(days=days)).timestamp() * 1000) if days > 0 else 0,
+            "totalGB": volume_gb * 1024 * 1024 * 1024 if volume_gb > 0 else 0,
+            "reset": 0
         }
         
-        resp = session_obj.post(add_url, json=client_data, verify=False, timeout=10)
+        clients.append(new_client)
+        settings['clients'] = clients
+        inbound_data['settings'] = json.dumps(settings)
         
-        if resp.status_code == 200 and resp.json().get('success'):
+        if server.panel_type == 'alireza':
+            update_url = f"{server.host}/xui/inbound/update/{inbound_id}"
+        else:
+            update_url = f"{server.host}/panel/api/inbounds/update/{inbound_id}"
+        
+        update_data = {
+            "id": inbound_id,
+            "settings": json.dumps(settings)
+        }
+        
+        update_resp = session_obj.post(update_url, json=update_data, verify=False, timeout=10)
+        
+        if update_resp.status_code == 200 and update_resp.json().get('success'):
             return jsonify({"success": True})
         
-        return jsonify({"success": False, "error": resp.json().get('msg', 'Failed to add client')})
+        return jsonify({"success": False, "error": update_resp.json().get('msg', 'Failed to add client')})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
