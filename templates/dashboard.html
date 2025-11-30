@@ -72,9 +72,10 @@
         </div>
         <div class="stat-info">
             <span class="stat-label">Clients</span>
-            <div class="client-counts">
-                <span class="stat-count active-count"><span class="count-value" id="stat-active-clients">0</span> Active</span>
-                <span class="stat-count inactive-count"><span class="count-value" id="stat-inactive-clients">0</span> Inactive</span>
+            <span class="stat-value" id="stat-total-clients">0</span>
+            <div class="client-breakdown">
+                <span class="client-count active-count"><span id="stat-active-clients">0</span></span>
+                <span class="client-count inactive-count"><span id="stat-inactive-clients">0</span></span>
             </div>
         </div>
     </div>
@@ -279,6 +280,7 @@
         document.getElementById('stat-servers').textContent = serverCount || 0;
         document.getElementById('stat-inbounds').textContent = stats?.total_inbounds || 0;
         document.getElementById('stat-active').textContent = `${stats?.active_inbounds || 0} Active`;
+        document.getElementById('stat-total-clients').textContent = stats?.total_clients || 0;
         document.getElementById('stat-active-clients').textContent = stats?.active_clients || 0;
         document.getElementById('stat-inactive-clients').textContent = stats?.inactive_clients || 0;
         document.getElementById('stat-traffic').textContent = stats?.total_traffic || '0 B';
