@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+
+{% block title %}Servers - X-UI Dashboard{% endblock %}
+{% block page_title %}Server Management{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-primary" onclick="openAddServerModal()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+    </svg>
+    Add Server
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="servers-section">
+    <div class="servers-grid" id="servers-container">
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="server-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="modal-title">Add Server</h2>
+            <button class="modal-close" onclick="closeServerModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-server-id">
+            <div class="form-group">
+                <label>Server Name</label>
+                <input type="text" id="server-name" placeholder="e.g., Server 1">
+            </div>
+            <div class="form-group">
+                <label>Host URL</label>
+                <input type="text" id="server-host" placeholder="e.g., https://example.com:8443">
+            </div>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="server-username" placeholder="Username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="server-password" placeholder="Password">
+            </div>
+            <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="server-enabled" checked>
+                    <span>Enabled</span>
+                </label>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeServerModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveServer()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let servers = [];
+    
+    document.addEventListener('DOMContentLoaded', loadServers);
+    
+    async function loadServers() {
+        try {
+            const response = await fetch('/api/servers');
+            servers = await response.json();
+            renderServers();
+        } catch (error) {
+            showToast('Error loading servers', 'error');
+        }
+    }
+    
+    function renderServers() {
+        const container = document.getElementById('servers-container');
+        
+        if (servers.length === 0) {
+            container.innerHTML = '<p class="no-data">No servers found. Add one to get started.</p>';
+            return;
+        }
+        
+        container.innerHTML = servers.map(server => `
+            <div class="server-card ${!server.enabled ? 'disabled' : ''}">
+                <div class="server-header">
+                    <div class="server-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="2" width="20" height="8"></rect>
+                            <rect x="2" y="14" width="20" height="8"></rect>
+                            <line x1="6" y1="6" x2="6" y2="6"></line>
+                            <line x1="6" y1="18" x2="6" y2="18"></line>
+                        </svg>
+                    </div>
+                    <div class="server-title">
+                        <h3>${server.name}</h3>
+                        <p class="server-url">${server.host}</p>
+                    </div>
+                </div>
+                <div class="server-badges">
+                    ${server.enabled ? '<span class="badge active">Enabled</span>' : '<span class="badge inactive">Disabled</span>'}
+                    ${server.panel_type ? `<span class="badge panel-type">${server.panel_type}</span>` : '<span class="badge panel-type">Unknown</span>'}
+                </div>
+                <div class="server-actions">
+                    <button class="action-btn" onclick="testConnection(${server.id})" title="Test Connection">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                    </button>
+                    <button class="action-btn" onclick="editServer(${server.id})" title="Edit">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="action-btn danger" onclick="deleteServer(${server.id})" title="Delete">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    function openAddServerModal() {
+        document.getElementById('edit-server-id').value = '';
+        document.getElementById('server-name').value = '';
+        document.getElementById('server-host').value = '';
+        document.getElementById('server-username').value = '';
+        document.getElementById('server-password').value = '';
+        document.getElementById('server-enabled').checked = true;
+        document.getElementById('modal-title').textContent = 'Add Server';
+        document.getElementById('server-modal').classList.remove('hidden');
+    }
+    
+    function closeServerModal() {
+        document.getElementById('server-modal').classList.add('hidden');
+    }
+    
+    function editServer(id) {
+        const server = servers.find(s => s.id === id);
+        if (!server) return;
+        
+        document.getElementById('edit-server-id').value = server.id;
+        document.getElementById('server-name').value = server.name;
+        document.getElementById('server-host').value = server.host;
+        document.getElementById('server-username').value = server.username;
+        document.getElementById('server-password').value = server.password;
+        document.getElementById('server-enabled').checked = server.enabled;
+        document.getElementById('modal-title').textContent = 'Edit Server';
+        document.getElementById('server-modal').classList.remove('hidden');
+    }
+    
+    async function saveServer() {
+        const id = document.getElementById('edit-server-id').value;
+        const name = document.getElementById('server-name').value.trim();
+        const host = document.getElementById('server-host').value.trim();
+        const username = document.getElementById('server-username').value.trim();
+        const password = document.getElementById('server-password').value.trim();
+        const enabled = document.getElementById('server-enabled').checked;
+        
+        if (!name || !host || !username || !password) {
+            showToast('Please fill in all fields', 'error');
+            return;
+        }
+        
+        const data = { name, host, username, password, enabled };
+        const url = id ? `/api/servers/${id}` : '/api/servers';
+        const method = id ? 'PUT' : 'POST';
+        
+        try {
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to save server');
+            }
+            
+            showToast(id ? 'Server updated' : 'Server added', 'success');
+            closeServerModal();
+            loadServers();
+        } catch (error) {
+            showToast(error.message || 'Error saving server', 'error');
+        }
+    }
+    
+    async function deleteServer(id) {
+        if (!confirm('Are you sure you want to delete this server?')) return;
+        
+        try {
+            const response = await fetch(`/api/servers/${id}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Failed to delete server');
+            
+            showToast('Server deleted', 'success');
+            loadServers();
+        } catch (error) {
+            showToast('Error deleting server', 'error');
+        }
+    }
+    
+    async function testConnection(id) {
+        const btn = event.target.closest('button');
+        btn.disabled = true;
+        btn.classList.add('loading');
+        
+        try {
+            const response = await fetch(`/api/servers/${id}/test`, { method: 'POST' });
+            const result = await response.json();
+            
+            if (result.success) {
+                showToast(`✓ Connection successful (${result.panel_type})`, 'success');
+                loadServers();
+            } else {
+                showToast(`✗ Connection failed: ${result.error}`, 'error');
+            }
+        } catch (error) {
+            showToast('Error testing connection', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.classList.remove('loading');
+        }
+    }
+</script>
+{% endblock %}

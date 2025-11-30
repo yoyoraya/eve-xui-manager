@@ -572,6 +572,13 @@ def dashboard():
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False))
 
+@app.route('/servers')
+@login_required
+def servers_page():
+    return render_template('servers.html',
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False))
+
 @app.route('/admins')
 @login_required
 def admins_page():

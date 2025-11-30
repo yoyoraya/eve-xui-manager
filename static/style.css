@@ -1145,6 +1145,86 @@ input:checked + .slider:before {
     gap: 6px;
 }
 
+.servers-section {
+    padding: 0;
+}
+
+.servers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+}
+
+.server-card {
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: all 0.2s;
+}
+
+.server-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.2);
+}
+
+.server-card.disabled {
+    opacity: 0.6;
+}
+
+.server-header {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.server-icon {
+    width: 48px;
+    height: 48px;
+    background: var(--bg-dark);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
+    flex-shrink: 0;
+}
+
+.server-title {
+    flex: 1;
+}
+
+.server-title h3 {
+    font-size: 1rem;
+    margin-bottom: 4px;
+}
+
+.server-url {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    word-break: break-word;
+}
+
+.server-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.server-badges .badge {
+    font-size: 0.65rem;
+    padding: 3px 8px;
+}
+
+.server-badges .badge.panel-type {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    text-transform: uppercase;
+}
+
 .loading-overlay {
     position: fixed;
     top: 0;
