@@ -72,7 +72,10 @@
         </div>
         <div class="stat-info">
             <span class="stat-label">Clients</span>
-            <span class="stat-value" id="stat-clients">0</span>
+            <div class="client-counts">
+                <span class="stat-count active-count"><span class="count-value" id="stat-active-clients">0</span> Active</span>
+                <span class="stat-count inactive-count"><span class="count-value" id="stat-inactive-clients">0</span> Inactive</span>
+            </div>
         </div>
     </div>
     <div class="stat-card">
@@ -276,7 +279,8 @@
         document.getElementById('stat-servers').textContent = serverCount || 0;
         document.getElementById('stat-inbounds').textContent = stats?.total_inbounds || 0;
         document.getElementById('stat-active').textContent = `${stats?.active_inbounds || 0} Active`;
-        document.getElementById('stat-clients').textContent = stats?.total_clients || 0;
+        document.getElementById('stat-active-clients').textContent = stats?.active_clients || 0;
+        document.getElementById('stat-inactive-clients').textContent = stats?.inactive_clients || 0;
         document.getElementById('stat-traffic').textContent = stats?.total_traffic || '0 B';
         document.getElementById('stat-upload').textContent = `↑ ${stats?.total_upload || '0 B'}`;
         document.getElementById('stat-download').textContent = `↓ ${stats?.total_download || '0 B'}`;

@@ -392,6 +392,8 @@ def process_inbounds(inbounds, server):
     total_upload = 0
     total_download = 0
     total_clients = 0
+    active_clients = 0
+    inactive_clients = 0
     active_inbounds = 0
     
     for inbound in inbounds:
@@ -475,6 +477,12 @@ def process_inbounds(inbounds, server):
             total_download += down
             total_clients += len(clients)
             
+            for client in clients:
+                if client.get('enable', True):
+                    active_clients += 1
+                else:
+                    inactive_clients += 1
+            
             if inbound.get('enable', False):
                 active_inbounds += 1
             
@@ -507,6 +515,8 @@ def process_inbounds(inbounds, server):
         "total_inbounds": len(inbounds),
         "active_inbounds": active_inbounds,
         "total_clients": total_clients,
+        "active_clients": active_clients,
+        "inactive_clients": inactive_clients,
         "total_upload": format_bytes(total_upload),
         "total_download": format_bytes(total_download),
         "total_traffic": format_bytes(total_upload + total_download),
@@ -724,6 +734,8 @@ def api_refresh():
         "total_inbounds": 0,
         "active_inbounds": 0,
         "total_clients": 0,
+        "active_clients": 0,
+        "inactive_clients": 0,
         "upload_raw": 0,
         "download_raw": 0
     }
@@ -764,6 +776,8 @@ def api_refresh():
         total_stats["total_inbounds"] += stats["total_inbounds"]
         total_stats["active_inbounds"] += stats["active_inbounds"]
         total_stats["total_clients"] += stats["total_clients"]
+        total_stats["active_clients"] += stats["active_clients"]
+        total_stats["inactive_clients"] += stats["inactive_clients"]
         total_stats["upload_raw"] += stats["upload_raw"]
         total_stats["download_raw"] += stats["download_raw"]
         
