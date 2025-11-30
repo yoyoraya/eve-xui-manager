@@ -254,33 +254,44 @@ Documentation: https://github.com/alireza0/x-ui
 
 When a client has a **negative expiryTime**, it means the expiry date should be set **after the first connection**. This is used for clients where the subscription timer should start only when they first connect.
 
-### Renewal Logic with "Start After First Use"
+### Display Logic for expiryTime
 
-When renewing a client with this feature enabled:
+The dashboard displays expiry status based on these rules:
+
+**If expiryTime > 0:**
+- Convert timestamp to date
+- Show as: "X days remaining", "1 day remaining", "Xh remaining", or "Expired (Xd ago)"
+- Color-coded by urgency (normal, soon, expired)
+
+**If expiryTime < 0 (Negative Timestamp - Start After First Use):**
+- Formula: `expiryTime = -1 * (days * 86400000)`
+- Extract days: `abs(expiryTime) / 86400000`
+- Show as: "Not started yet (Validity: X days)"
+- Example: -2592000000 → 30 days → "Not started yet (Validity: 30 days)"
+- After first connection, X-UI panel converts to positive timestamp
+
+**If expiryTime == 0:**
+- Show as: "Unlimited"
+
+### Renewal Implementation
+
+When renewing a client with "Start After First Use" enabled:
 
 **Formula**: `expiryTime = -1 * (days * 86400000)`
 - `86400000` = milliseconds per day
 - Example: 30 days = `-30 * 86400000 = -2592000000`
 
-**In the panel (Web UI)**: Shows as "30 Days (Not Started)" or similar
-
-**After first connection**: The panel detects the negative value and converts it to a proper expiry timestamp (current time + |negative value|)
-
-### Implementation Details
-
+**Implementation steps:**
 1. **Set negative timestamp**: Send `expiryTime = -(days * 86400000)` to X-UI API
 2. **Reset traffic automatically**: After renewal, call `resetClientTraffic` endpoint to prevent disconnection due to old quota
 3. **Enable client**: Ensure `enable: true` is set
-4. **Set reset flag**: Keep `reset: 0` (not used for this feature)
+4. **Keep reset flag**: Set `reset: 0`
 
-### Detection in Dashboard
+### Detection in Backend
 
 The feature is detected by checking:
-- `expiryTime < 0` (negative timestamp)
-- `expiryTimeStr == 'StartAfterFirstUse'`
-- `expiryOption == 'after_first_use'`
-
-When detected, the UI shows: "Start after first use" with a special badge color
+- `expiryTime < 0` (negative timestamp = start after first use)
+- Optional fallback checks: `expiryTimeStr == 'StartAfterFirstUse'` or `expiryOption == 'after_first_use'`
 
 ## Default Credentials
 - Username: `admin`

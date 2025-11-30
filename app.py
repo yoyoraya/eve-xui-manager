@@ -116,6 +116,14 @@ def format_remaining_days(timestamp):
     if timestamp == 0 or timestamp is None:
         return {"text": "Unlimited", "days": -1, "type": "unlimited"}
     
+    # Handle negative timestamps (Start After First Use feature)
+    # Formula: -1 * (days * 86400000)
+    # X-UI panel converts this to positive timestamp after first connection
+    if timestamp < 0:
+        ms_per_day = 86400000
+        days = abs(timestamp) // ms_per_day
+        return {"text": f"Not started yet (Validity: {days} days)", "days": days, "type": "start_after_use"}
+    
     try:
         expiry_date = datetime.fromtimestamp(timestamp/1000)
         now = datetime.now()
@@ -412,25 +420,22 @@ def process_inbounds(inbounds, server):
                     remaining_bytes = max(0, total_bytes - client_total_used)
                 
                 # "Start After First Use" Feature Detection
-                # When a client has expiryTime=0 or negative timestamp, it means the expiry date
+                # When a client has negative expiryTime, it means the expiry date
                 # should be set AFTER the first connection. This is detected by checking:
-                # - expiryTime == 0 (zero timestamp)
-                # - reset > 0 (flag indicating pending "start after first use")
+                # - expiryTime < 0 (negative timestamp)
                 # - expiryTimeStr == 'StartAfterFirstUse' (string indicator)
                 # - expiryOption == 'after_first_use' (option field indicator)
                 # The panel will update the expiry time after the client's first connection.
                 is_start_after_first_use = False
-                if expiry_timestamp == 0 and client.get('enable', True):
-                    if client.get('reset', 0) > 0:
-                        is_start_after_first_use = True
-                    elif str(client.get('expiryTimeStr', '')).lower() == 'startafterfirstuse':
+                if expiry_timestamp < 0:
+                    is_start_after_first_use = True
+                elif expiry_timestamp == 0 and client.get('enable', True):
+                    if str(client.get('expiryTimeStr', '')).lower() == 'startafterfirstuse':
                         is_start_after_first_use = True
                     elif client.get('expiryOption') == 'after_first_use':
                         is_start_after_first_use = True
                 
                 expiry_info = format_remaining_days(expiry_timestamp)
-                if is_start_after_first_use:
-                    expiry_info = {"text": "Start after first use", "days": -1, "type": "start_after_use"}
                 
                 client_data = {
                     "email": client.get('email', 'N/A'),
