@@ -1435,6 +1435,7 @@ input:checked + .slider:before {
         font-size: 0.65rem;
     }
     
+    /* Mobile Client Cards Layout */
     .clients-table-wrapper {
         overflow-x: visible;
     }
@@ -1442,34 +1443,110 @@ input:checked + .slider:before {
     .clients-table {
         width: 100%;
         font-size: 0.65rem;
+        display: block;
     }
     
-    .clients-table th {
-        padding: 6px 4px;
-        font-size: 0.6rem;
+    .clients-table thead {
+        display: none;
+    }
+    
+    .clients-table tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+    
+    .clients-table tr {
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        opacity: 1 !important;
+    }
+    
+    .clients-table tr.disabled-row {
+        opacity: 0.6 !important;
     }
     
     .clients-table td {
-        padding: 6px 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 0;
+        border-bottom: none !important;
+        border-top: 1px solid var(--border-color);
+    }
+    
+    .clients-table td:first-child {
+        border-top: none;
+    }
+    
+    .clients-table td::before {
+        content: attr(data-label);
+        font-size: 0.6rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+    
+    .clients-table .email-cell::before {
+        content: 'Email';
+    }
+    
+    .clients-table td:nth-child(2)::before {
+        content: 'Status';
+    }
+    
+    .clients-table td:nth-child(3)::before {
+        content: 'Expiry';
+    }
+    
+    .clients-table td:nth-child(4)::before {
+        content: 'Traffic';
+    }
+    
+    .clients-table td:nth-child(5)::before {
+        content: 'Volume';
+    }
+    
+    .clients-table td:nth-child(6)::before {
+        content: 'Actions';
+    }
+    
+    .clients-table td:nth-child(6) {
+        display: flex;
+        justify-content: flex-start;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+        border-top: 1px solid var(--border-color);
+        padding-top: 10px;
     }
     
     .email-cell {
-        max-width: 60px;
-        font-size: 0.65rem;
+        max-width: none;
+        font-size: 0.75rem;
+        font-weight: 600;
     }
     
     .expiry-badge {
         font-size: 0.6rem;
-        padding: 2px 4px;
+        padding: 3px 6px;
     }
     
     .client-status {
         font-size: 0.6rem;
-        padding: 2px 4px;
+        padding: 2px 6px;
     }
     
     .traffic-combined-cell {
-        gap: 1px;
+        gap: 2px;
+        flex-direction: row;
+        align-items: center;
     }
     
     .traffic-combined-cell .up,
@@ -1477,21 +1554,28 @@ input:checked + .slider:before {
         font-size: 0.65rem;
     }
     
+    .volume-info {
+        flex-direction: row;
+        gap: 4px;
+    }
+    
     .volume-info .remaining,
     .volume-info .total {
-        font-size: 0.6rem;
+        font-size: 0.65rem;
     }
     
     .action-buttons {
-        justify-content: flex-start;
+        display: flex;
+        gap: 6px;
         flex-wrap: wrap;
-        gap: 2px;
+        width: 100%;
     }
     
     .action-btn {
-        width: 20px;
-        height: 20px;
-        font-size: 0.6rem;
+        width: 28px;
+        height: 28px;
+        font-size: 0.65rem;
+        flex: 0 1 28px;
     }
     
     .header-actions {
