@@ -4,17 +4,46 @@ import json
 import base64
 import requests
 import qrcode
-from datetime import datetime
-from flask import Flask, render_template, jsonify, request, send_file
+from datetime import datetime, timedelta
+from functools import wraps
+from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
-from urllib.parse import urlparse
+from werkzeug.security import generate_password_hash, check_password_hash
+from urllib.parse import urlparse, quote
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
+app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL", "sqlite:///servers.db")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 db = SQLAlchemy(app)
+
+class Admin(db.Model):
+    __tablename__ = 'admins'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(100), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    is_superadmin = db.Column(db.Boolean, default=False)
+    enabled = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login = db.Column(db.DateTime)
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'username': self.username,
+            'is_superadmin': self.is_superadmin,
+            'enabled': self.enabled,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'last_login': self.last_login.isoformat() if self.last_login else None
+        }
 
 class Server(db.Model):
     __tablename__ = 'servers'
@@ -24,6 +53,7 @@ class Server(db.Model):
     username = db.Column(db.String(100), nullable=False)
     password = db.Column(db.String(255), nullable=False)
     enabled = db.Column(db.Boolean, default=True)
+    panel_type = db.Column(db.String(50), default='auto')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def to_dict(self):
@@ -33,11 +63,38 @@ class Server(db.Model):
             'host': self.host,
             'username': self.username,
             'enabled': self.enabled,
+            'panel_type': self.panel_type,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
 with app.app_context():
     db.create_all()
+    if not Admin.query.filter_by(username='admin').first():
+        default_admin = Admin(username='admin', is_superadmin=True, enabled=True)
+        default_admin.set_password('admin')
+        db.session.add(default_admin)
+        db.session.commit()
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'admin_id' not in session:
+            if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({"success": False, "error": "Unauthorized"}), 401
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def superadmin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'admin_id' not in session:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+        admin = Admin.query.get(session['admin_id'])
+        if not admin or not admin.is_superadmin:
+            return jsonify({"success": False, "error": "Superadmin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
 
 def format_bytes(size):
     if size is None or size == 0:
@@ -50,16 +107,35 @@ def format_bytes(size):
         n += 1
     return f"{size:.2f} {power_labels[n]}B"
 
-def format_date(timestamp):
+def format_remaining_days(timestamp):
     if timestamp == 0 or timestamp is None:
-        return "Unlimited"
+        return {"text": "Unlimited", "days": -1, "type": "unlimited"}
+    
     try:
-        return datetime.fromtimestamp(timestamp/1000).strftime('%Y-%m-%d %H:%M')
+        expiry_date = datetime.fromtimestamp(timestamp/1000)
+        now = datetime.now()
+        
+        if expiry_date < now:
+            days_ago = (now - expiry_date).days
+            return {"text": f"Expired ({days_ago}d ago)", "days": -days_ago, "type": "expired"}
+        
+        remaining = expiry_date - now
+        days = remaining.days
+        
+        if days == 0:
+            hours = remaining.seconds // 3600
+            return {"text": f"{hours}h remaining", "days": 0, "type": "today"}
+        elif days == 1:
+            return {"text": "1 day remaining", "days": 1, "type": "soon"}
+        elif days < 7:
+            return {"text": f"{days} days remaining", "days": days, "type": "soon"}
+        else:
+            return {"text": f"{days} days remaining", "days": days, "type": "normal"}
     except:
-        return "Invalid Date"
+        return {"text": "Invalid Date", "days": 0, "type": "error"}
 
 def get_xui_session(server):
-    session = requests.Session()
+    session_obj = requests.Session()
     login_url = f"{server.host}/login"
     login_data = {
         "username": server.username,
@@ -67,12 +143,12 @@ def get_xui_session(server):
     }
     
     try:
-        login_resp = session.post(login_url, data=login_data, verify=False, timeout=10)
+        login_resp = session_obj.post(login_url, data=login_data, verify=False, timeout=10)
         
         if login_resp.status_code == 200:
             resp_json = login_resp.json()
             if resp_json.get('success'):
-                return session, None
+                return session_obj, None
             else:
                 return None, f"Login failed: {resp_json.get('msg', 'Unknown error')}"
         else:
@@ -84,17 +160,73 @@ def get_xui_session(server):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-def fetch_inbounds(session, host):
-    api_endpoints = [
+def detect_panel_type(session_obj, host):
+    try:
+        resp = session_obj.get(f"{host}/panel/api/inbounds/list", verify=False, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get('success') is not None and 'obj' in data:
+                return 'sanaei'
+    except:
+        pass
+    
+    try:
+        resp = session_obj.post(f"{host}/xui/inbound/list", json={"page": 1, "limit": 1}, verify=False, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get('success') is not None:
+                return 'alireza'
+    except:
+        pass
+    
+    try:
+        resp = session_obj.get(f"{host}/panel/inbound/list", verify=False, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get('success') is not None:
+                return 'sanaei'
+    except:
+        pass
+    
+    return 'unknown'
+
+def parse_alireza_inbounds(data):
+    if data.get('obj'):
+        obj = data.get('obj')
+        if isinstance(obj, list):
+            return obj
+        if isinstance(obj, dict):
+            return obj.get('inbounds', obj.get('list', []))
+    if data.get('data'):
+        inner = data.get('data')
+        if isinstance(inner, list):
+            return inner
+        if isinstance(inner, dict):
+            return inner.get('list', inner.get('inbounds', []))
+    return []
+
+def fetch_inbounds(session_obj, host, panel_type='auto'):
+    if panel_type == 'alireza':
+        try:
+            list_resp = session_obj.post(f"{host}/xui/inbound/list", json={"page": 1, "limit": 100}, verify=False, timeout=10)
+            if list_resp.status_code == 200:
+                data = list_resp.json()
+                if data.get('success'):
+                    inbounds = parse_alireza_inbounds(data)
+                    return inbounds, None
+        except:
+            pass
+        return None, "Failed to fetch inbounds from Alireza panel"
+    
+    sanaei_endpoints = [
         "/panel/api/inbounds/list",
-        "/xui/inbound/list",
         "/panel/inbound/list"
     ]
     
-    for endpoint in api_endpoints:
+    for endpoint in sanaei_endpoints:
         try:
             list_url = f"{host}{endpoint}"
-            list_resp = session.get(list_url, verify=False, timeout=10)
+            list_resp = session_obj.get(list_url, verify=False, timeout=10)
             
             if list_resp.status_code == 200:
                 data = list_resp.json()
@@ -102,6 +234,17 @@ def fetch_inbounds(session, host):
                     return data.get('obj', []), None
         except:
             continue
+    
+    if panel_type == 'auto':
+        try:
+            list_resp = session_obj.post(f"{host}/xui/inbound/list", json={"page": 1, "limit": 100}, verify=False, timeout=10)
+            if list_resp.status_code == 200:
+                data = list_resp.json()
+                if data.get('success'):
+                    inbounds = parse_alireza_inbounds(data)
+                    return inbounds, None
+        except:
+            pass
     
     return None, "Failed to fetch inbounds"
 
@@ -244,32 +387,62 @@ def process_inbounds(inbounds, server):
             for client in clients:
                 link = generate_client_link(client, inbound, server.host)
                 
+                expiry_timestamp = client.get('expiryTime', 0)
+                total_gb = client.get('totalGB', 0)
+                
+                client_up = 0
+                client_down = 0
+                client_total_used = 0
+                
+                for stat in client_stats:
+                    if stat.get('email') == client.get('email'):
+                        client_up = stat.get('up', 0)
+                        client_down = stat.get('down', 0)
+                        client_total_used = client_up + client_down
+                        break
+                
+                remaining_bytes = 0
+                if total_gb > 0:
+                    total_bytes = total_gb
+                    remaining_bytes = max(0, total_bytes - client_total_used)
+                
+                is_start_after_first_use = False
+                if expiry_timestamp == 0 and client.get('enable', True):
+                    if client.get('reset', 0) > 0:
+                        is_start_after_first_use = True
+                    elif str(client.get('expiryTimeStr', '')).lower() == 'startafterfirstuse':
+                        is_start_after_first_use = True
+                    elif client.get('expiryOption') == 'after_first_use':
+                        is_start_after_first_use = True
+                
+                expiry_info = format_remaining_days(expiry_timestamp)
+                if is_start_after_first_use:
+                    expiry_info = {"text": "Start after first use", "days": -1, "type": "start_after_use"}
+                
                 client_data = {
                     "email": client.get('email', 'N/A'),
                     "id": client.get('id', client.get('password', 'N/A')),
+                    "uuid": client.get('id', ''),
+                    "subId": client.get('subId', ''),
                     "enable": client.get('enable', True),
-                    "expiryTime": format_date(client.get('expiryTime', 0)),
-                    "expiryTimestamp": client.get('expiryTime', 0),
-                    "totalGB": client.get('totalGB', 0),
+                    "expiryTime": expiry_info['text'],
+                    "expiryType": expiry_info['type'],
+                    "expiryDays": expiry_info['days'],
+                    "expiryTimestamp": expiry_timestamp,
+                    "isStartAfterFirstUse": is_start_after_first_use,
+                    "totalGB": total_gb,
+                    "totalGB_formatted": format_bytes(total_gb) if total_gb > 0 else "Unlimited",
+                    "remaining_bytes": remaining_bytes,
+                    "remaining_formatted": format_bytes(remaining_bytes) if total_gb > 0 else "Unlimited",
+                    "traffic": format_bytes(client_up + client_down),
+                    "up": format_bytes(client_up),
+                    "down": format_bytes(client_down),
+                    "up_raw": client_up,
+                    "down_raw": client_down,
                     "link": link,
                     "inbound_id": inbound.get('id'),
                     "server_id": server.id
                 }
-                
-                for stat in client_stats:
-                    if stat.get('email') == client.get('email'):
-                        client_data['up'] = format_bytes(stat.get('up', 0))
-                        client_data['down'] = format_bytes(stat.get('down', 0))
-                        client_data['up_raw'] = stat.get('up', 0)
-                        client_data['down_raw'] = stat.get('down', 0)
-                        client_data['total'] = stat.get('total', 0)
-                        break
-                else:
-                    client_data['up'] = "0 B"
-                    client_data['down'] = "0 B"
-                    client_data['up_raw'] = 0
-                    client_data['down_raw'] = 0
-                    client_data['total'] = 0
                 
                 processed_clients.append(client_data)
             
@@ -299,7 +472,7 @@ def process_inbounds(inbounds, server):
                 "clients": processed_clients,
                 "client_count": len(clients),
                 "enable": inbound.get('enable', False),
-                "expiryTime": format_date(inbound.get('expiryTime', 0)),
+                "expiryTime": format_remaining_days(inbound.get('expiryTime', 0))['text'],
                 "server_id": server.id,
                 "server_name": server.name
             })
@@ -320,17 +493,133 @@ def process_inbounds(inbounds, server):
     
     return processed, stats
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if 'admin_id' in session:
+        return redirect(url_for('dashboard'))
+    
+    if request.method == 'POST':
+        data = request.form if request.form else request.json
+        username = data.get('username', '')
+        password = data.get('password', '')
+        
+        admin = Admin.query.filter_by(username=username, enabled=True).first()
+        
+        if admin and admin.check_password(password):
+            session.permanent = True
+            session['admin_id'] = admin.id
+            session['admin_username'] = admin.username
+            session['is_superadmin'] = admin.is_superadmin
+            
+            admin.last_login = datetime.utcnow()
+            db.session.commit()
+            
+            if request.is_json:
+                return jsonify({"success": True})
+            return redirect(url_for('dashboard'))
+        
+        if request.is_json:
+            return jsonify({"success": False, "error": "Invalid username or password"})
+        return render_template('login.html', error="Invalid username or password")
+    
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
 @app.route('/')
+@login_required
 def dashboard():
     servers = Server.query.filter_by(enabled=True).all()
-    return render_template('dashboard.html', servers=servers, server_count=len(servers))
+    return render_template('dashboard.html', 
+                         servers=servers, 
+                         server_count=len(servers),
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False))
+
+@app.route('/admins')
+@login_required
+def admins_page():
+    if not session.get('is_superadmin'):
+        return redirect(url_for('dashboard'))
+    return render_template('admins.html',
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False))
+
+@app.route('/api/admins', methods=['GET'])
+@superadmin_required
+def get_admins():
+    admins = Admin.query.all()
+    return jsonify([a.to_dict() for a in admins])
+
+@app.route('/api/admins', methods=['POST'])
+@superadmin_required
+def add_admin():
+    data = request.json
+    
+    if not data.get('username') or not data.get('password'):
+        return jsonify({"success": False, "error": "Username and password are required"})
+    
+    if Admin.query.filter_by(username=data['username']).first():
+        return jsonify({"success": False, "error": "Username already exists"})
+    
+    admin = Admin(
+        username=data['username'],
+        is_superadmin=data.get('is_superadmin', False),
+        enabled=data.get('enabled', True)
+    )
+    admin.set_password(data['password'])
+    
+    db.session.add(admin)
+    db.session.commit()
+    
+    return jsonify({"success": True, "admin": admin.to_dict()})
+
+@app.route('/api/admins/<int:admin_id>', methods=['PUT'])
+@superadmin_required
+def update_admin(admin_id):
+    admin = Admin.query.get_or_404(admin_id)
+    data = request.json
+    
+    if data.get('username') and data['username'] != admin.username:
+        if Admin.query.filter_by(username=data['username']).first():
+            return jsonify({"success": False, "error": "Username already exists"})
+        admin.username = data['username']
+    
+    if data.get('password'):
+        admin.set_password(data['password'])
+    
+    if 'is_superadmin' in data:
+        admin.is_superadmin = data['is_superadmin']
+    
+    if 'enabled' in data:
+        admin.enabled = data['enabled']
+    
+    db.session.commit()
+    return jsonify({"success": True, "admin": admin.to_dict()})
+
+@app.route('/api/admins/<int:admin_id>', methods=['DELETE'])
+@superadmin_required
+def delete_admin(admin_id):
+    admin = Admin.query.get_or_404(admin_id)
+    
+    if admin.id == session.get('admin_id'):
+        return jsonify({"success": False, "error": "Cannot delete your own account"})
+    
+    db.session.delete(admin)
+    db.session.commit()
+    return jsonify({"success": True})
 
 @app.route('/api/servers', methods=['GET'])
+@login_required
 def get_servers():
     servers = Server.query.all()
     return jsonify([s.to_dict() for s in servers])
 
 @app.route('/api/servers', methods=['POST'])
+@login_required
 def add_server():
     data = request.json
     
@@ -342,7 +631,8 @@ def add_server():
         host=data['host'].rstrip('/'),
         username=data['username'],
         password=data['password'],
-        enabled=data.get('enabled', True)
+        enabled=data.get('enabled', True),
+        panel_type=data.get('panel_type', 'auto')
     )
     
     db.session.add(server)
@@ -351,6 +641,7 @@ def add_server():
     return jsonify({"success": True, "server": server.to_dict()})
 
 @app.route('/api/servers/<int:server_id>', methods=['PUT'])
+@login_required
 def update_server(server_id):
     server = Server.query.get_or_404(server_id)
     data = request.json
@@ -365,11 +656,14 @@ def update_server(server_id):
         server.password = data['password']
     if 'enabled' in data:
         server.enabled = data['enabled']
+    if data.get('panel_type'):
+        server.panel_type = data['panel_type']
     
     db.session.commit()
     return jsonify({"success": True, "server": server.to_dict()})
 
 @app.route('/api/servers/<int:server_id>', methods=['DELETE'])
+@login_required
 def delete_server(server_id):
     server = Server.query.get_or_404(server_id)
     db.session.delete(server)
@@ -377,16 +671,28 @@ def delete_server(server_id):
     return jsonify({"success": True})
 
 @app.route('/api/servers/<int:server_id>/test', methods=['POST'])
+@login_required
 def test_server(server_id):
     server = Server.query.get_or_404(server_id)
-    session, error = get_xui_session(server)
+    session_obj, error = get_xui_session(server)
     
     if error:
         return jsonify({"success": False, "error": error})
     
-    return jsonify({"success": True, "message": "Connection successful"})
+    detected_type = detect_panel_type(session_obj, server.host)
+    
+    if server.panel_type == 'auto' and detected_type != 'unknown':
+        server.panel_type = detected_type
+        db.session.commit()
+    
+    return jsonify({
+        "success": True, 
+        "message": "Connection successful",
+        "panel_type": detected_type
+    })
 
 @app.route('/api/refresh')
+@login_required
 def api_refresh():
     servers = Server.query.filter_by(enabled=True).all()
     
@@ -401,7 +707,7 @@ def api_refresh():
     server_results = []
     
     for server in servers:
-        session, error = get_xui_session(server)
+        session_obj, error = get_xui_session(server)
         
         if error:
             server_results.append({
@@ -412,7 +718,13 @@ def api_refresh():
             })
             continue
         
-        inbounds, fetch_error = fetch_inbounds(session, server.host)
+        if server.panel_type == 'auto':
+            detected = detect_panel_type(session_obj, server.host)
+            if detected != 'unknown':
+                server.panel_type = detected
+                db.session.commit()
+        
+        inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
         
         if fetch_error:
             server_results.append({
@@ -436,7 +748,8 @@ def api_refresh():
             "server_id": server.id,
             "server_name": server.name,
             "success": True,
-            "stats": stats
+            "stats": stats,
+            "panel_type": server.panel_type
         })
     
     total_stats["total_upload"] = format_bytes(total_stats["upload_raw"])
@@ -452,9 +765,10 @@ def api_refresh():
     })
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/toggle', methods=['POST'])
+@login_required
 def toggle_client(server_id, inbound_id, email):
     server = Server.query.get_or_404(server_id)
-    session, error = get_xui_session(server)
+    session_obj, error = get_xui_session(server)
     
     if error:
         return jsonify({"success": False, "error": error})
@@ -463,14 +777,18 @@ def toggle_client(server_id, inbound_id, email):
     enable = data.get('enable', False)
     
     try:
-        url = f"{server.host}/panel/api/inbounds/updateClient/{email}"
-        resp = session.post(url, json={"enable": enable}, verify=False, timeout=10)
+        if server.panel_type == 'sanaei':
+            url = f"{server.host}/panel/api/inbounds/{inbound_id}/updateClient/{email}"
+        else:
+            url = f"{server.host}/panel/api/inbounds/updateClient/{email}"
+        
+        resp = session_obj.post(url, json={"enable": enable}, verify=False, timeout=10)
         
         if resp.status_code == 200 and resp.json().get('success'):
             return jsonify({"success": True})
         
         url = f"{server.host}/panel/api/inbounds/{inbound_id}/updateClient/{email}"
-        resp = session.post(url, json={"enable": enable}, verify=False, timeout=10)
+        resp = session_obj.post(url, json={"enable": enable}, verify=False, timeout=10)
         
         if resp.status_code == 200 and resp.json().get('success'):
             return jsonify({"success": True})
@@ -480,16 +798,17 @@ def toggle_client(server_id, inbound_id, email):
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/reset', methods=['POST'])
+@login_required
 def reset_client_traffic(server_id, inbound_id, email):
     server = Server.query.get_or_404(server_id)
-    session, error = get_xui_session(server)
+    session_obj, error = get_xui_session(server)
     
     if error:
         return jsonify({"success": False, "error": error})
     
     try:
         url = f"{server.host}/panel/api/inbounds/{inbound_id}/resetClientTraffic/{email}"
-        resp = session.post(url, verify=False, timeout=10)
+        resp = session_obj.post(url, verify=False, timeout=10)
         
         if resp.status_code == 200 and resp.json().get('success'):
             return jsonify({"success": True})
@@ -498,7 +817,93 @@ def reset_client_traffic(server_id, inbound_id, email):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
+@app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew', methods=['POST'])
+@login_required
+def renew_client(server_id, inbound_id, email):
+    server = Server.query.get_or_404(server_id)
+    session_obj, error = get_xui_session(server)
+    
+    if error:
+        return jsonify({"success": False, "error": error})
+    
+    data = request.json or {}
+    days = int(data.get('days', 30))
+    volume_gb = int(data.get('volume_gb', 0))
+    start_after_first_use = bool(data.get('start_after_first_use', False))
+    
+    if days < 1 or days > 3650:
+        return jsonify({"success": False, "error": "Days must be between 1 and 3650"})
+    if volume_gb < 0 or volume_gb > 10000:
+        return jsonify({"success": False, "error": "Volume must be between 0 and 10000 GB"})
+    
+    try:
+        if server.panel_type == 'alireza':
+            get_url = f"{server.host}/xui/inbound/get/{inbound_id}"
+        else:
+            get_url = f"{server.host}/panel/api/inbounds/get/{inbound_id}"
+        
+        get_resp = session_obj.get(get_url, verify=False, timeout=10)
+        
+        if get_resp.status_code != 200:
+            return jsonify({"success": False, "error": "Failed to get inbound data"})
+        
+        resp_json = get_resp.json()
+        inbound_data = resp_json.get('obj', resp_json.get('data', {}))
+        settings = json.loads(inbound_data.get('settings', '{}'))
+        clients = settings.get('clients', [])
+        
+        client_found = None
+        for client in clients:
+            if client.get('email') == email:
+                client_found = client
+                break
+        
+        if not client_found:
+            return jsonify({"success": False, "error": "Client not found"})
+        
+        if start_after_first_use:
+            new_expiry = 0
+            client_found['reset'] = days
+        else:
+            new_expiry = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
+            client_found['reset'] = 0
+        
+        client_found['expiryTime'] = new_expiry
+        
+        if volume_gb > 0:
+            client_found['totalGB'] = volume_gb * 1024 * 1024 * 1024
+        
+        client_found['enable'] = True
+        
+        uuid = client_found.get('id', client_found.get('password', ''))
+        
+        if server.panel_type == 'alireza':
+            update_data = {
+                "id": inbound_id,
+                "settings": json.dumps({"clients": [client_found]})
+            }
+            update_url = f"{server.host}/xui/inbound/updateClient/{uuid}"
+        else:
+            update_data = {
+                "id": inbound_id,
+                "settings": json.dumps({"clients": [client_found]})
+            }
+            update_url = f"{server.host}/panel/api/inbounds/updateClient/{uuid}"
+        
+        update_resp = session_obj.post(update_url, json=update_data, verify=False, timeout=10)
+        
+        if update_resp.status_code == 200:
+            resp_data = update_resp.json()
+            if resp_data.get('success'):
+                return jsonify({"success": True})
+            return jsonify({"success": False, "error": resp_data.get('msg', 'Update failed')})
+        
+        return jsonify({"success": False, "error": "Failed to renew client"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 @app.route('/api/client/qrcode')
+@login_required
 def get_qrcode():
     link = request.args.get('link', '')
     
