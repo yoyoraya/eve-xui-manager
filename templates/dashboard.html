@@ -261,8 +261,17 @@
                 updateStats(data.stats, data.server_count);
                 updateInbounds(data.inbounds);
                 inboundsData = data.inbounds;
+                
+                const failedServers = data.servers?.filter(s => !s.success) || [];
+                if (failedServers.length > 0) {
+                    const errors = failedServers.map(s => `${s.server_name}: ${s.error}`).join(', ');
+                    showToast('Server errors: ' + errors, 'error');
+                }
+            } else {
+                showToast('Error loading data', 'error');
             }
         } catch (error) {
+            console.error('Refresh error:', error);
             showToast('Error updating: ' + error.message, 'error');
         } finally {
             hideLoading();
