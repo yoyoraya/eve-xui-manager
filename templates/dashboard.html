@@ -288,7 +288,6 @@
         document.getElementById('stat-traffic').textContent = stats?.total_traffic || '0 B';
         document.getElementById('stat-upload').textContent = `↑ ${stats?.total_upload || '0 B'}`;
         document.getElementById('stat-download').textContent = `↓ ${stats?.total_download || '0 B'}`;
-        document.getElementById('server-count').textContent = serverCount || 0;
     }
 
     function getExpiryClass(type) {
