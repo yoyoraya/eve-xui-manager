@@ -18,11 +18,13 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 - Server CRUD operations (add, edit, delete, test connection)
 
 ### Dashboard Features
-- Sidebar navigation menu (responsive)
+- Sidebar navigation menu with Dashboard, Servers, and Admins pages (responsive)
 - Statistics overview: servers, inbounds, clients, traffic
 - Inbound configurations with protocol, port, and status
 - Traffic display: upload/download in single column
 - Remaining and total volume display
+- Auto-refresh toggle with configurable interval
+- Manual refresh button in header
 
 ### Client Management
 - Enable/Disable clients
@@ -60,6 +62,7 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 │   ├── base.html            # Base template with sidebar
 │   ├── login.html           # Login page
 │   ├── dashboard.html       # Main dashboard
+│   ├── servers.html         # Server management page
 │   └── admins.html          # Admin management page
 ├── static/
 │   └── style.css            # Comprehensive stylesheet
@@ -100,6 +103,7 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 
 ### Frontend Pages
 - `GET /` - Main dashboard (requires login)
+- `GET /servers` - Server management page (requires login)
 - `GET /admins` - Admin management (superadmin only)
 
 ### Admin Management API
@@ -299,6 +303,8 @@ The feature is detected by checking:
 - **Important**: Change these after first login!
 
 ## Recent Changes
+- November 2025: Added dedicated Servers page in sidebar navigation
+- November 2025: Removed server management button from dashboard header
 - November 2025: Removed bilingual support - English-only interface
 - November 2025: Compact inbound display (network, security, clients, traffic on one line)
 - November 2025: Added professional login system
