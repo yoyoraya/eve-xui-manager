@@ -37,15 +37,15 @@
                     <span>Dashboard</span>
                 </a>
                 
-                <a href="{{ url_for('servers_page') }}" class="nav-item {% if request.endpoint == 'servers_page' %}active{% endif %}">
+                <button class="nav-item nav-button" onclick="openAddClientModal()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="2" y="2" width="20" height="8"></rect>
-                        <rect x="2" y="14" width="20" height="8"></rect>
-                        <line x1="6" y1="6" x2="6" y2="6"></line>
-                        <line x1="6" y1="18" x2="6" y2="18"></line>
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                     </svg>
-                    <span>Servers</span>
-                </a>
+                    <span>Add Client</span>
+                </button>
                 
                 {% if is_superadmin %}
                 <a href="{{ url_for('admins_page') }}" class="nav-item {% if request.endpoint == 'admins_page' %}active{% endif %}">
@@ -113,6 +113,55 @@
     
     <div class="toast hidden" id="toast"></div>
     
+    <div class="modal-overlay hidden" id="add-client-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Add New Client</h2>
+                <button class="modal-close" onclick="closeAddClientModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Select Server</label>
+                    <select id="client-server" onchange="loadInbounds()">
+                        <option value="">Choose a server...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Select Inbound</label>
+                    <select id="client-inbound">
+                        <option value="">Choose an inbound...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="client-email" placeholder="user@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Password/UUID</label>
+                    <input type="text" id="client-password" placeholder="Leave empty to auto-generate">
+                </div>
+                <div class="form-group">
+                    <label>Data Limit (GB)</label>
+                    <input type="number" id="client-limit" placeholder="0 for unlimited" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Validity (Days)</label>
+                    <input type="number" id="client-days" placeholder="30" value="30" min="0">
+                </div>
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="client-start-after-use">
+                        <span>Start After First Use</span>
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button class="btn btn-secondary" onclick="closeAddClientModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="createClient()">Add Client</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');
@@ -134,6 +183,100 @@
         
         function hideLoading() {
             document.getElementById('loading').classList.add('hidden');
+        }
+        
+        async function openAddClientModal() {
+            const modal = document.getElementById('add-client-modal');
+            modal.classList.remove('hidden');
+            
+            try {
+                const response = await fetch('/api/servers');
+                const servers = await response.json();
+                const serverSelect = document.getElementById('client-server');
+                serverSelect.innerHTML = '<option value="">Choose a server...</option>';
+                servers.forEach(server => {
+                    const option = document.createElement('option');
+                    option.value = server.id;
+                    option.textContent = server.name;
+                    serverSelect.appendChild(option);
+                });
+            } catch (error) {
+                showToast('Error loading servers', 'error');
+            }
+        }
+        
+        function closeAddClientModal() {
+            document.getElementById('add-client-modal').classList.add('hidden');
+        }
+        
+        async function loadInbounds() {
+            const serverId = document.getElementById('client-server').value;
+            if (!serverId) return;
+            
+            try {
+                const response = await fetch(`/api/servers/${serverId}/inbounds`);
+                const data = await response.json();
+                const inboundSelect = document.getElementById('client-inbound');
+                inboundSelect.innerHTML = '<option value="">Choose an inbound...</option>';
+                
+                if (data.inbounds) {
+                    data.inbounds.forEach(inbound => {
+                        const option = document.createElement('option');
+                        option.value = inbound.id;
+                        option.textContent = `${inbound.protocol} - ${inbound.tag || inbound.id}`;
+                        inboundSelect.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                showToast('Error loading inbounds', 'error');
+            }
+        }
+        
+        async function createClient() {
+            const serverId = document.getElementById('client-server').value;
+            const inboundId = document.getElementById('client-inbound').value;
+            const email = document.getElementById('client-email').value.trim();
+            const password = document.getElementById('client-password').value.trim();
+            const limit = parseInt(document.getElementById('client-limit').value) || 0;
+            const days = parseInt(document.getElementById('client-days').value) || 30;
+            const startAfterUse = document.getElementById('client-start-after-use').checked;
+            
+            if (!serverId || !inboundId || !email) {
+                showToast('Please fill in all required fields', 'error');
+                return;
+            }
+            
+            showLoading();
+            try {
+                const response = await fetch('/api/client/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        server_id: serverId,
+                        inbound_id: inboundId,
+                        email,
+                        password,
+                        limit_gb: limit,
+                        days,
+                        start_after_use: startAfterUse
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showToast('Client added successfully', 'success');
+                    closeAddClientModal();
+                    if (typeof refreshData === 'function') {
+                        refreshData();
+                    }
+                } else {
+                    showToast(result.error || 'Failed to add client', 'error');
+                }
+            } catch (error) {
+                showToast('Error creating client', 'error');
+            } finally {
+                hideLoading();
+            }
         }
     </script>
     

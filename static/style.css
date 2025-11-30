@@ -142,6 +142,30 @@ body.sidebar-open {
     flex-shrink: 0;
 }
 
+.nav-button {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+}
+
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    transition: border-color 0.2s;
+}
+
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
 .sidebar-footer {
     padding: 16px;
     border-top: 1px solid var(--border-color);
