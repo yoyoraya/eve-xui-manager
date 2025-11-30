@@ -128,22 +128,27 @@ def format_remaining_days(timestamp):
         expiry_date = datetime.fromtimestamp(timestamp/1000)
         now = datetime.now()
         
+        # Format as Jalali (Persian) calendar
+        from jdatetime import datetime as jdatetime_class
+        jalali_date = jdatetime_class.fromgregorian(datetime=expiry_date)
+        jalali_today = jdatetime_class.fromgregorian(datetime=now)
+        
         if expiry_date < now:
             days_ago = (now - expiry_date).days
-            return {"text": f"Expired ({days_ago}d ago)", "days": -days_ago, "type": "expired"}
+            return {"text": f"Expired ({days_ago}d ago) [{jalali_date.strftime('%Y-%m-%d')}]", "days": -days_ago, "type": "expired"}
         
         remaining = expiry_date - now
         days = remaining.days
         
         if days == 0:
             hours = remaining.seconds // 3600
-            return {"text": f"{hours}h remaining", "days": 0, "type": "today"}
+            return {"text": f"{hours}h remaining [{jalali_date.strftime('%Y-%m-%d')}]", "days": 0, "type": "today"}
         elif days == 1:
-            return {"text": "1 day remaining", "days": 1, "type": "soon"}
+            return {"text": f"1 day remaining [{jalali_date.strftime('%Y-%m-%d')}]", "days": 1, "type": "soon"}
         elif days < 7:
-            return {"text": f"{days} days remaining", "days": days, "type": "soon"}
+            return {"text": f"{days} days remaining [{jalali_date.strftime('%Y-%m-%d')}]", "days": days, "type": "soon"}
         else:
-            return {"text": f"{days} days remaining", "days": days, "type": "normal"}
+            return {"text": f"{days} days remaining [{jalali_date.strftime('%Y-%m-%d')}]", "days": days, "type": "normal"}
     except:
         return {"text": "Invalid Date", "days": 0, "type": "error"}
 

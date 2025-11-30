@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}مدیران - X-UI Dashboard{% endblock %}
-{% block page_title %}مدیریت ادمین‌ها{% endblock %}
+{% block title %}Admins - X-UI Dashboard{% endblock %}
+{% block page_title %}Admin Management{% endblock %}
 
 {% block header_actions %}
 <button class="btn btn-primary" onclick="openAddAdminModal()">
@@ -9,7 +9,7 @@
         <line x1="12" y1="5" x2="12" y2="19"></line>
         <line x1="5" y1="12" x2="19" y2="12"></line>
     </svg>
-    افزودن ادمین
+    Add Admin
 </button>
 {% endblock %}
 
@@ -22,34 +22,34 @@
 <div class="modal-overlay hidden" id="admin-modal">
     <div class="modal">
         <div class="modal-header">
-            <h2 id="modal-title">افزودن ادمین</h2>
+            <h2 id="modal-title">Add Admin</h2>
             <button class="modal-close" onclick="closeAdminModal()">&times;</button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="edit-admin-id">
             <div class="form-group">
-                <label>نام کاربری</label>
-                <input type="text" id="admin-username" placeholder="نام کاربری">
+                <label>Username</label>
+                <input type="text" id="admin-username" placeholder="Username">
             </div>
             <div class="form-group">
-                <label>رمز عبور</label>
-                <input type="password" id="admin-password" placeholder="رمز عبور">
+                <label>Password</label>
+                <input type="password" id="admin-password" placeholder="Password">
             </div>
             <div class="form-group checkbox-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="admin-superadmin">
-                    <span>سوپر ادمین</span>
+                    <span>Super Admin</span>
                 </label>
             </div>
             <div class="form-group checkbox-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="admin-enabled" checked>
-                    <span>فعال</span>
+                    <span>Enabled</span>
                 </label>
             </div>
             <div class="form-actions">
-                <button class="btn btn-secondary" onclick="closeAdminModal()">انصراف</button>
-                <button class="btn btn-primary" onclick="saveAdmin()">ذخیره</button>
+                <button class="btn btn-secondary" onclick="closeAdminModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveAdmin()">Save</button>
             </div>
         </div>
     </div>
@@ -68,15 +68,22 @@
             admins = await response.json();
             renderAdmins();
         } catch (error) {
-            showToast('خطا در بارگذاری ادمین‌ها', 'error');
+            showToast('Error loading admins', 'error');
         }
+    }
+    
+    function formatJalaliDate(isoString) {
+        if (!isoString) return 'Never';
+        const date = new Date(isoString);
+        const formatter = new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        return formatter.format(date);
     }
     
     function renderAdmins() {
         const container = document.getElementById('admins-container');
         
         if (admins.length === 0) {
-            container.innerHTML = '<p class="no-data">هیچ ادمینی یافت نشد</p>';
+            container.innerHTML = '<p class="no-data">No admins found</p>';
             return;
         }
         
@@ -91,21 +98,21 @@
                 <div class="admin-info">
                     <h3>${admin.username}</h3>
                     <div class="admin-badges">
-                        ${admin.is_superadmin ? '<span class="badge superadmin">سوپر ادمین</span>' : '<span class="badge admin">ادمین</span>'}
-                        ${admin.enabled ? '<span class="badge active">فعال</span>' : '<span class="badge inactive">غیرفعال</span>'}
+                        ${admin.is_superadmin ? '<span class="badge superadmin">Super Admin</span>' : '<span class="badge admin">Admin</span>'}
+                        ${admin.enabled ? '<span class="badge active">Enabled</span>' : '<span class="badge inactive">Disabled</span>'}
                     </div>
                     <p class="admin-meta">
-                        آخرین ورود: ${admin.last_login ? new Date(admin.last_login).toLocaleDateString('fa-IR') : 'هرگز'}
+                        Last Login: ${formatJalaliDate(admin.last_login)}
                     </p>
                 </div>
                 <div class="admin-actions">
-                    <button class="action-btn" onclick="editAdmin(${admin.id})" title="ویرایش">
+                    <button class="action-btn" onclick="editAdmin(${admin.id})" title="Edit">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                         </svg>
                     </button>
-                    <button class="action-btn danger" onclick="deleteAdmin(${admin.id})" title="حذف">
+                    <button class="action-btn danger" onclick="deleteAdmin(${admin.id})" title="Delete">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="3 6 5 6 21 6"></polyline>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -117,7 +124,7 @@
     }
     
     function openAddAdminModal() {
-        document.getElementById('modal-title').textContent = 'افزودن ادمین';
+        document.getElementById('modal-title').textContent = 'Add Admin';
         document.getElementById('edit-admin-id').value = '';
         document.getElementById('admin-username').value = '';
         document.getElementById('admin-password').value = '';
@@ -130,7 +137,7 @@
         const admin = admins.find(a => a.id === id);
         if (!admin) return;
         
-        document.getElementById('modal-title').textContent = 'ویرایش ادمین';
+        document.getElementById('modal-title').textContent = 'Edit Admin';
         document.getElementById('edit-admin-id').value = admin.id;
         document.getElementById('admin-username').value = admin.username;
         document.getElementById('admin-password').value = '';
@@ -153,12 +160,12 @@
         };
         
         if (!data.username) {
-            showToast('نام کاربری الزامی است', 'error');
+            showToast('Username is required', 'error');
             return;
         }
         
         if (!id && !data.password) {
-            showToast('رمز عبور الزامی است', 'error');
+            showToast('Password is required', 'error');
             return;
         }
         
@@ -175,32 +182,32 @@
             const result = await response.json();
             
             if (result.success) {
-                showToast(id ? 'ادمین بروزرسانی شد' : 'ادمین اضافه شد');
+                showToast(id ? 'Admin updated' : 'Admin added');
                 closeAdminModal();
                 loadAdmins();
             } else {
-                showToast(result.error || 'خطا در ذخیره', 'error');
+                showToast(result.error || 'Error saving', 'error');
             }
         } catch (error) {
-            showToast('خطا در ذخیره', 'error');
+            showToast('Error saving', 'error');
         }
     }
     
     async function deleteAdmin(id) {
-        if (!confirm('آیا از حذف این ادمین اطمینان دارید؟')) return;
+        if (!confirm('Are you sure you want to delete this admin?')) return;
         
         try {
             const response = await fetch(`/api/admins/${id}`, { method: 'DELETE' });
             const result = await response.json();
             
             if (result.success) {
-                showToast('ادمین حذف شد');
+                showToast('Admin deleted');
                 loadAdmins();
             } else {
-                showToast(result.error || 'خطا در حذف', 'error');
+                showToast(result.error || 'Error deleting', 'error');
             }
         } catch (error) {
-            showToast('خطا در حذف', 'error');
+            showToast('Error deleting', 'error');
         }
     }
 </script>
