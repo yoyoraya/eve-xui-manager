@@ -362,6 +362,29 @@ input:checked + .slider:before {
     color: var(--text-secondary);
 }
 
+.interval-select {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+
+.interval-select:hover {
+    border-color: var(--primary);
+    background: var(--bg-card-hover);
+}
+
+.interval-select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
 .btn {
     display: inline-flex;
     align-items: center;

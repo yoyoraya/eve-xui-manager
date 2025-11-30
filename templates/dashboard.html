@@ -5,17 +5,17 @@
 
 {% block header_actions %}
 <div class="header-controls">
-    <div class="refresh-toggle">
-        <label class="toggle-switch">
-            <input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh()">
-            <span class="slider"></span>
-        </label>
-        <span class="toggle-label">Auto Refresh</span>
-        <div class="timer-control hidden" id="timer-control">
-            <input type="number" id="refresh-interval" value="60" min="10" max="3600" class="timer-input">
-            <span class="timer-label">seconds</span>
-        </div>
-    </div>
+    <label class="toggle-switch" title="Auto Refresh">
+        <input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh()">
+        <span class="slider"></span>
+    </label>
+    <select id="refresh-interval" class="interval-select" onchange="updateRefreshInterval()">
+        <option value="10">10s</option>
+        <option value="30">30s</option>
+        <option value="60" selected>60s</option>
+        <option value="120">2 min</option>
+        <option value="300">5 min</option>
+    </select>
     <button class="btn btn-primary" onclick="refreshData()">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
@@ -220,14 +220,17 @@
 
     function toggleAutoRefresh() {
         const toggle = document.getElementById('auto-refresh-toggle');
-        const timerControl = document.getElementById('timer-control');
         
         if (toggle.checked) {
-            timerControl.classList.remove('hidden');
             startAutoRefresh();
         } else {
-            timerControl.classList.add('hidden');
             stopAutoRefresh();
+        }
+    }
+
+    function updateRefreshInterval() {
+        if (document.getElementById('auto-refresh-toggle').checked) {
+            startAutoRefresh();
         }
     }
 
@@ -243,12 +246,6 @@
             autoRefreshInterval = null;
         }
     }
-
-    document.getElementById('refresh-interval').addEventListener('change', function() {
-        if (document.getElementById('auto-refresh-toggle').checked) {
-            startAutoRefresh();
-        }
-    });
 
     async function refreshData() {
         showLoading();
