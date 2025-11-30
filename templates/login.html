@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ lang }}" dir="{{ 'rtl' if lang == 'fa' else 'ltr' }}">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -224,7 +224,7 @@
                     </svg>
                 </div>
                 <h1>X-UI Dashboard</h1>
-                <p>{{ t.login_subtitle }}</p>
+                <p>Sign in to management panel</p>
             </div>
             
             {% if error %}
@@ -240,7 +240,7 @@
             
             <form method="POST" id="login-form">
                 <div class="form-group">
-                    <label for="username">{{ t.username }}</label>
+                    <label for="username">Username</label>
                     <div class="input-wrapper">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
@@ -251,7 +251,7 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="password">{{ t.password }}</label>
+                    <label for="password">Password</label>
                     <div class="input-wrapper">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
@@ -262,7 +262,7 @@
                 </div>
                 
                 <button type="submit" class="btn-login" id="login-btn">
-                    <span>{{ t.login_btn }}</span>
+                    <span>Sign In</span>
                 </button>
             </form>
             
@@ -274,7 +274,7 @@
         document.getElementById('login-form').addEventListener('submit', function(e) {
             const btn = document.getElementById('login-btn');
             btn.disabled = true;
-            btn.innerHTML = '<div class="spinner"></div><span>{{ t.logging_in }}</span>';
+            btn.innerHTML = '<div class="spinner"></div><span>Signing in...</span>';
         });
     </script>
 </body>

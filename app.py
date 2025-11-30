@@ -4,171 +4,12 @@ import json
 import base64
 import requests
 import qrcode
-import jdatetime
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from urllib.parse import urlparse, quote
-
-TRANSLATIONS = {
-    'en': {
-        'dashboard': 'Dashboard',
-        'admins': 'Admins',
-        'servers': 'Servers',
-        'inbounds': 'Inbounds',
-        'clients': 'Clients',
-        'traffic': 'Traffic',
-        'total_traffic': 'Total Traffic',
-        'active': 'Active',
-        'inactive': 'Inactive',
-        'enabled': 'Enabled',
-        'disabled': 'Disabled',
-        'network': 'Network',
-        'security': 'Security',
-        'port': 'Port',
-        'email': 'Email',
-        'status': 'Status',
-        'expiry': 'Expiry',
-        'volume': 'Volume',
-        'actions': 'Actions',
-        'add_server': 'Add Server',
-        'edit_server': 'Edit Server',
-        'server_name': 'Server Name',
-        'panel_url': 'Panel URL',
-        'username': 'Username',
-        'password': 'Password',
-        'save': 'Save',
-        'cancel': 'Cancel',
-        'delete': 'Delete',
-        'test_connection': 'Test Connection',
-        'refresh': 'Refresh',
-        'auto_refresh': 'Auto Refresh',
-        'seconds': 'seconds',
-        'renew_client': 'Renew Client',
-        'days': 'Days',
-        'volume_gb': 'Volume (GB)',
-        'start_after_first_use': 'Start after first use',
-        'renew': 'Renew',
-        'show_clients': 'Show Clients',
-        'no_servers': 'No servers added',
-        'add_server_hint': 'Add your X-UI server to see statistics.',
-        'remaining': 'remaining',
-        'expired': 'Expired',
-        'unlimited': 'Unlimited',
-        'superadmin': 'Super Admin',
-        'admin': 'Admin',
-        'logout': 'Logout',
-        'login': 'Login',
-        'login_title': 'Login to Panel',
-        'login_button': 'Login',
-        'login_subtitle': 'Sign in to management panel',
-        'login_btn': 'Sign In',
-        'logging_in': 'Signing in...',
-        'days_remaining': 'days remaining',
-        'hours_remaining': 'hours remaining',
-        'days_ago': 'days ago',
-        'start_after_use': 'Start after first use',
-        'total': 'total',
-        'used': 'Used',
-        'remaining_vol': 'Remaining'
-    },
-    'fa': {
-        'dashboard': 'داشبورد',
-        'admins': 'مدیران',
-        'servers': 'سرورها',
-        'inbounds': 'Inbounds',
-        'clients': 'کلاینت‌ها',
-        'traffic': 'ترافیک',
-        'total_traffic': 'ترافیک کل',
-        'active': 'فعال',
-        'inactive': 'غیرفعال',
-        'enabled': 'فعال',
-        'disabled': 'غیرفعال',
-        'network': 'شبکه',
-        'security': 'امنیت',
-        'port': 'پورت',
-        'email': 'ایمیل',
-        'status': 'وضعیت',
-        'expiry': 'انقضا',
-        'volume': 'حجم',
-        'actions': 'عملیات',
-        'add_server': 'افزودن سرور',
-        'edit_server': 'ویرایش سرور',
-        'server_name': 'نام سرور',
-        'panel_url': 'آدرس پنل',
-        'username': 'نام کاربری',
-        'password': 'رمز عبور',
-        'save': 'ذخیره',
-        'cancel': 'انصراف',
-        'delete': 'حذف',
-        'test_connection': 'تست اتصال',
-        'refresh': 'بروزرسانی',
-        'auto_refresh': 'بروزرسانی خودکار',
-        'seconds': 'ثانیه',
-        'renew_client': 'تمدید کلاینت',
-        'days': 'روز',
-        'volume_gb': 'حجم (گیگابایت)',
-        'start_after_first_use': 'شروع پس از اولین استفاده',
-        'renew': 'تمدید',
-        'show_clients': 'نمایش کلاینت‌ها',
-        'no_servers': 'سروری اضافه نشده',
-        'add_server_hint': 'برای مشاهده اطلاعات، سرور X-UI خود را اضافه کنید.',
-        'remaining': 'باقیمانده',
-        'expired': 'منقضی شده',
-        'unlimited': 'نامحدود',
-        'superadmin': 'سوپر ادمین',
-        'admin': 'ادمین',
-        'logout': 'خروج',
-        'login': 'ورود',
-        'login_title': 'ورود به پنل مدیریت',
-        'login_button': 'ورود به سیستم',
-        'login_subtitle': 'ورود به پنل مدیریت',
-        'login_btn': 'ورود به سیستم',
-        'logging_in': 'در حال ورود...',
-        'days_remaining': 'روز باقیمانده',
-        'hours_remaining': 'ساعت باقیمانده',
-        'days_ago': 'روز پیش',
-        'start_after_use': 'شروع پس از اولین استفاده',
-        'total': 'کل',
-        'used': 'مصرف شده',
-        'remaining_vol': 'باقیمانده'
-    }
-}
-
-def get_lang():
-    return session.get('lang', 'en')
-
-def t(key):
-    lang = get_lang()
-    return TRANSLATIONS.get(lang, TRANSLATIONS['en']).get(key, key)
-
-def to_jalali(dt):
-    if not dt:
-        return None
-    try:
-        if isinstance(dt, (int, float)):
-            if dt <= 0:
-                return None
-            dt = datetime.fromtimestamp(dt / 1000 if dt > 9999999999 else dt)
-        jd = jdatetime.datetime.fromgregorian(datetime=dt)
-        return jd.strftime('%Y/%m/%d')
-    except:
-        return None
-
-def to_jalali_full(dt):
-    if not dt:
-        return None
-    try:
-        if isinstance(dt, (int, float)):
-            if dt <= 0:
-                return None
-            dt = datetime.fromtimestamp(dt / 1000 if dt > 9999999999 else dt)
-        jd = jdatetime.datetime.fromgregorian(datetime=dt)
-        return jd.strftime('%Y/%m/%d %H:%M')
-    except:
-        return None
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
@@ -682,47 +523,33 @@ def login():
         
         if request.is_json:
             return jsonify({"success": False, "error": "Invalid username or password"})
-        lang = get_lang()
-        return render_template('login.html', error="Invalid username or password", lang=lang, t=TRANSLATIONS.get(lang, TRANSLATIONS['en']))
+        return render_template('login.html', error="Invalid username or password")
     
-    lang = get_lang()
-    return render_template('login.html', lang=lang, t=TRANSLATIONS.get(lang, TRANSLATIONS['en']))
+    return render_template('login.html')
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
 
-@app.route('/api/lang/<lang>')
-def set_language(lang):
-    if lang in ['en', 'fa']:
-        session['lang'] = lang
-    return jsonify({"success": True, "lang": session.get('lang', 'en')})
-
 @app.route('/')
 @login_required
 def dashboard():
     servers = Server.query.filter_by(enabled=True).all()
-    lang = get_lang()
     return render_template('dashboard.html', 
                          servers=servers, 
                          server_count=len(servers),
                          admin_username=session.get('admin_username'),
-                         is_superadmin=session.get('is_superadmin', False),
-                         lang=lang,
-                         t=TRANSLATIONS.get(lang, TRANSLATIONS['en']))
+                         is_superadmin=session.get('is_superadmin', False))
 
 @app.route('/admins')
 @login_required
 def admins_page():
     if not session.get('is_superadmin'):
         return redirect(url_for('dashboard'))
-    lang = get_lang()
     return render_template('admins.html',
                          admin_username=session.get('admin_username'),
-                         is_superadmin=session.get('is_superadmin', False),
-                         lang=lang,
-                         t=TRANSLATIONS.get(lang, TRANSLATIONS['en']))
+                         is_superadmin=session.get('is_superadmin', False))
 
 @app.route('/api/admins', methods=['GET'])
 @superadmin_required
