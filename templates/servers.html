@@ -178,8 +178,10 @@
                 body: JSON.stringify(data)
             });
             
-            if (!response.ok) {
-                throw new Error('Failed to save server');
+            const result = await response.json();
+            
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || 'Failed to save server');
             }
             
             showToast(id ? 'Server updated' : 'Server added', 'success');
