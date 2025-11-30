@@ -252,16 +252,35 @@ Documentation: https://github.com/alireza0/x-ui
 
 ## "Start After First Use" Feature
 
-When a client has **expiryTime = 0 or negative timestamp**, it means the expiry date should be set **after the first connection**. This is detected by:
-- `expiryTime == 0`
-- `reset > 0` (indicates a pending "start after first use")
+When a client has a **negative expiryTime**, it means the expiry date should be set **after the first connection**. This is used for clients where the subscription timer should start only when they first connect.
+
+### Renewal Logic with "Start After First Use"
+
+When renewing a client with this feature enabled:
+
+**Formula**: `expiryTime = -1 * (days * 86400000)`
+- `86400000` = milliseconds per day
+- Example: 30 days = `-30 * 86400000 = -2592000000`
+
+**In the panel (Web UI)**: Shows as "30 Days (Not Started)" or similar
+
+**After first connection**: The panel detects the negative value and converts it to a proper expiry timestamp (current time + |negative value|)
+
+### Implementation Details
+
+1. **Set negative timestamp**: Send `expiryTime = -(days * 86400000)` to X-UI API
+2. **Reset traffic automatically**: After renewal, call `resetClientTraffic` endpoint to prevent disconnection due to old quota
+3. **Enable client**: Ensure `enable: true` is set
+4. **Set reset flag**: Keep `reset: 0` (not used for this feature)
+
+### Detection in Dashboard
+
+The feature is detected by checking:
+- `expiryTime < 0` (negative timestamp)
 - `expiryTimeStr == 'StartAfterFirstUse'`
 - `expiryOption == 'after_first_use'`
 
-When renewing a client with "Start after first use":
-- Set expiry timestamp to `0` (zero)
-- Set `reset` field to trigger the feature
-- The panel will update expiry time after the first connection
+When detected, the UI shows: "Start after first use" with a special badge color
 
 ## Default Credentials
 - Username: `admin`

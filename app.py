@@ -882,8 +882,11 @@ def renew_client(server_id, inbound_id, email):
             return jsonify({"success": False, "error": "Client not found"})
         
         if start_after_first_use:
-            new_expiry = 0
-            client_found['reset'] = days
+            # For "Start After First Use", use negative timestamp
+            # Formula: -(days * 86400000) where 86400000 is milliseconds per day
+            # X-UI panel converts this to positive timestamp after first connection
+            new_expiry = -1 * (days * 86400000)
+            client_found['reset'] = 0
         else:
             new_expiry = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
             client_found['reset'] = 0
@@ -915,6 +918,13 @@ def renew_client(server_id, inbound_id, email):
         if update_resp.status_code == 200:
             resp_data = update_resp.json()
             if resp_data.get('success'):
+                # After renewal, reset traffic to prevent disconnection due to depleted quota
+                try:
+                    reset_url = f"{server.host}/panel/api/inbounds/{inbound_id}/resetClientTraffic/{email}"
+                    session_obj.post(reset_url, verify=False, timeout=10)
+                except:
+                    pass  # Reset failure is not critical, renewal still succeeded
+                
                 return jsonify({"success": True})
             return jsonify({"success": False, "error": resp_data.get('msg', 'Update failed')})
         
