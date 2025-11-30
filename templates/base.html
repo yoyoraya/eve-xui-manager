@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fa" dir="rtl">
+<html lang="{{ lang|default('en') }}" dir="{{ 'rtl' if lang == 'fa' else 'ltr' }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
-<body>
+<body class="{{ 'rtl' if lang == 'fa' else 'ltr' }}">
     <div class="app-layout">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
@@ -34,7 +34,7 @@
                         <rect x="14" y="14" width="7" height="7"></rect>
                         <rect x="3" y="14" width="7" height="7"></rect>
                     </svg>
-                    <span>داشبورد</span>
+                    <span>{{ t.dashboard }}</span>
                 </a>
                 
                 {% if is_superadmin %}
@@ -45,9 +45,16 @@
                         <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                         <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                     </svg>
-                    <span>مدیران</span>
+                    <span>{{ t.admins }}</span>
                 </a>
                 {% endif %}
+                
+                <div class="nav-divider"></div>
+                
+                <div class="lang-toggle">
+                    <button class="lang-btn {% if lang == 'en' %}active{% endif %}" onclick="setLang('en')">EN</button>
+                    <button class="lang-btn {% if lang == 'fa' %}active{% endif %}" onclick="setLang('fa')">فا</button>
+                </div>
             </nav>
             
             <div class="sidebar-footer">
@@ -60,10 +67,10 @@
                     </div>
                     <div class="user-details">
                         <span class="user-name">{{ admin_username }}</span>
-                        <span class="user-role">{% if is_superadmin %}سوپر ادمین{% else %}ادمین{% endif %}</span>
+                        <span class="user-role">{% if is_superadmin %}{{ t.superadmin }}{% else %}{{ t.admin }}{% endif %}</span>
                     </div>
                 </div>
-                <a href="{{ url_for('logout') }}" class="logout-btn" title="خروج">
+                <a href="{{ url_for('logout') }}" class="logout-btn" title="{{ t.logout }}">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                         <polyline points="16 17 21 12 16 7"></polyline>
@@ -104,6 +111,8 @@
     <div class="toast hidden" id="toast"></div>
     
     <script>
+        const currentLang = '{{ lang|default("en") }}';
+        
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');
             document.getElementById('sidebar-overlay').classList.toggle('show');
@@ -124,6 +133,15 @@
         
         function hideLoading() {
             document.getElementById('loading').classList.add('hidden');
+        }
+        
+        async function setLang(lang) {
+            try {
+                await fetch(`/api/lang/${lang}`);
+                window.location.reload();
+            } catch (error) {
+                console.error('Failed to set language:', error);
+            }
         }
     </script>
     
