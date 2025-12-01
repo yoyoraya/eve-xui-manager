@@ -62,6 +62,8 @@ class Server(db.Model):
     password = db.Column(db.String(255), nullable=False)
     enabled = db.Column(db.Boolean, default=True)
     panel_type = db.Column(db.String(50), default='auto')
+    sub_path = db.Column(db.String(50), default='/sub/')
+    json_path = db.Column(db.String(50), default='/json/')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def to_dict(self):
@@ -72,6 +74,8 @@ class Server(db.Model):
             'username': self.username,
             'enabled': self.enabled,
             'panel_type': self.panel_type,
+            'sub_path': self.sub_path,
+            'json_path': self.json_path,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -414,10 +418,12 @@ def process_inbounds(inbounds, server):
                 inbound_id = inbound.get('id')
                 email = client.get('email', '')
                 sub_id = client.get('subId', '')
+                base_url = server.host.rstrip('/')
+                s_path = server.sub_path.strip('/')
                 if server.panel_type == 'alireza':
-                    subscription_link = f"{server.host}/xui/API/inbounds/{inbound_id}/clients/{email}"
+                    subscription_link = f"{base_url}/xui/API/inbounds/{inbound_id}/clients/{email}"
                 else:
-                    subscription_link = f"{server.host}/api/inbounds/{inbound_id}/clients/{email}"
+                    subscription_link = f"{base_url}/{s_path}/{sub_id}"
                 
                 expiry_timestamp = client.get('expiryTime', 0)
                 total_gb = client.get('totalGB', 0)
@@ -685,7 +691,9 @@ def add_server():
         username=data['username'],
         password=data['password'],
         enabled=data.get('enabled', True),
-        panel_type=data.get('panel_type', 'auto')
+        panel_type=data.get('panel_type', 'auto'),
+        sub_path=data.get('sub_path', '/sub/').strip(),
+        json_path=data.get('json_path', '/json/').strip()
     )
     
     db.session.add(server)
@@ -711,6 +719,10 @@ def update_server(server_id):
         server.enabled = data['enabled']
     if data.get('panel_type'):
         server.panel_type = data['panel_type']
+    if data.get('sub_path'):
+        server.sub_path = data['sub_path'].strip()
+    if data.get('json_path'):
+        server.json_path = data['json_path'].strip()
     
     db.session.commit()
     return jsonify({"success": True, "server": server.to_dict()})
