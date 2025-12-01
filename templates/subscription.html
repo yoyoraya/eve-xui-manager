@@ -43,213 +43,274 @@
         background: #475569;
       }
       .tab-btn {
-        @apply px-4 py-2 rounded-lg font-medium text-sm transition-all cursor-pointer;
+        @apply px-3 py-1.5 text-xs font-medium rounded transition-all cursor-pointer;
       }
       .tab-btn.inactive {
-        @apply text-slate-400 hover:text-slate-300 hover:bg-slate-800/50;
+        @apply text-slate-500 hover:text-slate-400 bg-transparent;
       }
       .tab-btn.active {
-        @apply bg-primary text-white shadow-lg shadow-primary/50;
+        @apply bg-primary text-white;
       }
-      .success-toast {
-        @apply fixed bottom-4 right-4 bg-secondary text-white px-6 py-3 rounded-lg shadow-lg;
+      .avatar {
+        width: 80px;
+        height: 80px;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 40px;
+        position: relative;
+      }
+      .avatar::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        right: 0;
+        width: 20px;
+        height: 20px;
+        background: #10b981;
+        border-radius: 50%;
+        border: 3px solid #0B1121;
+      }
+      .step-number {
+        @apply w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs font-bold;
+      }
+      .collapse-btn {
+        @apply text-slate-400 transition-transform duration-300;
+      }
+      .collapse-btn.open {
+        @apply rotate-180;
       }
     </style>
 </head>
 <body class="bg-background">
-    <div class="min-h-screen py-8 px-4 sm:px-6 lg:px-8">
+    <div class="min-h-screen py-8 px-4 sm:px-6">
         <!-- Background gradient overlay -->
-        <div class="fixed inset-0 -z-10 opacity-30">
+        <div class="fixed inset-0 -z-10 opacity-20">
             <div class="absolute inset-0 bg-gradient-to-br from-primary/20 via-background to-secondary/10"></div>
         </div>
 
-        <div class="max-w-3xl mx-auto">
-            <!-- Header -->
-            <div class="text-center mb-8">
-                <h1 class="text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-                    {{ client.email }}
-                </h1>
-                <div class="flex justify-center gap-3 mt-4">
-                    <span class="inline-block px-4 py-1 rounded-full text-sm font-semibold {% if client.is_active %}bg-secondary/20 text-secondary{% else %}bg-red-500/20 text-red-400{% endif %}">
-                        {% if client.is_active %}✓ Active{% else %}✗ Inactive{% endif %}
-                    </span>
+        <div class="max-w-2xl mx-auto">
+            <!-- Header Profile -->
+            <div class="text-center mb-10">
+                <div class="flex justify-center mb-4">
+                    <div class="avatar">👤</div>
+                </div>
+                <h1 class="text-3xl font-bold text-white mb-3">{{ client.email }}</h1>
+                <div class="inline-block px-4 py-1.5 rounded-full text-xs font-semibold {% if client.is_active %}bg-secondary/20 text-secondary border border-secondary/50{% else %}bg-red-500/20 text-red-400 border border-red-500/50{% endif %}">
+                    {% if client.is_active %}✓ ACTIVE SUBSCRIPTION{% else %}✗ INACTIVE{% endif %}
                 </div>
             </div>
 
-            <!-- Stats Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                <!-- Usage -->
-                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
-                    <div class="text-slate-400 text-sm font-medium mb-1">Used</div>
-                    <div class="text-2xl font-bold text-primary">{{ client.total_used }}</div>
+            <!-- Data Usage Card -->
+            <div class="bg-surface rounded-xl border border-slate-700/50 p-6 mb-6">
+                <div class="flex items-center gap-2 mb-6">
+                    <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                    </svg>
+                    <h2 class="text-lg font-semibold text-white">Data Usage</h2>
                 </div>
-                <!-- Limit -->
-                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
-                    <div class="text-slate-400 text-sm font-medium mb-1">Limit</div>
-                    <div class="text-2xl font-bold text-slate-200">{{ client.total_limit }}</div>
-                </div>
-                <!-- Download -->
-                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
-                    <div class="text-slate-400 text-sm font-medium mb-1">↓ Download</div>
-                    <div class="text-2xl font-bold text-blue-400">{{ client.download }}</div>
-                </div>
-                <!-- Upload -->
-                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
-                    <div class="text-slate-400 text-sm font-medium mb-1">↑ Upload</div>
-                    <div class="text-2xl font-bold text-cyan-400">{{ client.upload }}</div>
-                </div>
-            </div>
 
-            <!-- Progress Bar -->
-            {% if client.percentage_used >= 0 %}
-            <div class="mb-8">
-                <div class="flex justify-between items-center mb-2">
-                    <span class="text-slate-400 text-sm">Data Usage Progress</span>
-                    <span class="text-primary font-semibold">{{ "{:.1f}".format(client.percentage_used) }}%</span>
+                <div class="grid grid-cols-2 gap-6 mb-6">
+                    <div>
+                        <div class="text-xs text-slate-400 font-medium mb-1">USED</div>
+                        <div class="text-3xl font-bold text-white">{{ client.total_used }}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-slate-400 font-medium mb-1">LIMIT</div>
+                        <div class="text-3xl font-bold text-slate-300">{{ client.total_limit }}</div>
+                    </div>
                 </div>
-                <div class="h-2 bg-slate-700 rounded-full overflow-hidden">
+
+                {% if client.percentage_used >= 0 %}
+                <div class="h-1.5 bg-slate-700 rounded-full overflow-hidden mb-6">
                     <div class="h-full bg-gradient-to-r from-primary to-secondary rounded-full transition-all duration-500" style="width: {{ [client.percentage_used, 100]|min }}%"></div>
                 </div>
-            </div>
-            {% endif %}
+                {% endif %}
 
-            <!-- Info Row -->
-            <div class="bg-surface rounded-xl border border-slate-700/50 p-4 mb-8">
-                <div class="flex justify-between items-center">
-                    <span class="text-slate-400">⏰ Expires In</span>
-                    <span class="font-semibold text-slate-200">{{ client.expiry }}</span>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-xs text-slate-400 font-medium mb-1">Expiration</div>
+                        <div class="text-sm font-semibold text-orange-400">Not started yet</div>
+                    </div>
+                    <div class="text-right text-xs text-slate-400">
+                        Validity: {{ client.expiry }}
+                    </div>
                 </div>
             </div>
 
-            <!-- Subscription Section -->
-            <div class="bg-surface rounded-xl border border-slate-700/50 p-6 mb-8">
-                <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
-                    <span>📥</span> Import Subscription
-                </h2>
-                
-                <div id="successMsg" class="success-toast opacity-0 pointer-events-none transition-opacity">
-                    ✓ Copied to clipboard!
+            <!-- Subscription Setup Card -->
+            <div class="bg-surface rounded-xl border border-slate-700/50 p-6 mb-6">
+                <div class="flex items-center gap-2 mb-6">
+                    <svg class="w-5 h-5 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.658 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                    </svg>
+                    <h2 class="text-lg font-semibold text-white">Subscription Setup</h2>
                 </div>
 
                 <!-- Copy Box -->
-                <div class="mb-6">
-                    <label class="text-slate-400 text-sm font-medium mb-2 block">Subscription Link</label>
-                    <div class="flex gap-2">
-                        <input 
-                            type="text" 
-                            id="subLink" 
-                            value="{{ client.subscription_url }}" 
-                            readonly 
-                            class="flex-1 bg-background border border-slate-600 rounded-lg px-4 py-2 text-slate-300 font-mono text-sm focus:border-primary focus:outline-none transition-colors"
-                        >
-                        <button onclick="copyLink('subLink')" class="px-4 py-2 bg-primary hover:bg-primary/80 text-white font-medium rounded-lg transition-all">
-                            Copy
-                        </button>
-                    </div>
+                <div class="mb-6 flex gap-3">
+                    <input 
+                        type="text" 
+                        id="subLink" 
+                        value="{{ client.subscription_url }}" 
+                        readonly 
+                        class="flex-1 bg-background border border-slate-600 rounded-lg px-4 py-2.5 text-slate-400 font-mono text-sm focus:border-primary focus:outline-none transition-colors"
+                    >
+                    <button onclick="copyLink('subLink')" class="px-6 py-2.5 bg-primary hover:bg-primary/80 text-white font-semibold rounded-lg transition-all whitespace-nowrap flex items-center gap-2">
+                        <span>📋</span> COPY
+                    </button>
                 </div>
 
                 <!-- Tabs -->
-                <div class="mb-6">
-                    <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
-                        <button class="tab-btn active" onclick="switchTab(event, 'v2ray')">📱 v2rayNG</button>
-                        <button class="tab-btn inactive" onclick="switchTab(event, 'nekobox')">📦 NekoBox</button>
-                        <button class="tab-btn inactive" onclick="switchTab(event, 'streisand')">🔐 Streisand</button>
-                        <button class="tab-btn inactive" onclick="switchTab(event, 'others')">🌐 Others</button>
-                    </div>
+                <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
+                    <button class="tab-btn active" onclick="switchTab(event, 'v2ray')">v2rayNG</button>
+                    <button class="tab-btn inactive" onclick="switchTab(event, 'nekobox')">NekoBox</button>
+                    <button class="tab-btn inactive" onclick="switchTab(event, 'shadowrocket')">Shadowrocket</button>
+                    <button class="tab-btn inactive" onclick="switchTab(event, 'streisand')">Streisand</button>
+                </div>
 
-                    <!-- v2rayNG -->
-                    <div id="v2ray" class="tab-content">
-                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
-                            <h3 class="font-semibold text-slate-200 mb-3">Setup Steps</h3>
-                            <ol class="text-slate-400 text-sm space-y-2 list-decimal list-inside">
-                                <li>Download v2rayNG from Google Play or APK sources</li>
-                                <li>Open the app → Tap "+" menu</li>
-                                <li>Select "Subscription" or "Import from clipboard"</li>
-                                <li>Paste the subscription link above</li>
-                                <li>Tap connect and enjoy!</li>
-                            </ol>
+                <!-- v2rayNG Guide -->
+                <div id="v2ray" class="tab-content mb-6 bg-background/40 rounded-lg p-5 border border-slate-700/50">
+                    <h3 class="font-semibold text-white mb-4 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd"></path></svg>
+                        v2rayNG Setup Guide
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">Follow these steps to connect efficiently.</p>
+                    <div class="space-y-3 mb-5">
+                        <div class="flex gap-3">
+                            <span class="step-number">1</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Download v2rayNG from the store.</span>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <a href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
-                                <span>📲</span> Google Play
-                            </a>
-                            <a href="https://github.com/2dust/v2rayNG/releases" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
-                                <span>⬇️</span> APK
-                            </a>
+                        <div class="flex gap-3">
+                            <span class="step-number">2</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Copy the subscription link above <span class="text-primary font-semibold">(Purple Button)</span>.</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">3</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Open v2rayNG and find "Import from Clipboard" or "Subscription Settings".</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">4</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Update subscription and tap Connect! 🚀</span>
                         </div>
                     </div>
+                    <div class="flex items-center justify-between">
+                        <a href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" class="px-5 py-2 bg-background border border-slate-600 text-slate-300 hover:text-white font-medium rounded-lg transition-colors flex items-center gap-2">
+                            <span>⬇️</span> Download App
+                        </a>
+                        <span class="text-xs text-slate-500">Latest Version Recommended</span>
+                    </div>
+                </div>
 
-                    <!-- NekoBox -->
-                    <div id="nekobox" class="tab-content hidden">
-                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
-                            <h3 class="font-semibold text-slate-200 mb-3">Setup Steps</h3>
-                            <ol class="text-slate-400 text-sm space-y-2 list-decimal list-inside">
-                                <li>Download NekoBox from GitHub Releases</li>
-                                <li>Open the app → Go to Profiles</li>
-                                <li>Tap "+" → "Add Profile from Clipboard"</li>
-                                <li>Paste the subscription link and save</li>
-                                <li>Select profile and connect!</li>
-                            </ol>
+                <!-- NekoBox Guide -->
+                <div id="nekobox" class="tab-content hidden mb-6 bg-background/40 rounded-lg p-5 border border-slate-700/50">
+                    <h3 class="font-semibold text-white mb-4 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd"></path></svg>
+                        NekoBox Setup Guide
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">Follow these steps to connect efficiently.</p>
+                    <div class="space-y-3 mb-5">
+                        <div class="flex gap-3">
+                            <span class="step-number">1</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Download NekoBox from GitHub or Play Store.</span>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
-                                <span>⬇️</span> APK
-                            </a>
-                            <a href="https://play.google.com/store/apps/details?id=moe.nb4a" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
-                                <span>📲</span> Play Store
-                            </a>
+                        <div class="flex gap-3">
+                            <span class="step-number">2</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Copy the subscription link above <span class="text-primary font-semibold">(Purple Button)</span>.</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">3</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Go to Profiles → Add from Clipboard and paste.</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">4</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Select profile and connect! 🚀</span>
                         </div>
                     </div>
+                    <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" target="_blank" class="px-5 py-2 bg-background border border-slate-600 text-slate-300 hover:text-white font-medium rounded-lg transition-colors inline-flex items-center gap-2">
+                        <span>⬇️</span> Download App
+                    </a>
+                </div>
 
-                    <!-- Streisand -->
-                    <div id="streisand" class="tab-content hidden">
-                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
-                            <h3 class="font-semibold text-slate-200 mb-3">Setup Steps</h3>
-                            <ol class="text-slate-400 text-sm space-y-2 list-decimal list-inside">
-                                <li>Download Streisand for iOS from App Store</li>
-                                <li>Open the app → Tap "+" button</li>
-                                <li>Choose "Add from Clipboard"</li>
-                                <li>Paste your subscription link</li>
-                                <li>Save and connect!</li>
-                            </ol>
+                <!-- Shadowrocket Guide -->
+                <div id="shadowrocket" class="tab-content hidden mb-6 bg-background/40 rounded-lg p-5 border border-slate-700/50">
+                    <h3 class="font-semibold text-white mb-4 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd"></path></svg>
+                        Shadowrocket Setup Guide (iOS)
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">Follow these steps to connect efficiently.</p>
+                    <div class="space-y-3 mb-5">
+                        <div class="flex gap-3">
+                            <span class="step-number">1</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Download Shadowrocket from App Store.</span>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <a href="https://apps.apple.com/us/app/streisand/id6450534064" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
-                                <span>🍎</span> App Store
-                            </a>
+                        <div class="flex gap-3">
+                            <span class="step-number">2</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Copy the subscription link above <span class="text-primary font-semibold">(Purple Button)</span>.</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">3</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Open app → Tap "+" → Select "Add from Clipboard".</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">4</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Paste and connect! 🚀</span>
                         </div>
                     </div>
+                    <a href="https://apps.apple.com/us/app/shadowrocket/id932747118" target="_blank" class="px-5 py-2 bg-background border border-slate-600 text-slate-300 hover:text-white font-medium rounded-lg transition-colors inline-flex items-center gap-2">
+                        <span>🍎</span> Download App
+                    </a>
+                </div>
 
-                    <!-- Others -->
-                    <div id="others" class="tab-content hidden">
-                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
-                            <h3 class="font-semibold text-slate-200 mb-3">Popular Apps</h3>
-                            <ul class="text-slate-400 text-sm space-y-2 list-disc list-inside">
-                                <li><strong class="text-slate-300">Shadowrocket (iOS):</strong> App → "+" → Import → Paste</li>
-                                <li><strong class="text-slate-300">Clash (Android):</strong> Profile → Add from clipboard</li>
-                                <li><strong class="text-slate-300">Sing-Box:</strong> Configuration → Add subscription</li>
-                                <li><strong class="text-slate-300">Hiddify:</strong> Profiles → Add → Paste link</li>
-                            </ul>
+                <!-- Streisand Guide -->
+                <div id="streisand" class="tab-content hidden mb-6 bg-background/40 rounded-lg p-5 border border-slate-700/50">
+                    <h3 class="font-semibold text-white mb-4 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd"></path></svg>
+                        Streisand Setup Guide (iOS)
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">Follow these steps to connect efficiently.</p>
+                    <div class="space-y-3 mb-5">
+                        <div class="flex gap-3">
+                            <span class="step-number">1</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Download Streisand from App Store.</span>
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <a href="https://apps.apple.com/us/app/shadowrocket/id932747118" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
-                                <span>🍎</span> Shadowrocket
-                            </a>
-                            <a href="https://github.com/SagerNet/sing-box" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
-                                <span>⬇️</span> Sing-Box
-                            </a>
+                        <div class="flex gap-3">
+                            <span class="step-number">2</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Copy the subscription link above <span class="text-primary font-semibold">(Purple Button)</span>.</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">3</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Open app → Tap "+" → "Add from Clipboard".</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="step-number">4</span>
+                            <span class="text-sm text-slate-300 pt-0.5">Save and connect! 🚀</span>
                         </div>
                     </div>
+                    <a href="https://apps.apple.com/us/app/streisand/id6450534064" target="_blank" class="px-5 py-2 bg-background border border-slate-600 text-slate-300 hover:text-white font-medium rounded-lg transition-colors inline-flex items-center gap-2">
+                        <span>🍎</span> Download App
+                    </a>
                 </div>
             </div>
 
-            <!-- Manual Configs -->
+            <!-- Manual Configuration Card -->
             {% if client.configs %}
-            <div class="bg-surface rounded-xl border border-slate-700/50 p-6">
-                <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
-                    <span>⚙️</span> Manual Configs
-                </h2>
-                <div class="space-y-2">
+            <div class="bg-surface rounded-xl border border-slate-700/50 mb-6">
+                <button onclick="toggleConfig()" class="w-full p-6 flex items-center justify-between hover:bg-slate-700/30 transition-colors rounded-xl">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        <span class="text-lg font-semibold text-white">Manual Configuration</span>
+                    </div>
+                    <svg id="collapseIcon" class="collapse-btn w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                    </svg>
+                </button>
+                <div id="configContent" class="hidden border-t border-slate-700/50 px-6 py-4 space-y-2">
                     {% for config in client.configs %}
                     <div class="bg-background/50 border border-slate-600/50 rounded-lg p-3 hover:border-primary/50 cursor-pointer transition-all font-mono text-xs text-slate-400 hover:text-slate-300 break-all" onclick="copyConfig(this, '{{ config }}')">
                         {{ config[:100] }}{% if config|length > 100 %}...{% endif %}
@@ -260,9 +321,18 @@
             {% endif %}
 
             <!-- Footer -->
-            <div class="text-center mt-12 text-slate-500 text-sm">
-                <p>Eve - Xui Manager</p>
+            <div class="text-center text-sm text-slate-500 space-y-1">
+                <div class="flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.697 4.34L8.854 1.707a1 1 0 011.42 0l3.16 2.633c.956.845.956 2.292 0 3.137L7.117 9.16A1 1 0 015.697 8.023L8.854 5.39a1 1 0 101.42-1.417L7.117 6.606a1 1 0 00-1.42 1.417L8.854 11.03a1 1 0 01-1.42 1.417L3.277 8.477a3 3 0 010-4.241z" clip-rule="evenodd"></path></svg>
+                    <span>Secure Connection</span>
+                </div>
+                <p>Eve - Xui Manager © 2025</p>
             </div>
+        </div>
+
+        <!-- Success Toast -->
+        <div id="successMsg" class="fixed bottom-4 right-4 bg-secondary text-white px-6 py-3 rounded-lg shadow-lg opacity-0 transition-opacity pointer-events-none">
+            ✓ Copied to clipboard!
         </div>
     </div>
 
@@ -277,6 +347,13 @@
             document.getElementById(tabName).classList.remove('hidden');
             e.target.classList.add('active');
             e.target.classList.remove('inactive');
+        }
+
+        function toggleConfig() {
+            const content = document.getElementById('configContent');
+            const icon = document.getElementById('collapseIcon');
+            content.classList.toggle('hidden');
+            icon.classList.toggle('open');
         }
 
         function copyToClipboard(text) {
@@ -305,9 +382,11 @@
 
         function showSuccess() {
             const msg = document.getElementById('successMsg');
-            msg.classList.remove('opacity-0', 'pointer-events-none');
+            msg.classList.remove('opacity-0');
+            msg.classList.add('opacity-100');
             setTimeout(() => {
-                msg.classList.add('opacity-0', 'pointer-events-none');
+                msg.classList.add('opacity-0');
+                msg.classList.remove('opacity-100');
             }, 2000);
         }
 
