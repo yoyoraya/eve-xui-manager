@@ -1781,7 +1781,9 @@ input:checked + .slider:before {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: flex-start;
     transition: all 0.2s;
+    min-height: 320px;
 }
 
 .qr-item:hover {
@@ -1802,27 +1804,41 @@ input:checked + .slider:before {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex-shrink: 0;
 }
 
 .qr-item img {
-    width: 100%;
-    height: auto;
+    width: 200px;
+    height: 200px;
     border-radius: 8px;
     margin-bottom: 15px;
     background: white;
     padding: 5px;
-    aspect-ratio: 1;
+    object-fit: contain;
+    flex-shrink: 0;
 }
 
 .btn-sm {
     padding: 6px 12px;
     font-size: 0.75rem;
+    margin-top: auto;
+    width: 100%;
 }
 
 @media (max-width: 768px) {
     .qr-grid {
         grid-template-columns: 1fr;
     }
+    
+    .qr-item {
+        min-height: auto;
+    }
+    
+    .qr-item img {
+        width: 180px;
+        height: 180px;
+    }
+    
     .modal {
         max-width: 95% !important;
     }
