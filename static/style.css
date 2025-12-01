@@ -1768,22 +1768,23 @@ input:checked + .slider:before {
 .qr-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 15px;
-    margin-bottom: 20px;
+    gap: 10px;
+    margin: 0;
+    width: 100%;
 }
 
 .qr-item {
     background: var(--bg-dark);
-    padding: 15px;
-    border-radius: 12px;
+    padding: 10px;
+    border-radius: 8px;
     border: 1px solid var(--border-color);
     text-align: center;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between;
     transition: all 0.2s;
-    min-height: 320px;
+    min-height: auto;
 }
 
 .qr-item:hover {
@@ -1792,14 +1793,14 @@ input:checked + .slider:before {
 }
 
 .qr-title {
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     font-weight: 600;
     background: rgba(99, 102, 241, 0.1);
     color: var(--primary);
-    padding: 4px 12px;
-    border-radius: 20px;
+    padding: 2px 8px;
+    border-radius: 12px;
     width: 100%;
     white-space: nowrap;
     overflow: hidden;
@@ -1808,38 +1809,77 @@ input:checked + .slider:before {
 }
 
 .qr-item img {
-    width: 200px;
-    height: 200px;
-    border-radius: 8px;
-    margin-bottom: 15px;
+    width: 140px;
+    height: 140px;
+    border-radius: 6px;
+    margin: 8px 0;
     background: white;
-    padding: 5px;
+    padding: 3px;
     object-fit: contain;
     flex-shrink: 0;
 }
 
 .btn-sm {
-    padding: 6px 12px;
-    font-size: 0.75rem;
-    margin-top: auto;
+    padding: 4px 8px;
+    font-size: 0.65rem;
+    margin-top: 8px;
     width: 100%;
+    flex-shrink: 0;
+}
+
+.qr-body {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+@media (max-width: 1024px) {
+    .qr-grid {
+        gap: 8px;
+    }
+    
+    .qr-item img {
+        width: 120px;
+        height: 120px;
+    }
+    
+    .qr-item {
+        padding: 8px;
+    }
 }
 
 @media (max-width: 768px) {
     .qr-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .qr-item {
-        min-height: auto;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
     }
     
     .qr-item img {
-        width: 180px;
-        height: 180px;
+        width: 110px;
+        height: 110px;
+    }
+    
+    .qr-title {
+        font-size: 0.7rem;
+        padding: 2px 6px;
+    }
+    
+    .btn-sm {
+        padding: 3px 6px;
+        font-size: 0.6rem;
     }
     
     .modal {
         max-width: 95% !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .qr-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .qr-item img {
+        width: 100px;
+        height: 100px;
     }
 }
