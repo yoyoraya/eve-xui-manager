@@ -866,14 +866,37 @@ input:checked + .slider:before {
     background: var(--bg-card);
     border-radius: 16px;
     width: 100%;
-    max-width: 550px;
+    max-width: 600px;
     max-height: 90vh;
     overflow-y: auto;
+    overflow-x: hidden;
     box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    margin: 20px;
 }
 
+/* سایز کوچک (برای فرم‌های ساده) */
 .modal-sm {
-    max-width: 400px;
+    max-width: 450px;
+}
+
+/* سایز بزرگ (برای سرورها) */
+.modal-lg {
+    max-width: 800px;
+}
+
+/* سایز خیلی بزرگ (برای QR Codes) */
+.modal-xl {
+    max-width: 1100px;
+}
+
+/* ریسپانسیو برای موبایل */
+@media (max-width: 768px) {
+    .modal, .modal-sm, .modal-lg, .modal-xl {
+        max-width: 95% !important;
+        margin: 10px;
+    }
 }
 
 .modal-header {
