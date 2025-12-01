@@ -314,7 +314,8 @@
     let allInboundsData = [];
 
     document.addEventListener('DOMContentLoaded', function() {
-        refreshData();
+        showLoading();
+        refreshData(true).then(() => hideLoading());
         loadServers();
         document.getElementById('global-search-input').addEventListener('input', performGlobalSearch);
     });
@@ -338,7 +339,7 @@
     function startAutoRefresh() {
         stopAutoRefresh();
         const interval = parseInt(document.getElementById('refresh-interval').value) * 1000;
-        autoRefreshInterval = setInterval(() => refreshData(), interval);
+        autoRefreshInterval = setInterval(() => refreshData(true), interval);
     }
 
     function stopAutoRefresh() {
@@ -348,8 +349,20 @@
         }
     }
 
-    async function refreshData() {
-        showLoading();
+    async function refreshData(isSilent = false) {
+        const refreshBtn = document.querySelector('.header-controls .btn-primary');
+        
+        if (!isSilent) {
+            if (refreshBtn) {
+                if (!refreshBtn.dataset.originalContent) {
+                    refreshBtn.dataset.originalContent = refreshBtn.innerHTML;
+                }
+                refreshBtn.disabled = true;
+                refreshBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px; border-width: 2px; border-color: rgba(255,255,255,0.2); border-top-color: white;"></div> Refreshing';
+            } else {
+                showLoading();
+            }
+        }
         
         try {
             const response = await fetch('/api/refresh');
@@ -365,13 +378,22 @@
                     const errors = failedServers.map(s => `${s.server_name}: ${s.error}`).join(', ');
                     showToast('Server errors: ' + errors, 'error');
                 }
+                if (!isSilent) showToast('Data updated successfully');
             } else {
-                showToast('Error loading data', 'error');
+                if (!isSilent) showToast('Error loading data', 'error');
             }
         } catch (error) {
             console.error('Refresh error:', error);
-            showToast('Error updating: ' + error.message, 'error');
+            if (!isSilent) showToast('Error updating: ' + error.message, 'error');
         } finally {
+            if (!isSilent) {
+                if (refreshBtn) {
+                    refreshBtn.disabled = false;
+                    refreshBtn.innerHTML = refreshBtn.dataset.originalContent;
+                } else {
+                    hideLoading();
+                }
+            }
             hideLoading();
         }
     }

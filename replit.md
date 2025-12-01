@@ -63,8 +63,9 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 - Inbound configurations with protocol, port, status
 - **3-Column QR Code Grid** (Subscription, JSON, Direct Link)
 - Traffic display and volume tracking
-- Auto-refresh with configurable interval
-- Manual refresh button
+- **Silent auto-refresh** with configurable interval (no blocking overlay)
+- **Smart manual refresh** with button spinner (non-blocking)
+- **Global search** to find clients by email across all servers in real-time
 
 ### Client Management
 - Enable/Disable clients
@@ -182,6 +183,13 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 - ⚠️ **IMPORTANT**: Change password after first login!
 
 ## Recent Changes (December 2025)
+
+- **December 01 (Latest)**: UX Improvements & Blocking Overlay Fix
+  - Fixed blocking overlay: Auto-refresh now runs silently without showing loader
+  - Manual refresh shows spinner on button only (no full-page overlay)
+  - Global search field: Search clients by email across all servers in real-time
+  - Search results display server name, inbound details, and all client actions
+  - Silent auto-refresh (configurable interval) for seamless updates
 
 - **December 01**: Security hardening
   - Added Flask-Limiter for rate limiting (5 attempts/minute)
