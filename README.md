@@ -1,6 +1,8 @@
-# X-UI Dashboard Monitor - Multi Server
+# حوا - Hava Dashboard
 
 A professional web-based monitoring dashboard for multiple X-UI VPN panels with enterprise security features, secure authentication, and comprehensive statistics. Supports unlimited X-UI servers (Sanaei 3X-UI or Alireza X-UI).
+
+*نام از ادم و حوا برگرفته شده است (Named after Adam and Eve)*
 
 ## Features
 
@@ -42,8 +44,8 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/x-ui-dashboard-monitor.git
-cd x-ui-dashboard-monitor
+git clone https://github.com/yourusername/hava-dashboard.git
+cd hava-dashboard
 ```
 
 2. **Install dependencies**
