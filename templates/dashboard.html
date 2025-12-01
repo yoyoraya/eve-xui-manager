@@ -187,38 +187,40 @@
             <h2>QR Codes - <span id="qr-email" class="qr-email"></span></h2>
             <button class="modal-close" onclick="closeQrModal()">&times;</button>
         </div>
-        <div class="modal-body qr-body" style="padding: 15px;">
-            <div class="qr-grid">
-                
-                <div class="qr-item ripple" id="box-sub" onclick="copyText('input-sub')">
-                    <div class="qr-title">Subscription</div>
-                    <img id="img-sub" src="" alt="Sub QR">
-                    <div class="click-hint">Tap to Copy</div>
-                    <input type="hidden" id="input-sub">
-                </div>
-
-                <div class="qr-item ripple" id="box-json" onclick="copyText('input-json')">
-                    <div class="qr-title">Subscription JSON</div>
-                    <img id="img-json" src="" alt="Json QR">
-                    <div class="click-hint">Tap to Copy</div>
-                    <input type="hidden" id="input-json">
-                </div>
-
-                <div class="qr-item ripple" id="box-config" onclick="copyText('input-config')">
-                    <div class="qr-title" id="title-config">Direct Link</div>
-                    <img id="img-config" src="" alt="Config QR">
-                    <div class="click-hint">Tap to Copy</div>
-                    <input type="hidden" id="input-config">
-                </div>
-
-                <div class="qr-item ripple" id="box-dash" onclick="copyText('input-dash')">
-                    <div class="qr-title">Dash Sub</div>
-                    <img id="img-dash" src="" alt="Dash QR">
-                    <div class="click-hint">Tap to Copy</div>
-                    <input type="hidden" id="input-dash">
+        <div class="modal-body qr-body" style="padding: 20px;">
+            
+            <div class="qr-display-area ripple" onclick="copyActiveQr()">
+                <div class="qr-header-row">
+                    <span id="display-title" class="display-title">Subscription</span>
+                    <span class="click-hint-badge">Tap to Copy</span>
                 </div>
                 
+                <div class="img-container">
+                    <img id="display-img" src="" alt="QR Code">
+                </div>
+                
+                <input type="hidden" id="current-value">
             </div>
+
+            <div class="qr-tabs">
+                <button class="tab-btn active" onclick="switchTab('sub')" id="btn-sub">
+                    Subscription
+                </button>
+                <button class="tab-btn" onclick="switchTab('json')" id="btn-json">
+                    JSON
+                </button>
+                <button class="tab-btn" onclick="switchTab('config')" id="btn-config">
+                    Direct
+                </button>
+                <button class="tab-btn" onclick="switchTab('dash')" id="btn-dash">
+                    Dash Sub
+                </button>
+            </div>
+
+            <input type="hidden" id="store-sub">
+            <input type="hidden" id="store-json">
+            <input type="hidden" id="store-config">
+            <input type="hidden" id="store-dash">
         </div>
     </div>
 </div>
@@ -573,67 +575,82 @@
             : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${count})`;
     }
 
-    async function showQrCode(encodedLink, email, subUrl, jsonUrl, dashSubUrl) {
+    let currentQrType = 'sub';
+
+    function showQrCode(encodedLink, email, subUrl, jsonUrl, dashSubUrl) {
         const link = decodeURIComponent(encodedLink);
         document.getElementById('qr-email').textContent = email;
-        document.getElementById('title-config').textContent = email;
-        
-        document.getElementById('input-sub').value = subUrl || '';
-        document.getElementById('input-json').value = jsonUrl || '';
-        document.getElementById('input-config').value = link || '';
-        document.getElementById('input-dash').value = dashSubUrl || '';
-        
-        try {
-            // Generate Config QR
-            if (link) {
-                const configResp = await fetch(`/api/client/qrcode?link=${encodedLink}`);
-                const configData = await configResp.json();
-                if (configData.success) {
-                    document.getElementById('img-config').src = configData.qrcode;
-                    document.getElementById('box-config').style.display = 'flex';
-                }
-            }
-            
-            // Generate Subscription QR
-            if (subUrl && subUrl !== 'undefined' && subUrl !== 'null') {
-                const subResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(subUrl)}`);
-                const subData = await subResp.json();
-                if (subData.success) {
-                    document.getElementById('img-sub').src = subData.qrcode;
-                    document.getElementById('box-sub').style.display = 'flex';
-                }
-            } else {
-                document.getElementById('box-sub').style.display = 'none';
-            }
-            
-            // Generate JSON QR
-            if (jsonUrl && jsonUrl !== 'undefined' && jsonUrl !== 'null') {
-                const jsonResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(jsonUrl)}`);
-                const jsonData = await jsonResp.json();
-                if (jsonData.success) {
-                    document.getElementById('img-json').src = jsonData.qrcode;
-                    document.getElementById('box-json').style.display = 'flex';
-                }
-            } else {
-                document.getElementById('box-json').style.display = 'none';
-            }
 
-            // Generate Dash Sub QR
-            if (dashSubUrl && dashSubUrl !== 'undefined' && dashSubUrl !== 'null' && dashSubUrl !== '') {
-                const dashResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(dashSubUrl)}`);
-                const dashData = await dashResp.json();
-                if (dashData.success) {
-                    document.getElementById('img-dash').src = dashData.qrcode;
-                    document.getElementById('box-dash').style.display = 'flex';
-                }
-            } else {
-                document.getElementById('box-dash').style.display = 'none';
-            }
-            
-            document.getElementById('qr-modal').classList.remove('hidden');
-        } catch (error) {
-            showToast('Error generating QR Codes: ' + error.message, 'error');
+        // 1. ذخیره مقادیر در اینپوت‌های مخفی
+        document.getElementById('store-sub').value = subUrl || '';
+        document.getElementById('store-json').value = jsonUrl || '';
+        document.getElementById('store-config').value = link || '';
+        document.getElementById('store-dash').value = dashSubUrl || '';
+
+        // 2. پیش‌نمایش تب اول (Subscription)
+        switchTab('sub');
+        
+        // 3. نمایش مودال
+        document.getElementById('qr-modal').classList.remove('hidden');
+    }
+
+    async function switchTab(type) {
+        currentQrType = type;
+        
+        // آپدیت دکمه‌های فعال
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(`btn-${type}`).classList.add('active');
+
+        // گرفتن مقدار لینک مربوطه
+        const value = document.getElementById(`store-${type}`).value;
+        const displayImg = document.getElementById('display-img');
+        const displayTitle = document.getElementById('display-title');
+        const currentValue = document.getElementById('current-value');
+
+        // تنظیم عنوان
+        const titles = {
+            'sub': 'Subscription Link',
+            'json': 'Subscription JSON',
+            'config': 'Direct Connection',
+            'dash': 'Dashboard Link'
+        };
+        displayTitle.textContent = titles[type];
+        currentValue.value = value;
+
+        // اگر لینک خالی بود
+        if (!value || value === 'undefined' || value === 'null') {
+            displayImg.style.opacity = '0.3';
+            displayImg.src = ''; // یا یک عکس placeholder
+            return;
         }
+
+        // لود کردن QR Code
+        displayImg.style.opacity = '0.5'; // حالت لودینگ
+        try {
+            const resp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(value)}`);
+            const data = await resp.json();
+            if (data.success) {
+                displayImg.src = data.qrcode;
+                displayImg.style.opacity = '1';
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    function copyActiveQr() {
+        const text = document.getElementById('current-value').value;
+        if (!text || text === 'undefined') {
+            showToast('Link not available', 'error');
+            return;
+        }
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Copied to clipboard!');
+            // افکت ویژوال
+            const container = document.querySelector('.qr-display-area');
+            container.style.borderColor = 'var(--success)';
+            setTimeout(() => container.style.borderColor = 'var(--primary)', 500);
+        });
     }
     
     function copyText(elementId) {

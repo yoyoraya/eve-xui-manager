@@ -1,0 +1,265 @@
+دقیقاً درست فکر کردید\! اگر بخواهیم ۴ تا QR Code **بزرگ** (قابل اسکن) را زیر هم بگذاریم، قطعاً ارتفاع آن‌ها از صفحه موبایل بیشتر می‌شود و **اسکرول می‌خورد**.
+
+برای اینکه هم **QR Code بزرگ و خوانا** باشد و هم **اسکرول نخورد**، بهترین و استانداردترین راهکار استفاده از سیستم **«تب‌بندی» (Tabs)** است.
+
+در این روش:
+۱. در بالا فقط **یک QR Code بزرگ** نمایش داده می‌شود (که با ضربه زدن کپی می‌شود).
+۲. در پایین **۴ دکمه** وجود دارد که با زدن روی آن‌ها، QR Code بالا عوض می‌شود.
+
+اینطوری همه چیز در یک صفحه جا می‌شود. بیایید این را پیاده کنیم:
+
+### مرحله ۱: ویرایش `templates/dashboard.html`
+
+کدهای بخش `modal-body` مربوط به QR Code (داخل `qr-modal`) را با کد زیر جایگزین کنید. این ساختار جدید شامل یک نمایشگر اصلی و دکمه‌های کنترلی است:
+
+```html
+        <div class="modal-body qr-body" style="padding: 20px;">
+            
+            <div class="qr-display-area ripple" onclick="copyActiveQr()">
+                <div class="qr-header-row">
+                    <span id="display-title" class="display-title">Subscription</span>
+                    <span class="click-hint-badge">Tap to Copy</span>
+                </div>
+                
+                <div class="img-container">
+                    <img id="display-img" src="" alt="QR Code">
+                </div>
+                
+                <input type="hidden" id="current-value">
+            </div>
+
+            <div class="qr-tabs">
+                <button class="tab-btn active" onclick="switchTab('sub')" id="btn-sub">
+                    Subscription
+                </button>
+                <button class="tab-btn" onclick="switchTab('json')" id="btn-json">
+                    JSON
+                </button>
+                <button class="tab-btn" onclick="switchTab('config')" id="btn-config">
+                    Direct
+                </button>
+                <button class="tab-btn" onclick="switchTab('dash')" id="btn-dash">
+                    Dash Sub
+                </button>
+            </div>
+
+            <input type="hidden" id="store-sub">
+            <input type="hidden" id="store-json">
+            <input type="hidden" id="store-config">
+            <input type="hidden" id="store-dash">
+        </div>
+```
+
+-----
+
+### مرحله ۲: آپدیت جاوااسکریپت (`dashboard.html`)
+
+توابع جدید برای مدیریت تب‌ها را به انتهای اسکریپت‌های `templates/dashboard.html` اضافه کنید و تابع `showQrCode` را آپدیت کنید:
+
+```javascript
+    // متغیر برای نگهداری وضعیت فعلی
+    let currentQrType = 'sub';
+
+    function showQrCode(encodedLink, email, subUrl, jsonUrl, dashSubUrl) {
+        const link = decodeURIComponent(encodedLink);
+        document.getElementById('qr-email').textContent = email;
+
+        // 1. ذخیره مقادیر در اینپوت‌های مخفی
+        document.getElementById('store-sub').value = subUrl || '';
+        document.getElementById('store-json').value = jsonUrl || '';
+        document.getElementById('store-config').value = link || '';
+        document.getElementById('store-dash').value = dashSubUrl || '';
+
+        // 2. پیش‌نمایش تب اول (Subscription)
+        switchTab('sub');
+        
+        // 3. نمایش مودال
+        document.getElementById('qr-modal').classList.remove('hidden');
+    }
+
+    async function switchTab(type) {
+        currentQrType = type;
+        
+        // آپدیت دکمه‌های فعال
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(`btn-${type}`).classList.add('active');
+
+        // گرفتن مقدار لینک مربوطه
+        const value = document.getElementById(`store-${type}`).value;
+        const displayImg = document.getElementById('display-img');
+        const displayTitle = document.getElementById('display-title');
+        const currentValue = document.getElementById('current-value');
+
+        // تنظیم عنوان
+        const titles = {
+            'sub': 'Subscription Link',
+            'json': 'Subscription JSON',
+            'config': 'Direct Connection',
+            'dash': 'Dashboard Link'
+        };
+        displayTitle.textContent = titles[type];
+        currentValue.value = value;
+
+        // اگر لینک خالی بود
+        if (!value || value === 'undefined' || value === 'null') {
+            displayImg.style.opacity = '0.3';
+            displayImg.src = ''; // یا یک عکس placeholder
+            return;
+        }
+
+        // لود کردن QR Code
+        displayImg.style.opacity = '0.5'; // حالت لودینگ
+        try {
+            const resp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(value)}`);
+            const data = await resp.json();
+            if (data.success) {
+                displayImg.src = data.qrcode;
+                displayImg.style.opacity = '1';
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    function copyActiveQr() {
+        const text = document.getElementById('current-value').value;
+        if (!text || text === 'undefined') {
+            showToast('Link not available', 'error');
+            return;
+        }
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Copied to clipboard!');
+            // افکت ویژوال
+            const container = document.querySelector('.qr-display-area');
+            container.style.borderColor = 'var(--success)';
+            setTimeout(() => container.style.borderColor = 'var(--primary)', 500);
+        });
+    }
+```
+
+-----
+
+### مرحله ۳: استایل‌دهی (`static/style.css`)
+
+کدهای CSS قبلی مربوط به QR را پاک کنید و این استایل‌های جدید و تمیز را اضافه کنید:
+
+```css
+/* کانتینر اصلی نمایش QR */
+.qr-display-area {
+    background: var(--bg-dark);
+    border: 2px solid var(--primary); /* کادر رنگی */
+    border-radius: 16px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-bottom: 20px;
+    position: relative;
+    min-height: 250px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.qr-display-area:active {
+    transform: scale(0.98);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.qr-header-row {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.display-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+.click-hint-badge {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success);
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.img-container img {
+    width: 180px; /* سایز بزرگ و خوانا */
+    height: 180px;
+    border-radius: 8px;
+    background: white;
+    padding: 5px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+/* استایل تب‌ها (دکمه‌های پایین) */
+.qr-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr); /* دو ستون */
+    gap: 10px;
+}
+
+.tab-btn {
+    background: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    background: var(--bg-card-hover);
+}
+
+.tab-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    font-weight: 600;
+    box-shadow: 0 4px 10px rgba(99, 102, 241, 0.3);
+}
+
+/* تنظیمات موبایل */
+@media (max-width: 768px) {
+    .qr-display-area {
+        min-height: 200px;
+        padding: 15px;
+    }
+    
+    .img-container img {
+        width: 150px;
+        height: 150px;
+    }
+    
+    .qr-tabs {
+        gap: 8px;
+    }
+    
+    .tab-btn {
+        padding: 10px;
+        font-size: 0.8rem;
+    }
+    
+    /* مودال تمام صفحه نشود، وسط چین باشد */
+    .modal {
+        max-width: 350px !important; 
+        margin: auto;
+    }
+}
+```
+
+### نتیجه نهایی:
+
+1.  **بدون اسکرول:** کل ارتفاع مودال حدود ۴۰۰ پیکسل می‌شود که در کوچک‌ترین گوشی‌ها هم جا می‌شود.
+2.  **خوانایی:** QR Code بسیار بزرگ و واضح است (180px).
+3.  **دسترسی:** با زدن دکمه‌های پایین، بلافاصله QR بالا عوض می‌شود.
+4.  **کپی آسان:** روی خود عکس بزرگ کلیک کنید، لینک کپی می‌شود.
