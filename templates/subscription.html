@@ -21,17 +21,12 @@
             --text-muted: #94a3b8;
             --border-color: #334155;
             --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-            --gradient-success: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-        }
-
-        html {
-            scroll-behavior: smooth;
         }
 
         body {
@@ -42,10 +37,8 @@
             display: flex;
             justify-content: center;
             min-height: 100vh;
-            background-attachment: fixed;
         }
 
-        /* Animated background */
         body::before {
             content: '';
             position: fixed;
@@ -54,95 +47,67 @@
             right: 0;
             bottom: 0;
             background: 
-                radial-gradient(circle at 20% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%);
+                radial-gradient(circle at 20% 50%, rgba(99, 102, 241, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 50%);
             pointer-events: none;
             z-index: -1;
         }
 
         .container {
             width: 100%;
-            max-width: 600px;
+            max-width: 700px;
             position: relative;
             z-index: 1;
         }
 
-        /* Header Section */
         .header {
             text-align: center;
-            margin-bottom: 40px;
+            margin-bottom: 24px;
             animation: slideDown 0.6s ease-out;
         }
 
         @keyframes slideDown {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .logo {
-            font-size: 2.5rem;
-            margin-bottom: 15px;
-            animation: bounce 3s ease-in-out infinite;
-        }
-
-        @keyframes bounce {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .header h1 {
-            font-size: 2rem;
+            font-size: 1.8rem;
             font-weight: 700;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
             background: var(--gradient-primary);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            letter-spacing: -0.5px;
         }
 
         .status-badge {
             display: inline-block;
-            background: var(--gradient-success);
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
             color: white;
-            padding: 8px 18px;
+            padding: 6px 14px;
             border-radius: 50px;
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             font-weight: 600;
-            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.3);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
         }
 
         .status-badge.disabled {
             background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
         }
 
-        /* Card Styles */
         .card {
             background: var(--card-bg);
             border: 1px solid var(--border-color);
-            border-radius: 20px;
-            padding: 28px;
-            margin-bottom: 24px;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 18px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
             animation: fadeIn 0.6s ease-out forwards;
             opacity: 0;
         }
 
         @keyframes fadeIn {
-            to {
-                opacity: 1;
-            }
+            to { opacity: 1; }
         }
 
         .card:nth-child(2) { animation-delay: 0.1s; }
@@ -152,419 +117,295 @@
         .card:hover {
             background: var(--card-hover);
             border-color: var(--primary);
-            transform: translateY(-4px);
-            box-shadow: 0 12px 48px rgba(99, 102, 241, 0.2);
-        }
-
-        .card-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            margin-bottom: 22px;
-            color: var(--text-primary);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .card-title-icon {
-            font-size: 1.5rem;
-            opacity: 0.8;
-        }
-
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 20px;
-        }
-
-        .stat-item {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.05) 100%);
-            padding: 18px 16px;
-            border-radius: 14px;
-            border: 1px solid rgba(99, 102, 241, 0.2);
-            text-align: center;
-            transition: all 0.3s ease;
-        }
-
-        .stat-item:hover {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
-            border-color: rgba(99, 102, 241, 0.4);
             transform: translateY(-2px);
         }
 
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .stat-item {
+            background: rgba(99, 102, 241, 0.1);
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            text-align: center;
+        }
+
         .stat-label {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--text-muted);
             display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+            font-weight: 600;
         }
 
         .stat-value {
-            font-size: 1.3rem;
+            font-size: 0.95rem;
             font-weight: 700;
-            display: block;
             color: var(--primary-light);
             font-family: 'Courier New', monospace;
         }
 
-        /* Info Rows */
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 14px 0;
-            border-bottom: 1px solid rgba(99, 102, 241, 0.1);
-            transition: all 0.2s ease;
-        }
-
-        .info-row:last-child {
-            border-bottom: none;
-        }
-
-        .info-row:hover {
-            padding-left: 8px;
-            padding-right: -8px;
-        }
-
-        .info-label {
-            color: var(--text-muted);
-            font-size: 0.95rem;
-            font-weight: 500;
-        }
-
-        .info-value {
-            font-weight: 700;
-            color: var(--text-primary);
-            font-size: 0.95rem;
-            font-family: 'Courier New', monospace;
-        }
-
-        .info-value.success {
-            color: var(--success);
-        }
-
-        .info-value.warning {
-            color: var(--warning);
-        }
-
-        .info-value.danger {
-            color: var(--danger);
-        }
-
-        /* Progress Bar */
-        .progress-container {
-            margin-top: 20px;
-        }
-
-        .progress-label {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-            font-size: 0.9rem;
-        }
-
-        .progress-percentage {
-            font-weight: 700;
-            color: var(--primary);
-            background: rgba(99, 102, 241, 0.1);
-            padding: 4px 12px;
-            border-radius: 20px;
-        }
-
         .progress-bar {
             background: rgba(0, 0, 0, 0.3);
-            height: 12px;
-            border-radius: 10px;
+            height: 8px;
+            border-radius: 8px;
             overflow: hidden;
-            border: 1px solid rgba(99, 102, 241, 0.2);
+            margin-bottom: 12px;
         }
 
         .progress-fill {
             height: 100%;
             background: var(--gradient-primary);
-            border-radius: 10px;
-            transition: width 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-            box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+            transition: width 0.5s ease;
         }
 
-        .progress-fill.warning {
-            background: linear-gradient(90deg, #f59e0b, #dc2626);
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            padding: 8px 0;
         }
 
-        .progress-fill.danger {
-            background: linear-gradient(90deg, #dc2626, #991b1b);
+        .info-label {
+            color: var(--text-muted);
         }
 
-        /* Buttons */
-        .btn {
-            width: 100%;
-            padding: 16px;
-            border-radius: 12px;
-            border: none;
+        .info-value {
             font-weight: 600;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: all 0.3s ease;
-            margin-bottom: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            display: inline-block;
-            text-align: center;
-            text-decoration: none;
+            color: var(--text-primary);
         }
 
-        .btn:last-child {
-            margin-bottom: 0;
-        }
-
-        .btn-primary {
-            background: var(--gradient-primary);
-            color: white;
-            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
-        }
-
-        .btn-primary:active {
-            transform: translateY(-1px);
-        }
-
-        .btn-secondary {
-            background: rgba(99, 102, 241, 0.2);
-            color: var(--primary-light);
-            border: 2px solid var(--primary);
-            box-shadow: none;
-        }
-
-        .btn-secondary:hover {
-            background: rgba(99, 102, 241, 0.3);
-            transform: translateY(-3px);
-            box-shadow: 0 8px 20px rgba(99, 102, 241, 0.2);
-        }
-
-        /* Copy Input */
-        .copy-input-container {
-            position: relative;
+        .copy-container {
+            display: flex;
+            gap: 8px;
             margin-bottom: 16px;
         }
 
         .copy-input {
-            width: 100%;
+            flex: 1;
             background: rgba(0, 0, 0, 0.3);
-            border: 1.5px solid var(--border-color);
+            border: 1px solid var(--border-color);
             color: var(--text-secondary);
-            padding: 14px 16px;
-            border-radius: 12px;
-            font-size: 0.9rem;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.85rem;
             font-family: 'Courier New', monospace;
-            transition: all 0.3s ease;
-            word-break: break-all;
         }
 
         .copy-input:focus {
             outline: none;
             border-color: var(--primary);
             background: rgba(99, 102, 241, 0.1);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
 
-        .copy-hint {
-            position: absolute;
-            right: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            opacity: 0.7;
-            transition: opacity 0.2s;
-        }
-
-        .copy-input:focus ~ .copy-hint {
-            opacity: 1;
-        }
-
-        /* Config Items */
-        .config-item {
-            background: rgba(0, 0, 0, 0.4);
-            padding: 16px;
-            border-radius: 12px;
-            margin-bottom: 12px;
-            word-break: break-all;
-            font-size: 0.8rem;
-            color: #a3e635;
+        .btn {
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
             cursor: pointer;
-            position: relative;
+            font-size: 0.9rem;
             transition: all 0.3s ease;
-            border: 1.5px solid transparent;
-            font-family: 'Courier New', monospace;
-            overflow: hidden;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        .config-item::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: rgba(99, 102, 241, 0.1);
-            transition: left 0.3s ease;
-            z-index: -1;
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
         }
 
-        .config-item:hover::before {
-            left: 0;
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
         }
 
-        .config-item:hover {
-            background: rgba(99, 102, 241, 0.15);
-            border-color: var(--primary);
-            transform: translateX(4px);
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+            overflow-x: auto;
+            padding-bottom: 12px;
         }
 
-        .config-copy-hint {
-            font-size: 0.7rem;
-            color: var(--primary);
-            margin-top: 6px;
-            opacity: 0.8;
-            transition: opacity 0.2s;
-        }
-
-        .config-item:hover .config-copy-hint {
-            opacity: 1;
-        }
-
-        /* Descriptions */
-        .description {
+        .tab-btn {
+            padding: 8px 14px;
+            background: transparent;
+            border: none;
             color: var(--text-muted);
-            font-size: 0.95rem;
-            margin-bottom: 18px;
-            line-height: 1.6;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+            white-space: nowrap;
         }
 
-        /* Success Message */
+        .tab-btn.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        .tab-btn:hover {
+            color: var(--text-secondary);
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .app-guide {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 14px;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            border-left: 3px solid var(--primary);
+        }
+
+        .app-guide h4 {
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .app-guide ol {
+            margin-left: 18px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .app-guide li {
+            margin-bottom: 6px;
+        }
+
+        .download-links {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .download-link {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 8px;
+            text-decoration: none;
+            color: var(--primary-light);
+            font-weight: 600;
+            font-size: 0.8rem;
+            transition: all 0.3s ease;
+        }
+
+        .download-link:hover {
+            background: rgba(99, 102, 241, 0.25);
+            transform: translateY(-2px);
+        }
+
+        .download-link svg {
+            width: 14px;
+            height: 14px;
+        }
+
         .success-message {
             background: rgba(34, 197, 94, 0.15);
-            border: 1.5px solid var(--success);
+            border: 1px solid var(--success);
             color: #86efac;
-            padding: 14px 18px;
-            border-radius: 12px;
+            padding: 10px;
+            border-radius: 8px;
             text-align: center;
             display: none;
-            margin-bottom: 16px;
-            font-size: 0.95rem;
+            margin-bottom: 12px;
+            font-size: 0.85rem;
             font-weight: 600;
-            animation: slideIn 0.3s ease;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
         }
 
         .success-message.show {
             display: block;
         }
 
-        /* Empty Config */
-        .empty-config {
-            text-align: center;
-            padding: 40px 20px;
-            color: var(--text-muted);
-            font-size: 0.95rem;
+        .config-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 0.75rem;
+            color: #a3e635;
+            cursor: pointer;
+            border: 1px solid transparent;
+            font-family: 'Courier New', monospace;
+            transition: all 0.2s;
         }
 
-        /* Footer */
+        .config-item:hover {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: var(--primary);
+        }
+
         .footer {
             text-align: center;
             color: var(--text-muted);
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             margin-top: 20px;
-            padding-top: 20px;
+            padding-top: 16px;
             border-top: 1px solid rgba(99, 102, 241, 0.1);
         }
 
-        .footer-logo {
-            font-weight: 700;
-            background: var(--gradient-primary);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        /* Responsive */
         @media (max-width: 640px) {
-            body {
-                padding: 16px;
-            }
-
             .container {
                 max-width: 100%;
             }
 
-            .header {
-                margin-bottom: 32px;
-            }
-
-            .header h1 {
-                font-size: 1.6rem;
-            }
-
-            .logo {
-                font-size: 2rem;
-            }
-
-            .card {
-                padding: 20px;
-                margin-bottom: 18px;
-            }
-
-            .card-title {
-                font-size: 1.1rem;
-                margin-bottom: 16px;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-                gap: 12px;
-            }
-
-            .btn {
-                padding: 14px;
-                font-size: 0.95rem;
-            }
-
-            .stat-value {
-                font-size: 1.1rem;
-            }
-        }
-
-        @media (max-width: 480px) {
             .header h1 {
                 font-size: 1.4rem;
             }
 
-            .logo {
-                font-size: 1.8rem;
+            .card {
+                padding: 16px;
             }
 
-            .card {
-                border-radius: 16px;
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .download-links {
+                grid-template-columns: 1fr;
+            }
+
+            .copy-container {
+                flex-direction: column;
+            }
+
+            .tabs {
+                gap: 4px;
+            }
+
+            .tab-btn {
+                padding: 6px 10px;
+                font-size: 0.8rem;
             }
         }
     </style>
@@ -573,31 +414,16 @@
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <div class="logo">🚀</div>
             <h1>{{ client.email }}</h1>
             <span class="status-badge {% if not client.is_active %}disabled{% endif %}">
                 {% if client.is_active %}✓ Active{% else %}✗ Inactive{% endif %}
             </span>
         </div>
 
-        <!-- Data Usage Card -->
+        <!-- Stats Card -->
         <div class="card">
-            <div class="card-title">
-                <span class="card-title-icon">📊</span>
-                Data Usage
-            </div>
+            <div class="card-title">📊 Data Usage</div>
             
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <span class="stat-label">↓ Download</span>
-                    <span class="stat-value">{{ client.download }}</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">↑ Upload</span>
-                    <span class="stat-value">{{ client.upload }}</span>
-                </div>
-            </div>
-
             <div class="stats-grid">
                 <div class="stat-item">
                     <span class="stat-label">Used</span>
@@ -610,73 +436,135 @@
             </div>
 
             {% if client.percentage_used >= 0 %}
-            <div class="progress-container">
-                <div class="progress-label">
-                    <span>Usage Progress</span>
-                    <span class="progress-percentage">
-                        {{ "{:.1f}".format(client.percentage_used) }}%
-                    </span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill {% if client.percentage_used >= 80 %}danger{% elif client.percentage_used >= 60 %}warning{% endif %}" 
-                         style="width: {{ [client.percentage_used, 100]|min }}%;"></div>
-                </div>
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: {{ [client.percentage_used, 100]|min }}%;"></div>
             </div>
             {% endif %}
 
             <div class="info-row">
-                <span class="info-label">⏰ Expires In:</span>
-                <span class="info-value {% if 'days' in client.expiry and '0' in client.expiry %}danger{% elif 'days' in client.expiry and int(client.expiry.split()[0]) < 7 %}warning{% else %}success{% endif %}">
-                    {{ client.expiry }}
-                </span>
+                <span class="info-label">⏰ Expires:</span>
+                <span class="info-value">{{ client.expiry }}</span>
             </div>
         </div>
 
         <!-- Subscription Card -->
         <div class="card">
-            <div class="card-title">
-                <span class="card-title-icon">📥</span>
-                Import Subscription
-            </div>
+            <div class="card-title">📥 Import Setup</div>
 
-            <div class="success-message" id="successMsg">✓ Copied to clipboard!</div>
+            <div class="success-message" id="successMsg">✓ Copied!</div>
 
-            <p class="description">
-                Use this link to import your subscription in v2rayNG, Streisand, NekoBox, or other VPN apps.
-            </p>
-
-            <div class="copy-input-container">
+            <div class="copy-container">
                 <input 
                     type="text" 
                     id="subLink" 
                     value="{{ client.subscription_url }}" 
                     readonly 
                     class="copy-input"
+                    placeholder="Subscription URL"
                 >
-                <span class="copy-hint">Press Enter or click button</span>
+                <button class="btn btn-primary" onclick="copyLink('subLink')">Copy</button>
             </div>
 
-            <button class="btn btn-primary" onclick="copyLink('subLink')">
-                📋 Copy Subscription Link
-            </button>
+            <!-- Tabs for Apps -->
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab(event, 'v2ray')">v2rayNG</button>
+                <button class="tab-btn" onclick="switchTab(event, 'nekobox')">NekoBox</button>
+                <button class="tab-btn" onclick="switchTab(event, 'streisand')">Streisand</button>
+                <button class="tab-btn" onclick="switchTab(event, 'others')">Others</button>
+            </div>
+
+            <!-- v2rayNG Guide -->
+            <div id="v2ray" class="tab-content active">
+                <div class="app-guide">
+                    <h4>📱 v2rayNG Setup</h4>
+                    <ol>
+                        <li>Download v2rayNG from Google Play or APK sources</li>
+                        <li>Open the app → Tap "+" menu</li>
+                        <li>Select "Subscription" or "Import from clipboard"</li>
+                        <li>Paste the subscription link above</li>
+                        <li>Tap connect and enjoy!</li>
+                    </ol>
+                </div>
+                <div class="download-links">
+                    <a href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" class="download-link">
+                        <span>📲</span> Google Play
+                    </a>
+                    <a href="https://github.com/2dust/v2rayNG/releases" target="_blank" class="download-link">
+                        <span>⬇️</span> APK
+                    </a>
+                </div>
+            </div>
+
+            <!-- NekoBox Guide -->
+            <div id="nekobox" class="tab-content">
+                <div class="app-guide">
+                    <h4>📦 NekoBox Setup</h4>
+                    <ol>
+                        <li>Download NekoBox from GitHub Releases</li>
+                        <li>Open the app → Go to Profiles</li>
+                        <li>Tap "+" → "Add Profile from Clipboard"</li>
+                        <li>Paste the subscription link and save</li>
+                        <li>Select profile and connect!</li>
+                    </ol>
+                </div>
+                <div class="download-links">
+                    <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" target="_blank" class="download-link">
+                        <span>⬇️</span> APK
+                    </a>
+                    <a href="https://play.google.com/store/apps/details?id=moe.nb4a" target="_blank" class="download-link">
+                        <span>📲</span> Play Store
+                    </a>
+                </div>
+            </div>
+
+            <!-- Streisand Guide -->
+            <div id="streisand" class="tab-content">
+                <div class="app-guide">
+                    <h4>🔐 Streisand Setup</h4>
+                    <ol>
+                        <li>Download Streisand for iOS from App Store</li>
+                        <li>Open the app → Tap "+" button</li>
+                        <li>Choose "Add from Clipboard"</li>
+                        <li>Paste your subscription link</li>
+                        <li>Save and connect!</li>
+                    </ol>
+                </div>
+                <div class="download-links">
+                    <a href="https://apps.apple.com/us/app/streisand/id6450534064" target="_blank" class="download-link">
+                        <span>🍎</span> App Store
+                    </a>
+                </div>
+            </div>
+
+            <!-- Other Apps -->
+            <div id="others" class="tab-content">
+                <div class="app-guide">
+                    <h4>🌐 Other Apps</h4>
+                    <ol>
+                        <li><strong>Shadowrocket (iOS):</strong> App → "+" → Import → Paste link</li>
+                        <li><strong>Clash (Android):</strong> Profile → Add from clipboard</li>
+                        <li><strong>Sing-Box (Cross-platform):</strong> Configuration → Add subscription</li>
+                        <li>Most apps support "Add from Clipboard" option</li>
+                    </ol>
+                </div>
+                <div class="download-links">
+                    <a href="https://apps.apple.com/us/app/shadowrocket/id932747118" target="_blank" class="download-link">
+                        <span>🍎</span> Shadowrocket
+                    </a>
+                    <a href="https://github.com/SagerNet/sing-box" target="_blank" class="download-link">
+                        <span>⬇️</span> Sing-Box
+                    </a>
+                </div>
+            </div>
         </div>
 
-        <!-- Manual Configs Card -->
+        <!-- Configs Card -->
         {% if client.configs %}
         <div class="card">
-            <div class="card-title">
-                <span class="card-title-icon">⚙️</span>
-                Manual Configs
-            </div>
-
-            <p class="description">
-                Click any config below to copy it directly to your clipboard.
-            </p>
-
+            <div class="card-title">⚙️ Manual Configs</div>
             {% for config in client.configs %}
             <div class="config-item" onclick="copyConfig(this, '{{ config }}')">
-                <code>{{ config[:70] }}{% if config|length > 70 %}...{% endif %}</code>
-                <div class="config-copy-hint">→ Click to copy</div>
+                {{ config[:80] }}{% if config|length > 80 %}...{% endif %}
             </div>
             {% endfor %}
         </div>
@@ -684,17 +572,27 @@
 
         <!-- Footer -->
         <div class="footer">
-            <p><span class="footer-logo">Eve</span> - Xui Manager</p>
+            <p><strong>Eve</strong> - Xui Manager</p>
         </div>
     </div>
 
     <script>
+        function switchTab(e, tabName) {
+            // Hide all content
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            
+            // Show selected
+            document.getElementById(tabName).classList.add('active');
+            e.target.classList.add('active');
+        }
+
         function copyToClipboard(text) {
             if (!text) return;
             navigator.clipboard.writeText(text).then(() => {
                 showSuccess();
             }).catch(() => {
-                alert('Failed to copy. Please try again.');
+                alert('Failed to copy');
             });
         }
 
@@ -705,15 +603,10 @@
 
         function copyConfig(element, config) {
             copyToClipboard(config);
-            
-            // Visual feedback
             element.style.background = 'rgba(34, 197, 94, 0.25)';
-            element.style.borderColor = 'rgba(34, 197, 94, 0.6)';
-            
             setTimeout(() => {
                 element.style.background = '';
-                element.style.borderColor = '';
-            }, 600);
+            }, 500);
         }
 
         function showSuccess() {
@@ -721,14 +614,11 @@
             msg.classList.add('show');
             setTimeout(() => {
                 msg.classList.remove('show');
-            }, 2500);
+            }, 2000);
         }
 
-        // Allow Enter key to copy in input field
         document.getElementById('subLink').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                copyLink('subLink');
-            }
+            if (e.key === 'Enter') copyLink('subLink');
         });
     </script>
 </body>
