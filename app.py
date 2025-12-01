@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from urllib.parse import urlparse, quote
 
@@ -24,6 +26,19 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True
 }
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+
+# Security: Secure cookie settings
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax'
+)
+
+# Rate limiting for brute-force protection
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 db = SQLAlchemy(app)
 
@@ -85,7 +100,9 @@ with app.app_context():
     db.create_all()
     if not Admin.query.filter_by(username='admin').first():
         default_admin = Admin(username='admin', is_superadmin=True, enabled=True)
-        default_admin.set_password('admin')
+        # Get initial password from environment variable for security
+        initial_password = os.environ.get("INITIAL_ADMIN_PASSWORD", "admin")
+        default_admin.set_password(initial_password)
         db.session.add(default_admin)
         db.session.commit()
 
@@ -575,6 +592,7 @@ def process_inbounds(inbounds, server):
     return processed, stats
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")  # Rate limiting: max 5 login attempts per minute
 def login():
     if 'admin_id' in session:
         return redirect(url_for('dashboard'))
@@ -598,6 +616,9 @@ def login():
             if request.is_json:
                 return jsonify({"success": True})
             return redirect(url_for('dashboard'))
+        
+        # Log failed login attempt
+        app.logger.warning(f"Failed login attempt for user: {username} from IP: {request.remote_addr}")
         
         if request.is_json:
             return jsonify({"success": False, "error": "Invalid username or password"})
