@@ -190,28 +190,28 @@
         <div class="modal-body qr-body" style="padding: 15px;">
             <div class="qr-grid">
                 
-                <div class="qr-item ripple" id="box-sub" onclick="copyText('input-sub')">
+                <div class="qr-item ripple" id="box-sub" onclick="copyText('input-sub', 'img-sub', 'Subscription')">
                     <div class="qr-title">Subscription</div>
                     <img id="img-sub" src="" alt="Sub QR">
                     <div class="click-hint">Tap to Copy</div>
                     <input type="hidden" id="input-sub">
                 </div>
 
-                <div class="qr-item ripple" id="box-json" onclick="copyText('input-json')">
+                <div class="qr-item ripple" id="box-json" onclick="copyText('input-json', 'img-json', 'Subscription JSON')">
                     <div class="qr-title">Subscription JSON</div>
                     <img id="img-json" src="" alt="Json QR">
                     <div class="click-hint">Tap to Copy</div>
                     <input type="hidden" id="input-json">
                 </div>
 
-                <div class="qr-item ripple" id="box-config" onclick="copyText('input-config')">
+                <div class="qr-item ripple" id="box-config" onclick="copyText('input-config', 'img-config', 'Direct Link')">
                     <div class="qr-title" id="title-config">Direct Link</div>
                     <img id="img-config" src="" alt="Config QR">
                     <div class="click-hint">Tap to Copy</div>
                     <input type="hidden" id="input-config">
                 </div>
 
-                <div class="qr-item ripple" id="box-dash" onclick="copyText('input-dash')">
+                <div class="qr-item ripple" id="box-dash" onclick="copyText('input-dash', 'img-dash', 'Dash Sub')">
                     <div class="qr-title">Dash Sub</div>
                     <img id="img-dash" src="" alt="Dash QR">
                     <div class="click-hint">Tap to Copy</div>
@@ -219,6 +219,18 @@
                 </div>
                 
             </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="expanded-qr-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2 id="expanded-qr-title">QR Code</h2>
+            <button class="modal-close" onclick="closeExpandedQr()">&times;</button>
+        </div>
+        <div class="modal-body" style="text-align: center; padding: 20px;">
+            <img id="expanded-qr-img" src="" alt="QR" style="max-width: 300px; width: 100%; height: auto; background: white; padding: 10px; border-radius: 8px;">
         </div>
     </div>
 </div>
@@ -636,7 +648,7 @@
         }
     }
     
-    function copyText(elementId) {
+    function copyText(elementId, imgId, title) {
         const input = document.getElementById(elementId);
         if (!input.value) return;
         
@@ -645,6 +657,24 @@
         }).catch(() => {
             showToast('Failed to copy', 'error');
         });
+        
+        // Show expanded QR on mobile only
+        if (window.innerWidth <= 768 && imgId) {
+            expandQrCode(imgId, title);
+        }
+    }
+    
+    function expandQrCode(imgId, title) {
+        const img = document.getElementById(imgId);
+        if (!img || !img.src) return;
+        
+        document.getElementById('expanded-qr-title').textContent = title;
+        document.getElementById('expanded-qr-img').src = img.src;
+        document.getElementById('expanded-qr-modal').classList.remove('hidden');
+    }
+    
+    function closeExpandedQr() {
+        document.getElementById('expanded-qr-modal').classList.add('hidden');
     }
 
     function closeQrModal() {
