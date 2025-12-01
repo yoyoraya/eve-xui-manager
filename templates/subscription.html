@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription - {{ client.email }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --primary: #6366f1;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 1.8rem;
+            margin-bottom: 10px;
+        }
+        .status-badge {
+            display: inline-block;
+            background: rgba(34, 197, 94, 0.2);
+            color: #4ade80;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .status-badge.disabled {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ff6b6b;
+        }
+        .card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        }
+        .card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+            color: var(--text-main);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .stat-item {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: block;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 1rem;
+            font-weight: 700;
+            display: block;
+            color: var(--primary);
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        .info-value {
+            font-weight: 600;
+            color: var(--text-main);
+        }
+        .progress-bar {
+            background: rgba(255, 255, 255, 0.1);
+            height: 8px;
+            border-radius: 4px;
+            margin-top: 15px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), #a78bfa);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border-radius: 12px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            margin-bottom: 10px;
+        }
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #4f46e5;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
+        .btn-secondary {
+            background: #334155;
+            color: var(--text-main);
+        }
+        .btn-secondary:hover {
+            background: #475569;
+        }
+        .config-item {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            word-break: break-all;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
+        }
+        .config-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: var(--primary);
+        }
+        .config-copy-hint {
+            font-size: 0.7rem;
+            color: var(--primary);
+            margin-top: 5px;
+        }
+        .copy-input {
+            width: 100%;
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: var(--text-muted);
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 0.85rem;
+        }
+        .copy-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        .success-message {
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #4ade80;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            display: none;
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+        }
+        .empty-config {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-muted);
+        }
+        @media (max-width: 600px) {
+            .container {
+                max-width: 100%;
+            }
+            .header h1 {
+                font-size: 1.4rem;
+            }
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{ client.email }}</h1>
+            <span class="status-badge {% if not client.is_active %}disabled{% endif %}">
+                {{ client.status }}
+            </span>
+        </div>
+
+        <div class="card">
+            <h3>📊 Data Usage</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-label">↓ Download</span>
+                    <span class="stat-value">{{ client.download }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">↑ Upload</span>
+                    <span class="stat-value">{{ client.upload }}</span>
+                </div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-label">Used</span>
+                    <span class="stat-value">{{ client.total_used }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Limit</span>
+                    <span class="stat-value">{{ client.total_limit }}</span>
+                </div>
+            </div>
+            {% if client.percentage_used >= 0 %}
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: {{ [client.percentage_used, 100]|min }}%;"></div>
+            </div>
+            {% endif %}
+            <div class="info-row" style="margin-top: 15px;">
+                <span class="info-label">Expires in:</span>
+                <span class="info-value">{{ client.expiry }}</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📥 Import Subscription</h3>
+            <div class="success-message" id="successMsg">Copied to clipboard!</div>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 15px;">
+                Use this link to import your subscription in v2rayNG, Streisand, NekoBox, or other VPN apps.
+            </p>
+            <input 
+                type="text" 
+                id="subLink" 
+                value="{{ client.subscription_url }}" 
+                readonly 
+                class="copy-input"
+            >
+            <button class="btn btn-primary" onclick="copyLink('subLink')">
+                📋 Copy Subscription Link
+            </button>
+            <a 
+                href="v2ray://install-sub?url={{ client.subscription_url | urlencode }}&name={{ client.email | urlencode }}" 
+                class="btn btn-secondary" 
+                style="display: block; text-align: center; text-decoration: none;"
+            >
+                ⚡ One-Click Import (v2rayNG)
+            </a>
+        </div>
+
+        {% if client.configs %}
+        <div class="card">
+            <h3>⚙️ Manual Configs</h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px;">
+                Click any config below to copy it directly.
+            </p>
+            {% for config in client.configs %}
+            <div class="config-item" onclick="copyConfig(this, '{{ config }}')">
+                <code style="color: #a3e635;">{{ config[:60] }}...</code>
+                <div class="config-copy-hint">Click to copy</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="card">
+            <div class="empty-config">
+                No manual configs available
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card" style="text-align: center; font-size: 0.85rem; color: var(--text-muted); border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+            <p>Eve - Xui Manager</p>
+        </div>
+    </div>
+
+    <script>
+        function copyToClipboard(text) {
+            if (!text) return;
+            navigator.clipboard.writeText(text).then(() => {
+                showSuccess();
+            }).catch(() => {
+                alert('Failed to copy. Please try again.');
+            });
+        }
+
+        function copyLink(elementId) {
+            const element = document.getElementById(elementId);
+            copyToClipboard(element.value);
+        }
+
+        function copyConfig(element, config) {
+            copyToClipboard(config);
+            element.style.background = 'rgba(99, 102, 241, 0.2)';
+            setTimeout(() => {
+                element.style.background = 'rgba(0, 0, 0, 0.2)';
+            }, 500);
+        }
+
+        function showSuccess() {
+            const msg = document.getElementById('successMsg');
+            msg.style.display = 'block';
+            setTimeout(() => {
+                msg.style.display = 'none';
+            }, 2000);
+        }
+
+        // Allow Enter key to copy in input field
+        document.getElementById('subLink').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                copyLink('subLink');
+            }
+        });
+    </script>
+</body>
+</html>

@@ -452,14 +452,13 @@ def process_inbounds(inbounds, server):
                 port_str = f":{port}" if port else ""
                 base_sub_host = f"{scheme}://{hostname}{port_str}"
                 
-                # Generate subscription links
+                # Generate subscription links (relative URLs pointing to manager)
                 sub_url = ""
                 json_url = ""
                 if sub_id:
-                    s_path = server.sub_path.strip('/')
-                    j_path = server.json_path.strip('/')
-                    sub_url = f"{base_sub_host}/{s_path}/{sub_id}"
-                    json_url = f"{base_sub_host}/{j_path}/{sub_id}"
+                    # Use relative URLs for the subscription page
+                    sub_url = f"/s/{server.id}/{sub_id}"
+                    json_url = f"{sub_url}?format=json"
                 
                 # Legacy subscription_link for compatibility
                 base_url = server.host.rstrip('/')
@@ -1269,6 +1268,106 @@ def get_qrcode():
         return jsonify({"success": True, "qrcode": f"data:image/png;base64,{img_b64}"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
+
+@app.route('/s/<int:server_id>/<sub_id>')
+def client_subscription(server_id, sub_id):
+    """
+    Subscription page route with User-Agent detection
+    - For browsers: Shows beautiful subscription page
+    - For VPN apps (v2ray, xray, etc): Returns Base64 encoded configs
+    """
+    try:
+        # Get server from database
+        server = Server.query.get_or_404(server_id)
+        
+        # Connect to upstream server
+        session_obj, error = get_xui_session(server)
+        if error:
+            return render_template('error.html', message=f"Connection Error: {error}"), 502
+        
+        # Fetch inbounds
+        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        if fetch_err:
+            return render_template('error.html', message="Failed to fetch data"), 500
+        
+        # Find client with matching sub_id
+        target_client = None
+        target_inbound = None
+        configs = []
+        
+        for inbound in inbounds:
+            settings = json.loads(inbound.get('settings', '{}'))
+            clients = settings.get('clients', [])
+            client_stats = inbound.get('clientStats', [])
+            
+            for client in clients:
+                c_sub_id = client.get('subId', '')
+                c_uuid = client.get('id', '')
+                
+                if c_sub_id == sub_id or (not c_sub_id and c_uuid == sub_id):
+                    target_client = client
+                    target_inbound = inbound
+                    
+                    # Get traffic stats
+                    up = 0
+                    down = 0
+                    for stat in client_stats:
+                        if stat.get('email') == client.get('email'):
+                            up = stat.get('up', 0)
+                            down = stat.get('down', 0)
+                            break
+                    
+                    target_client['stats'] = {
+                        'up': up,
+                        'down': down,
+                        'total': up + down,
+                        'total_gb': client.get('totalGB', 0)
+                    }
+                    
+                    # Generate config link
+                    link = generate_client_link(client, inbound, server.host)
+                    if link:
+                        configs.append(link)
+        
+        if not target_client:
+            return render_template('error.html', message="Invalid Subscription Link"), 404
+        
+        # User-Agent detection
+        user_agent = request.headers.get('User-Agent', '').lower()
+        is_app = any(x in user_agent for x in ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobrowser'])
+        
+        # If app or format=b64 requested -> return Base64 configs
+        if is_app or request.args.get('format') == 'b64':
+            config_str = '\n'.join(configs)
+            return base64.b64encode(config_str.encode('utf-8')).decode('utf-8')
+        
+        # Format data for subscription page
+        stats = target_client['stats']
+        total_used = stats['total']
+        total_limit = stats['total_gb']
+        remaining = max(0, total_limit - total_used) if total_limit > 0 else -1
+        percentage = (total_used / total_limit * 100) if total_limit > 0 else 0
+        
+        client_info = {
+            'email': target_client.get('email', 'Unknown'),
+            'status': 'Active' if target_client.get('enable', True) else 'Disabled',
+            'is_active': target_client.get('enable', True),
+            'download': format_bytes(stats['down']),
+            'upload': format_bytes(stats['up']),
+            'total_used': format_bytes(total_used),
+            'total_limit': format_bytes(total_limit) if total_limit > 0 else 'Unlimited',
+            'remaining': format_bytes(remaining) if remaining != -1 else 'Unlimited',
+            'percentage_used': percentage,
+            'expiry': format_remaining_days(target_client.get('expiryTime', 0))['text'],
+            'configs': configs,
+            'subscription_url': request.base_url + '?format=b64'
+        }
+        
+        return render_template('subscription.html', client=client_info)
+    
+    except Exception as e:
+        app.logger.error(f"Subscription page error: {e}")
+        return render_template('error.html', message="Internal Server Error"), 500
 
 if __name__ == '__main__':
     import urllib3

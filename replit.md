@@ -184,7 +184,15 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 
 ## Recent Changes (December 2025)
 
-- **December 01 (Latest)**: UX Improvements & Blocking Overlay Fix
+- **December 01 (Latest)**: Subscription Page with User-Agent Detection
+  - New route `/s/<server_id>/<sub_id>` for subscription sharing
+  - Beautiful HTML page for browsers showing client data, usage stats, expiry info
+  - Base64 encoded configs for VPN apps (v2ray, xray, Streisand, NekoBox)
+  - User-Agent detection: automatically serves correct format
+  - One-click import link for v2rayNG with deep linking
+  - Copyable subscription links and manual configs
+  
+- **December 01**: UX Improvements & Blocking Overlay Fix
   - Fixed blocking overlay: Auto-refresh now runs silently without showing loader
   - Manual refresh shows spinner on button only (no full-page overlay)
   - Global search field: Search clients by email across all servers in real-time
