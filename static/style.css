@@ -1419,11 +1419,28 @@ input:checked + .slider:before {
     }
     
     .top-header {
-        padding: 0 16px;
+        height: auto;
+        min-height: 70px;
+        flex-wrap: wrap;
+        padding: 10px 16px;
+        gap: 10px;
     }
     
     .page-title {
         font-size: 1.1rem;
+        order: 1;
+        width: auto;
+    }
+    
+    .mobile-menu-btn {
+        order: 0;
+    }
+    
+    .header-actions {
+        order: 2;
+        width: 100%;
+        justify-content: space-between;
+        margin-top: 5px;
     }
     
     .content-area {
@@ -1450,8 +1467,19 @@ input:checked + .slider:before {
     
     .header-controls {
         width: 100%;
-        justify-content: flex-end;
-        flex-wrap: wrap;
+        justify-content: space-between;
+        flex-wrap: nowrap;
+        gap: 8px;
+    }
+    
+    .header-controls .btn span {
+        display: none;
+    }
+    
+    .header-controls .btn svg {
+        margin: 0;
+        width: 18px;
+        height: 18px;
     }
     
     .refresh-toggle {
@@ -1466,6 +1494,11 @@ input:checked + .slider:before {
     .btn svg {
         width: 14px;
         height: 14px;
+    }
+    
+    .interval-select {
+        padding: 6px;
+        font-size: 0.8rem;
     }
     
     .inbounds-section {
