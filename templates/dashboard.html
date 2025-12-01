@@ -822,8 +822,18 @@
     }
 
     function editServer(id) {
-        // Fetch and populate form
-        const serverId = document.getElementById('edit-server-id').value = id;
+        const server = allServers.find(s => s.id === id);
+        if (!server) return;
+        
+        document.getElementById('form-title').textContent = 'Edit Server';
+        document.getElementById('edit-server-id').value = server.id;
+        document.getElementById('server-name').value = server.name;
+        document.getElementById('server-host').value = server.host;
+        document.getElementById('server-username').value = server.username;
+        document.getElementById('server-sub-path').value = server.sub_path || '/sub/';
+        document.getElementById('server-json-path').value = server.json_path || '/json/';
+        document.getElementById('server-panel-type').value = server.panel_type;
+        document.getElementById('server-modal').classList.remove('hidden');
     }
 
     async function testServerConnection() {
@@ -839,7 +849,9 @@
             host: document.getElementById('server-host').value,
             username: document.getElementById('server-username').value,
             password: document.getElementById('server-password').value,
-            panel_type: document.getElementById('server-panel-type').value
+            panel_type: document.getElementById('server-panel-type').value,
+            sub_path: document.getElementById('server-sub-path').value,
+            json_path: document.getElementById('server-json-path').value
         };
 
         if (!data.host || !data.username || !data.password) {
