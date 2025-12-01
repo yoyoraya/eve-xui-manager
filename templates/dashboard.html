@@ -447,7 +447,7 @@
                                         </td>
                                         <td class="action-cell">
                                             <div class="action-buttons">
-                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}')" title="QR Code">
+                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.subscription_link || client.link || '')}', '${client.email}')" title="QR Code">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <rect x="3" y="3" width="7" height="7"></rect>
                                                         <rect x="14" y="3" width="7" height="7"></rect>

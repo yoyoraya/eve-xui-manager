@@ -410,6 +410,15 @@ def process_inbounds(inbounds, server):
             for client in clients:
                 link = generate_client_link(client, inbound, server.host)
                 
+                # Generate subscription link
+                inbound_id = inbound.get('id')
+                email = client.get('email', '')
+                sub_id = client.get('subId', '')
+                if server.panel_type == 'alireza':
+                    subscription_link = f"{server.host}/xui/API/inbounds/{inbound_id}/clients/{email}"
+                else:
+                    subscription_link = f"{server.host}/api/inbounds/{inbound_id}/clients/{email}"
+                
                 expiry_timestamp = client.get('expiryTime', 0)
                 total_gb = client.get('totalGB', 0)
                 
@@ -468,6 +477,7 @@ def process_inbounds(inbounds, server):
                     "up_raw": client_up,
                     "down_raw": client_down,
                     "link": link,
+                    "subscription_link": subscription_link,
                     "inbound_id": inbound.get('id'),
                     "server_id": server.id
                 }
