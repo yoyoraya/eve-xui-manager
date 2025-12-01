@@ -69,7 +69,7 @@
             
             <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-card border border-border text-xs font-medium text-success">
                 <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
-                {% if client.is_active %}ACTIVE SUBSCRIPTION{% else %}INACTIVE{% endif %}
+                ACTIVE SUBSCRIPTION
             </div>
         </div>
 
@@ -108,7 +108,7 @@
                     <div class="text-xs text-muted mb-1">Remaining</div>
                     <div class="text-sm font-medium text-success flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
-                        {{ client.remaining if client.remaining else 'N/A' }}
+                        {{ client.remaining }}
                     </div>
                 </div>
             </div>
