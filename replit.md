@@ -1,9 +1,7 @@
-# حوا - Hava Dashboard
+# Eve - Xui Manager
 
 ## Overview
 A professional web-based monitoring dashboard for multiple X-UI VPN panels with **enterprise security features**, secure authentication, and comprehensive statistics. Supports unlimited X-UI servers (Sanaei 3X-UI or Alireza X-UI).
-
-*نام از ادم و حوا برگرفته شده است (Named after Adam and Eve)*
 
 ## Security Features
 

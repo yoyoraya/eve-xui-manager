@@ -1,12 +1,12 @@
-# Changelog - حوا
+# Changelog - Eve
 
-All notable changes to Hava Dashboard are documented in this file.
+All notable changes to Eve - Xui Manager are documented in this file.
 
 ## [1.0.0] - 2024-12-01
 
 ### 🎉 Initial Release
 
-This is the first stable release of Hava Dashboard with comprehensive features for managing multiple X-UI VPN panels.
+This is the first stable release of Eve - Xui Manager with comprehensive features for managing multiple X-UI VPN panels.
 
 ### ✨ Features
 
