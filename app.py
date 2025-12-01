@@ -505,6 +505,9 @@ def process_inbounds(inbounds, server):
                 
                 expiry_info = format_remaining_days(expiry_timestamp)
                 
+                # Dash Sub URL for subscription page
+                dash_sub_url = f"/s/{server.id}/{sub_id}" if sub_id else ""
+                
                 client_data = {
                     "email": client.get('email', 'N/A'),
                     "id": client.get('id', client.get('password', 'N/A')),
@@ -529,6 +532,7 @@ def process_inbounds(inbounds, server):
                     "subscription_link": subscription_link,
                     "sub_url": sub_url,
                     "json_url": json_url,
+                    "dash_sub_url": dash_sub_url,
                     "inbound_id": inbound.get('id'),
                     "server_id": server.id
                 }

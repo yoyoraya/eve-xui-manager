@@ -210,6 +210,13 @@
                     <button class="btn btn-secondary btn-sm" onclick="copyText('input-config')" style="width: 100%; justify-content: center;">Copy Direct</button>
                     <input type="hidden" id="input-config">
                 </div>
+
+                <div class="qr-item" id="box-dash">
+                    <div class="qr-title">Dash Sub</div>
+                    <img id="img-dash" src="" alt="Dash QR">
+                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-dash')" style="width: 100%; justify-content: center;">Copy Link</button>
+                    <input type="hidden" id="input-dash">
+                </div>
                 
             </div>
         </div>
@@ -508,7 +515,7 @@
                                         </td>
                                         <td class="action-cell">
                                             <div class="action-buttons">
-                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}')" title="QR Code">
+                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}')" title="QR Code">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <rect x="3" y="3" width="7" height="7"></rect>
                                                         <rect x="14" y="3" width="7" height="7"></rect>
@@ -566,7 +573,7 @@
             : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${count})`;
     }
 
-    async function showQrCode(encodedLink, email, subUrl, jsonUrl) {
+    async function showQrCode(encodedLink, email, subUrl, jsonUrl, dashSubUrl) {
         const link = decodeURIComponent(encodedLink);
         document.getElementById('qr-email').textContent = email;
         document.getElementById('title-config').textContent = email;
@@ -574,6 +581,7 @@
         document.getElementById('input-sub').value = subUrl || '';
         document.getElementById('input-json').value = jsonUrl || '';
         document.getElementById('input-config').value = link || '';
+        document.getElementById('input-dash').value = dashSubUrl || '';
         
         try {
             // Generate Config QR
@@ -608,6 +616,18 @@
                 }
             } else {
                 document.getElementById('box-json').style.display = 'none';
+            }
+
+            // Generate Dash Sub QR
+            if (dashSubUrl && dashSubUrl !== 'undefined' && dashSubUrl !== 'null' && dashSubUrl !== '') {
+                const dashResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(dashSubUrl)}`);
+                const dashData = await dashResp.json();
+                if (dashData.success) {
+                    document.getElementById('img-dash').src = dashData.qrcode;
+                    document.getElementById('box-dash').style.display = 'flex';
+                }
+            } else {
+                document.getElementById('box-dash').style.display = 'none';
             }
             
             document.getElementById('qr-modal').classList.remove('hidden');

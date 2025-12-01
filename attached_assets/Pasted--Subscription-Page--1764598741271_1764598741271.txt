@@ -1,0 +1,377 @@
+برای پیاده‌سازی صفحه سابسکریپشن اختصاصی (Subscription Page) که همزمان هم در مرورگر به عنوان یک صفحه زیبا (UI) نمایش داده شود و هم در برنامه‌هایی مثل v2rayNG به عنوان لینک اشتراک کار کند، باید از تکنیک **User-Agent Detection** استفاده کنیم.
+
+در این روش، برنامه پایتون شما (Hava) نقش یک **واسط (Proxy)** را بازی می‌کند. وقتی درخواستی می‌آید:
+
+1.  اگر درخواست از طرف **مرورگر** باشد: قالب HTML زیبا (مشابه پروژه PasarGuard) را نشان می‌دهد.
+2.  اگر درخواست از طرف **v2rayNG/Streisand** باشد: کانفیگ‌ها را به صورت متن (Base64) برمی‌گرداند.
+
+اینجا مراحل انجام کار را بر اساس ساختار پروژه فعلی شما توضیح می‌دهم.
+
+### مرحله ۱: ایجاد روت جدید در `app.py`
+
+شما باید یک مسیر جدید در `app.py` تعریف کنید که نیازی به لاگین نداشته باشد (بدون `@login_required`) و اطلاعات را برگرداند.
+
+ما از فرمت URL زیر استفاده می‌کنیم تا سرور مشخص باشد و سرعت بالا برود:
+`domain:port/s/<server_id>/<sub_id>`
+
+این کد را به انتهای `app.py` (قبل از `if __name__ == '__main__':`) اضافه کنید:
+
+```python
+@app.route('/s/<int:server_id>/<sub_id>')
+def client_subscription(server_id, sub_id):
+    # 1. پیدا کردن سرور از دیتابیس
+    server = Server.query.get_or_404(server_id)
+    
+    # 2. اتصال به سرور و گرفتن اطلاعات
+    session_obj, error = get_xui_session(server)
+    if error:
+        return f"Error connecting to upstream server: {error}", 502
+
+    # 3. پیدا کردن کلاینت و ساخت کانفیگ‌ها
+    # نکته: ما مجبوریم لیست را بگیریم چون اندپوینت مستقیم برای subId در همه نسخه‌ها نیست
+    inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+    if fetch_err:
+        return "Error fetching data", 500
+
+    target_client = None
+    target_inbound = None
+    configs = []
+
+    # جستجوی کلاینت در اینباندها
+    for inbound in inbounds:
+        settings = json.loads(inbound.get('settings', '{}'))
+        clients = settings.get('clients', [])
+        
+        for client in clients:
+            # بررسی تطابق SubId یا UUID
+            c_sub_id = client.get('subId', '')
+            c_uuid = client.get('id', '')
+            
+            if c_sub_id == sub_id or (not c_sub_id and c_uuid == sub_id):
+                target_client = client
+                target_inbound = inbound
+                
+                # دریافت آمار مصرف
+                client_stats = inbound.get('clientStats', [])
+                up = 0
+                down = 0
+                for stat in client_stats:
+                    if stat.get('email') == client.get('email'):
+                        up = stat.get('up', 0)
+                        down = stat.get('down', 0)
+                        break
+                
+                target_client['stats'] = {
+                    'up': up,
+                    'down': down,
+                    'total': up + down,
+                    'total_gb': client.get('totalGB', 0)
+                }
+                
+                # ساخت لینک کانفیگ
+                link = generate_client_link(client, inbound, server.host)
+                if link:
+                    configs.append(link)
+                
+                # اگر کلاینت پیدا شد، در اینباند‌های دیگر هم بگرد (شاید چند کاربره باشد)
+                # اگر فقط یک اینباند مد نظر است، اینجا break کنید
+
+    if not target_client:
+        return "Invalid Subscription Link", 404
+
+    # 4. تشخیص User-Agent (برنامه یا مرورگر؟)
+    user_agent = request.headers.get('User-Agent', '').lower()
+    is_app = any(x in user_agent for x in ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray'])
+    
+    # اگر برنامه بود یا درخواست فرمت متنی داشت -> ارسال Base64
+    if is_app or request.args.get('format') == 'b64':
+        config_str = '\n'.join(configs)
+        return base64.b64encode(config_str.encode('utf-8')).decode('utf-8')
+
+    # 5. اگر مرورگر بود -> نمایش قالب زیبا
+    # فرمت کردن اطلاعات برای نمایش
+    stats = target_client['stats']
+    remaining = max(0, stats['total_gb'] - stats['total']) if stats['total_gb'] > 0 else -1
+    
+    client_info = {
+        "email": target_client['email'],
+        "status": "Active" if target_client['enable'] else "Disabled",
+        "upload": format_bytes(stats['up']),
+        "download": format_bytes(stats['down']),
+        "total_used": format_bytes(stats['total']),
+        "total_limit": format_bytes(stats['total_gb']) if stats['total_gb'] > 0 else "Unlimited",
+        "remaining": format_bytes(remaining) if remaining != -1 else "Unlimited",
+        "expiry": format_remaining_days(target_client.get('expiryTime', 0))['text'],
+        "configs": configs,
+        "subscription_url": request.base_url + "?format=b64" # لینک ایمپورت در برنامه
+    }
+
+    return render_template('subscription.html', client=client_info)
+```
+
+**توضیح کد:**
+
+  * از `server_id` برای اتصال سریع به سرور درست استفاده می‌کند.
+  * توابع موجود در `app.py` مثل `get_xui_session` و `fetch_inbounds` را که قبلاً داشتیم بازیافت می‌کند.
+  * اگر درخواست از سمت `v2ray` یا برنامه‌های مشابه باشد، کانفیگ را `Base64` می‌کند (استاندارد اشتراک).
+  * اگر مرورگر باشد، فایل `subscription.html` را رندر می‌کند.
+
+-----
+
+### مرحله ۲: ساخت قالب HTML (`templates/subscription.html`)
+
+یک فایل جدید در پوشه `templates` به نام `subscription.html` بسازید و کد زیر را در آن قرار دهید (این کد با الهام از تم تیره پروژه شما و قالب درخواستی طراحی شده است):
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subscription - {{ client.email }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --primary: #6366f1;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status-badge {
+            background: rgba(34, 197, 94, 0.2);
+            color: #4ade80;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .stat-item {
+            background: rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: block;
+        }
+        .stat-value {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-top: 5px;
+            display: block;
+        }
+        .progress-bar {
+            background: rgba(255,255,255,0.1);
+            height: 8px;
+            border-radius: 4px;
+            margin-top: 15px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--primary);
+            border-radius: 4px;
+        }
+        .btn-copy {
+            background: var(--primary);
+            color: white;
+            border: none;
+            width: 100%;
+            padding: 14px;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+            font-size: 1rem;
+        }
+        .config-item {
+            background: rgba(0,0,0,0.2);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            word-break: break-all;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            position: relative;
+        }
+        .config-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{ client.email }}</h1>
+            <span class="status-badge">{{ client.status }}</span>
+        </div>
+
+        <div class="card">
+            <h3>Data Usage</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-label">Download</span>
+                    <span class="stat-value">↓ {{ client.download }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Upload</span>
+                    <span class="stat-value">↑ {{ client.upload }}</span>
+                </div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-label">Total Used</span>
+                    <span class="stat-value">{{ client.total_used }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Total Limit</span>
+                    <span class="stat-value">{{ client.total_limit }}</span>
+                </div>
+            </div>
+            <div style="margin-top: 15px; text-align: center; font-size: 0.9rem; color: #94a3b8;">
+                Expires: <span style="color: #f8fafc;">{{ client.expiry }}</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Import Subscription</h3>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 15px;">
+                Click the button below to copy the subscription link for v2rayNG, Streisand, etc.
+            </p>
+            <input type="text" value="{{ client.subscription_url }}" readonly style="width: 100%; background: #0f172a; border: 1px solid #334155; color: #94a3b8; padding: 10px; border-radius: 8px; margin-bottom: 10px;">
+            <button class="btn-copy" onclick="copyToClipboard('{{ client.subscription_url }}')">
+                Copy Subscription Link
+            </button>
+            <a href="v2ray://install-sub?url={{ client.subscription_url }}&name={{ client.email }}" class="btn-copy" style="display: block; text-align: center; text-decoration: none; margin-top: 10px; background: #334155;">
+                One-Click Import (v2rayNG)
+            </a>
+        </div>
+
+        <div class="card">
+            <h3>Manual Configs</h3>
+            {% for config in client.configs %}
+            <div class="config-item" onclick="copyToClipboard('{{ config }}')">
+                {{ config[:50] }}...
+                <div style="font-size: 0.7rem; color: var(--primary); margin-top: 5px;">Click to copy</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script>
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard!');
+            });
+        }
+    </script>
+</body>
+</html>
+```
+
+-----
+
+### مرحله ۳: اصلاح لینک در داشبورد (`app.py` و `templates/dashboard.html`)
+
+حالا باید لینک‌هایی که در داشبورد تولید می‌شوند را طوری تغییر دهیم که به این صفحه جدید اشاره کنند.
+
+**۱. در `app.py` (تابع `process_inbounds`):**
+در جایی که `sub_url` را می‌سازید، آن را به آدرس سرور خودتان تغییر دهید:
+
+```python
+# داخل process_inbounds در app.py
+
+# ... (محاسبات قبلی) ...
+
+# لینک سابسکریپشن جدید (اشاره به همین اپلیکیشن پایتون)
+# فرض می‌کنیم اپلیکیشن پایتون شما روی همان دامین/IP سرور اصلی در حال اجراست یا یک دامین دارد
+# اگر پورت اپلیکیشن پایتون 5000 یا 80 است، اینجا تنظیم کنید
+my_app_domain = request.host_url.rstrip('/') # آدرس فعلی اپلیکیشن (مثلا http://manager.com)
+
+if sub_id:
+    # فرمت: /s/SERVER_ID/SUB_ID
+    sub_url = f"{my_app_domain}/s/{server.id}/{sub_id}"
+    
+    # لینک جیسون هم می‌تواند به همین اشاره کند یا لاجیک جداگانه داشته باشد
+    json_url = f"{sub_url}?format=json" # اگر خواستید بعدا جیسون اضافه کنید
+```
+
+*نکته:* برای اینکه `request.host_url` کار کند، باید `request` را در ابتدای تابع `process_inbounds` در دسترس داشته باشید یا این آدرس را به عنوان آرگومان پاس دهید. روش ساده‌تر این است که در `process_inbounds` فعلا آدرس را نسازید و ساخت آدرس را به جاوااسکریپت `dashboard.html` بسپارید.
+
+**روش پیشنهادی (تغییر در `app.py` فقط دیتا بدهد):**
+در `app.py` فقط داده‌های خام را بفرستید. در `dashboard.html` لینک را بسازید.
+
+**۲. در `templates/dashboard.html`:**
+تابع `showQrCode` را تغییر دهید تا لینک جدید را نشان دهد:
+
+```javascript
+// در فایل templates/dashboard.html
+
+function showQrCode(encodedLink, email, subUrl, jsonUrl) {
+    // ...
+    
+    // اگر subUrl از سمت سرور نیامده بود، خودمان لینک صفحه اختصاصی را می‌سازیم
+    // با فرض اینکه سطر جدول دارای ویژگی data-server-id و data-sub-id باشد
+    // اما چون الان دسترسی به دیتای کلاینت داریم:
+    
+    // نکته: ما نیاز داریم server_id و sub_id را به showQrCode پاس بدهیم.
+    // دکمه QR Code را در کد HTML تغییر دهید:
+    // onclick="showQrCode(..., client.server_id, client.subId)"
+}
+```
+
+**ساده‌ترین راه حل بدون تغییر زیاد:**
+همان تغییر در `app.py` (بخش `process_inbounds`) بهترین راه است. فقط کافیست `sub_url` را به فرمت جدید تغییر دهید:
+
+```python
+# در app.py جایگزین خطوط 247 شود:
+# به جای لینک مستقیم پنل X-UI، لینک پنل خودمان را میگذاریم
+# نکته: باید بدانیم اپلیکیشن ما روی چه آدرسی اجرا می‌شود.
+# اگر متغیر محیطی APP_URL دارید از آن استفاده کنید، وگرنه نسبی بسازید.
+
+sub_url = f"/s/{server.id}/{sub_id}" # مسیر نسبی
+# در فرانت اند، مرورگر خودکار دامین را اضافه میکند
+```
+
+### نتیجه نهایی
+
+۱. کاربر لینک `http://your-manager-panel.com/s/1/my-uuid-1234` را باز می‌کند.
+۲. **مرورگر:** یک صفحه زیبا با نمودار مصرف و تاریخ انقضا و دکمه‌های کپی کانفیگ می‌بیند.
+۳. **v2rayNG:** وقتی همین لینک را به عنوان Subscription اضافه می‌کند، برنامه پایتون شما `User-Agent` را تشخیص داده و کانفیگ‌ها را به صورت متنی (Base64) تحویل می‌دهد تا در برنامه ایمپورت شوند.
+
+این روش دقیقاً همان چیزی است که سایت‌های فروش اشتراک انجام می‌دهند.

@@ -1800,10 +1800,22 @@ input:checked + .slider:before {
 /* QR Code Grid Styles */
 .qr-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 10px;
     margin: 0;
     width: 100%;
+}
+
+@media (max-width: 1200px) {
+    .qr-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .qr-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .qr-item {
