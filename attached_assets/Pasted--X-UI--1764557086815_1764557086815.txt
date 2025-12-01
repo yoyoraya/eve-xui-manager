@@ -1,0 +1,373 @@
+برای اینکه دقیقا شبیه پنل X-UI شود (نمایش ۳ تایی) و مشکل پورت سابسکریپشن حل شود، باید تغییرات زیر را اعمال کنید.
+
+**نکته مهم:** چون فیلد جدید `sub_port` را به دیتابیس اضافه می‌کنیم، باید فایل دیتابیس فعلی (`instance/servers.db` یا `servers.db`) را **حذف کنید** تا دوباره ساخته شود.
+
+### مرحله ۱: ویرایش `app.py`
+
+تغییرات:
+
+1.  اضافه کردن ستون `sub_port` به جدول سرور.
+2.  اصلاح لاجیک ساخت لینک برای استفاده از پورت سابسکریپشن (اگر وارد شده باشد) و ساخت لینک JSON.
+
+فایل `app.py` را باز کنید و کلاس `Server` و توابع مربوطه را به این صورت تغییر دهید:
+
+```python
+# ... (ایمپورت‌ها مثل قبل)
+
+# 1. آپدیت کلاس Server
+class Server(db.Model):
+    __tablename__ = 'servers'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    host = db.Column(db.String(255), nullable=False)
+    username = db.Column(db.String(100), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
+    enabled = db.Column(db.Boolean, default=True)
+    panel_type = db.Column(db.String(50), default='auto')
+    sub_path = db.Column(db.String(50), default='/sub/')
+    json_path = db.Column(db.String(50), default='/json/')
+    sub_port = db.Column(db.Integer, nullable=True)  # <-- فیلد جدید پورت سابسکریپشن
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'host': self.host,
+            'username': self.username,
+            'enabled': self.enabled,
+            'panel_type': self.panel_type,
+            'sub_path': self.sub_path,
+            'json_path': self.json_path,
+            'sub_port': self.sub_port,  # <-- اضافه کردن به خروجی
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+# ... (بقیه کدها)
+
+# 2. آپدیت تابع add_server
+@app.route('/api/servers', methods=['POST'])
+@login_required
+def add_server():
+    data = request.json
+    
+    # ... (چک کردن فیلدهای ضروری مثل قبل) ...
+    
+    # تبدیل پورت به عدد صحیح در صورت وجود
+    sub_port = data.get('sub_port')
+    if sub_port:
+        try:
+            sub_port = int(sub_port)
+        except:
+            sub_port = None
+    else:
+        sub_port = None
+
+    server = Server(
+        name=data['name'],
+        host=data['host'].rstrip('/'),
+        username=data['username'],
+        password=data['password'],
+        enabled=data.get('enabled', True),
+        panel_type=data.get('panel_type', 'auto'),
+        sub_path=data.get('sub_path', '/sub/').strip(),
+        json_path=data.get('json_path', '/json/').strip(),
+        sub_port=sub_port  # <-- ذخیره پورت
+    )
+    
+    db.session.add(server)
+    db.session.commit()
+    
+    return jsonify({"success": True, "server": server.to_dict()})
+
+# 3. آپدیت تابع update_server
+@app.route('/api/servers/<int:server_id>', methods=['PUT'])
+@login_required
+def update_server(server_id):
+    server = Server.query.get_or_404(server_id)
+    data = request.json
+    
+    # ... (آپدیت فیلدهای قبلی) ...
+    
+    if 'sub_port' in data:
+        try:
+            val = data['sub_port']
+            server.sub_port = int(val) if val else None
+        except:
+            server.sub_port = None
+            
+    # ... (بقیه کد آپدیت و کامیت) ...
+    
+    db.session.commit()
+    return jsonify({"success": True, "server": server.to_dict()})
+
+
+# 4. آپدیت تابع process_inbounds برای ساخت لینک صحیح
+def process_inbounds(inbounds, server):
+    # ... (کدهای اولیه تابع) ...
+    
+            for client in clients:
+                link = generate_client_link(client, inbound, server.host)
+                
+                # --- لاجیک جدید ساخت لینک سابسکریپشن ---
+                sub_url = ""
+                json_url = ""
+                
+                # دریافت SubId (بعضی پنل‌ها subId دارند، بعضی id استفاده می‌کنند)
+                sub_id = client.get('subId', '')
+                if not sub_id and server.panel_type == 'sanaei': 
+                     sub_id = client.get('id', '') # در برخی نسخه‌ها UUID همان SubID است
+
+                if sub_id:
+                    # پارس کردن آدرس هاست برای جدا کردن IP/Domain
+                    parsed_host = urlparse(server.host)
+                    scheme = parsed_host.scheme
+                    hostname = parsed_host.hostname
+                    
+                    # اگر پورت سابسکریپشن تنظیم شده بود از آن استفاده کن، وگرنه از پورت پنل
+                    if server.sub_port:
+                        port = server.sub_port
+                    else:
+                        port = parsed_host.port
+                    
+                    # ساخت آدرس پایه (مثال: http://1.2.3.4:2096)
+                    port_str = f":{port}" if port else ""
+                    base_sub_host = f"{scheme}://{hostname}{port_str}"
+                    
+                    # تمیز کردن مسیرها
+                    s_path = server.sub_path.strip('/')
+                    j_path = server.json_path.strip('/')
+                    
+                    # ساخت لینک نهایی
+                    sub_url = f"{base_sub_host}/{s_path}/{sub_id}"
+                    json_url = f"{base_sub_host}/{j_path}/{sub_id}"
+                # ---------------------------------------
+
+                # ... (بقیه کدهای client data) ...
+                
+                client_data = {
+                    # ... فیلدهای قبلی ...
+                    "link": link,
+                    "sub_url": sub_url,     # لینک معمولی
+                    "json_url": json_url,   # لینک جیسون
+                    # ...
+                }
+```
+
+-----
+
+### مرحله ۲: ویرایش `templates/servers.html`
+
+باید فیلد پورت سابسکریپشن را به فرم اضافه کنیم.
+
+```html
+<div style="display: flex; gap: 10px;">
+                <div class="form-group" style="flex: 2;">
+                    <label>Sub Path</label>
+                    <input type="text" id="server-sub-path" placeholder="/sub/" value="/sub/">
+                </div>
+                <div class="form-group" style="flex: 2;">
+                    <label>Json Path</label>
+                    <input type="text" id="server-json-path" placeholder="/json/" value="/json/">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Sub Port</label>
+                    <input type="number" id="server-sub-port" placeholder="Default">
+                </div>
+            </div>
+
+<script>
+    // ...
+    function openAddServerModal() {
+        // ... پاک کردن فیلدها
+        document.getElementById('server-sub-port').value = '';
+        // ...
+    }
+
+    function editServer(id) {
+        // ...
+        // پر کردن مقدار پورت
+        document.getElementById('server-sub-port').value = server.sub_port || '';
+        // ...
+    }
+
+    async function saveServer() {
+        // ...
+        const data = { 
+            // ... فیلدهای قبلی
+            sub_port: document.getElementById('server-sub-port').value,
+            // ...
+        };
+        // ...
+    }
+</script>
+```
+
+-----
+
+### مرحله ۳: ویرایش `templates/dashboard.html` (طراحی ۳ تایی)
+
+این مهم‌ترین بخش برای تغییر ظاهر QR Code است.
+
+**۱. اضافه کردن CSS:**
+این کدها را به بخش `<style>` اضافه کنید:
+
+```css
+/* استایل گرید برای نمایش 3 تایی */
+.qr-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.qr-item {
+    background: var(--bg-dark);
+    padding: 15px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: all 0.2s;
+}
+
+.qr-item:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+}
+
+.qr-title {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    font-weight: 600;
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--primary);
+    padding: 4px 12px;
+    border-radius: 20px;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.qr-item img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    background: white;
+    padding: 5px;
+    aspect-ratio: 1;
+}
+
+/* ریسپانسیو برای موبایل */
+@media (max-width: 768px) {
+    .qr-grid {
+        grid-template-columns: 1fr; /* در موبایل زیر هم */
+    }
+    .modal {
+        max-width: 95% !important; /* عرض بیشتر */
+    }
+}
+```
+
+**۲. تغییر HTML مودال (`qr-modal`):**
+کل محتوای `modal-body` مربوط به QR را عوض کنید:
+
+```html
+<div class="modal-body qr-body" style="padding: 20px;">
+    <p id="qr-email" class="qr-email" style="font-size: 1.2rem; font-weight: bold; margin-bottom: 20px; color: var(--text-primary);"></p>
+    
+    <div class="qr-grid">
+        <div class="qr-item" id="box-sub">
+            <div class="qr-title">Subscription</div>
+            <img id="img-sub" src="" alt="Sub QR">
+            <button class="btn btn-secondary btn-sm" onclick="copyText('input-sub')" style="width: 100%; justify-content: center;">Copy Link</button>
+            <input type="hidden" id="input-sub">
+        </div>
+
+        <div class="qr-item" id="box-json">
+            <div class="qr-title">Subscription Json</div>
+            <img id="img-json" src="" alt="Json QR">
+            <button class="btn btn-secondary btn-sm" onclick="copyText('input-json')" style="width: 100%; justify-content: center;">Copy Link</button>
+            <input type="hidden" id="input-json">
+        </div>
+
+        <div class="qr-item" id="box-config">
+            <div class="qr-title" id="title-config">Config</div>
+            <img id="img-config" src="" alt="Config QR">
+            <button class="btn btn-secondary btn-sm" onclick="copyText('input-config')" style="width: 100%; justify-content: center;">Copy Link</button>
+            <input type="hidden" id="input-config">
+        </div>
+    </div>
+</div>
+```
+
+**۳. آپدیت جاوااسکریپت (`dashboard.html`):**
+تابع `showQrCode` و `copyText` را اضافه/آپدیت کنید.
+
+```javascript
+    // تابع کمکی برای کپی
+    function copyText(elementId) {
+        const input = document.getElementById(elementId);
+        if (!input.value) return;
+        
+        navigator.clipboard.writeText(input.value).then(() => {
+            showToast('Link copied!');
+        }).catch(() => {
+            showToast('Failed to copy', 'error');
+        });
+    }
+
+    function showQrCode(encodedLink, email, subUrl, jsonUrl) {
+        const link = decodeURIComponent(encodedLink);
+        
+        document.getElementById('qr-email').textContent = email;
+        document.getElementById('title-config').textContent = email; // اسم کلاینت بالای QR کانفیگ
+        
+        // تنظیم مقادیر اینپوت‌های مخفی
+        document.getElementById('input-sub').value = subUrl || '';
+        document.getElementById('input-json').value = jsonUrl || '';
+        document.getElementById('input-config').value = link || '';
+
+        // لود کردن عکس‌ها
+        // 1. Subscription
+        if (subUrl && subUrl !== 'undefined' && subUrl !== 'null') {
+            document.getElementById('img-sub').src = `/api/client/qrcode?link=${encodeURIComponent(subUrl)}`;
+            document.getElementById('box-sub').style.display = 'flex';
+        } else {
+            document.getElementById('box-sub').style.display = 'none';
+        }
+
+        // 2. Json
+        if (jsonUrl && jsonUrl !== 'undefined' && jsonUrl !== 'null') {
+            document.getElementById('img-json').src = `/api/client/qrcode?link=${encodeURIComponent(jsonUrl)}`;
+            document.getElementById('box-json').style.display = 'flex';
+        } else {
+            document.getElementById('box-json').style.display = 'none';
+        }
+
+        // 3. Config (همیشه هست)
+        document.getElementById('img-config').src = `/api/client/qrcode?link=${encodeURIComponent(link)}`;
+        
+        // نمایش مودال
+        // برای اینکه گرید درست کار کند، کلاس max-width را برای این مودال خاص زیاد میکنیم
+        const modal = document.querySelector('#qr-modal .modal');
+        modal.style.maxWidth = '900px'; 
+        
+        document.getElementById('qr-modal').classList.remove('hidden');
+    }
+```
+
+**۴. اصلاح دکمه فراخوانی در `updateInbounds`:**
+در جایی که دکمه QR Code ساخته می‌شود (حدود خط ۶۰۰)، پارامترها را اضافه کنید:
+
+```javascript
+// تغییر خط دکمه QR Code به:
+<button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}')" title="QR Code">
+```
+
+با این تغییرات، وقتی روی QR Code کلیک کنید، پنجره‌ای عریض باز می‌شود که ۳ ستون دارد (مشابه عکس X-UI) و لینک‌ها بر اساس پورت جدیدی که در تنظیمات سرور وارد کرده‌اید (Sub Port) ساخته می‌شوند.

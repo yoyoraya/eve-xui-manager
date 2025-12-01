@@ -1763,3 +1763,67 @@ input:checked + .slider:before {
         display: none;
     }
 }
+
+/* QR Code Grid Styles */
+.qr-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.qr-item {
+    background: var(--bg-dark);
+    padding: 15px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: all 0.2s;
+}
+
+.qr-item:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+}
+
+.qr-title {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    font-weight: 600;
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--primary);
+    padding: 4px 12px;
+    border-radius: 20px;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.qr-item img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    background: white;
+    padding: 5px;
+    aspect-ratio: 1;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+}
+
+@media (max-width: 768px) {
+    .qr-grid {
+        grid-template-columns: 1fr;
+    }
+    .modal {
+        max-width: 95% !important;
+    }
+}

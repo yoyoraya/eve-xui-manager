@@ -137,13 +137,17 @@
                     <input type="password" id="server-password" placeholder="password">
                 </div>
                 <div style="display: flex; gap: 10px;">
-                    <div class="form-group" style="flex: 1;">
+                    <div class="form-group" style="flex: 2;">
                         <label>Sub Path</label>
                         <input type="text" id="server-sub-path" placeholder="/sub/" value="/sub/">
                     </div>
-                    <div class="form-group" style="flex: 1;">
+                    <div class="form-group" style="flex: 2;">
                         <label>Json Path</label>
                         <input type="text" id="server-json-path" placeholder="/json/" value="/json/">
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>Sub Port</label>
+                        <input type="number" id="server-sub-port" placeholder="Default">
                     </div>
                 </div>
                 <div class="form-group">
@@ -169,21 +173,33 @@
 </div>
 
 <div class="modal-overlay hidden" id="qr-modal">
-    <div class="modal modal-sm">
+    <div class="modal">
         <div class="modal-header">
-            <h2>QR Code</h2>
+            <h2>QR Codes - <span id="qr-email" class="qr-email"></span></h2>
             <button class="modal-close" onclick="closeQrModal()">&times;</button>
         </div>
-        <div class="modal-body qr-body">
-            <img id="qr-image" src="" alt="QR Code">
-            <p id="qr-email" class="qr-email"></p>
-            
-            <div style="margin-bottom: 15px; word-break: break-all; font-size: 0.8rem; background: #0f172a; padding: 10px; border-radius: 8px; max-height: 100px; overflow-y: auto;">
-                <code id="qr-link-text" style="color: #6366f1;"></code>
-            </div>
-            
-            <div class="qr-actions">
-                <button class="btn btn-secondary" onclick="copyLink()">Copy Link</button>
+        <div class="modal-body qr-body" style="padding: 20px;">
+            <div class="qr-grid">
+                <div class="qr-item" id="box-sub">
+                    <div class="qr-title">Subscription</div>
+                    <img id="img-sub" src="" alt="Sub QR">
+                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-sub')" style="width: 100%; justify-content: center;">Copy Link</button>
+                    <input type="hidden" id="input-sub">
+                </div>
+
+                <div class="qr-item" id="box-json">
+                    <div class="qr-title">Subscription JSON</div>
+                    <img id="img-json" src="" alt="Json QR">
+                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-json')" style="width: 100%; justify-content: center;">Copy Link</button>
+                    <input type="hidden" id="input-json">
+                </div>
+
+                <div class="qr-item" id="box-config">
+                    <div class="qr-title" id="title-config">Config</div>
+                    <img id="img-config" src="" alt="Config QR">
+                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-config')" style="width: 100%; justify-content: center;">Copy Link</button>
+                    <input type="hidden" id="input-config">
+                </div>
             </div>
         </div>
     </div>
@@ -457,7 +473,7 @@
                                         </td>
                                         <td class="action-cell">
                                             <div class="action-buttons">
-                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.subscription_link || client.link || '')}', '${client.email}')" title="QR Code">
+                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.subscription_link || client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}')" title="QR Code">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <rect x="3" y="3" width="7" height="7"></rect>
                                                         <rect x="14" y="3" width="7" height="7"></rect>
@@ -515,30 +531,65 @@
             : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${count})`;
     }
 
-    async function showQrCode(encodedLink, email) {
+    async function showQrCode(encodedLink, email, subUrl, jsonUrl) {
         const link = decodeURIComponent(encodedLink);
-        if (!link) {
-            showToast('Link not found (Client might be missing UUID)', 'error');
-            return;
-        }
-        
-        currentLink = link;
         document.getElementById('qr-email').textContent = email;
-        document.getElementById('qr-link-text').textContent = link;
+        document.getElementById('title-config').textContent = email;
+        
+        document.getElementById('input-sub').value = subUrl || '';
+        document.getElementById('input-json').value = jsonUrl || '';
+        document.getElementById('input-config').value = link || '';
         
         try {
-            const response = await fetch(`/api/client/qrcode?link=${encodedLink}`);
-            const data = await response.json();
-            
-            if (data.success) {
-                document.getElementById('qr-image').src = data.qrcode;
-                document.getElementById('qr-modal').classList.remove('hidden');
-            } else {
-                showToast('Error generating QR Code', 'error');
+            // Generate Config QR
+            if (link) {
+                const configResp = await fetch(`/api/client/qrcode?link=${encodedLink}`);
+                const configData = await configResp.json();
+                if (configData.success) {
+                    document.getElementById('img-config').src = configData.qrcode;
+                    document.getElementById('box-config').style.display = 'flex';
+                }
             }
+            
+            // Generate Subscription QR
+            if (subUrl && subUrl !== 'undefined' && subUrl !== 'null') {
+                const subResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(subUrl)}`);
+                const subData = await subResp.json();
+                if (subData.success) {
+                    document.getElementById('img-sub').src = subData.qrcode;
+                    document.getElementById('box-sub').style.display = 'flex';
+                }
+            } else {
+                document.getElementById('box-sub').style.display = 'none';
+            }
+            
+            // Generate JSON QR
+            if (jsonUrl && jsonUrl !== 'undefined' && jsonUrl !== 'null') {
+                const jsonResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(jsonUrl)}`);
+                const jsonData = await jsonResp.json();
+                if (jsonData.success) {
+                    document.getElementById('img-json').src = jsonData.qrcode;
+                    document.getElementById('box-json').style.display = 'flex';
+                }
+            } else {
+                document.getElementById('box-json').style.display = 'none';
+            }
+            
+            document.getElementById('qr-modal').classList.remove('hidden');
         } catch (error) {
-            showToast('Error: ' + error.message, 'error');
+            showToast('Error generating QR Codes: ' + error.message, 'error');
         }
+    }
+    
+    function copyText(elementId) {
+        const input = document.getElementById(elementId);
+        if (!input.value) return;
+        
+        navigator.clipboard.writeText(input.value).then(() => {
+            showToast('Link copied!');
+        }).catch(() => {
+            showToast('Failed to copy', 'error');
+        });
     }
 
     function closeQrModal() {
@@ -812,6 +863,7 @@
         document.getElementById('server-password').value = '';
         document.getElementById('server-sub-path').value = '/sub/';
         document.getElementById('server-json-path').value = '/json/';
+        document.getElementById('server-sub-port').value = '';
         document.getElementById('server-panel-type').value = 'auto';
         document.getElementById('server-modal').classList.remove('hidden');
         loadServers();
@@ -832,6 +884,7 @@
         document.getElementById('server-username').value = server.username;
         document.getElementById('server-sub-path').value = server.sub_path || '/sub/';
         document.getElementById('server-json-path').value = server.json_path || '/json/';
+        document.getElementById('server-sub-port').value = server.sub_port || '';
         document.getElementById('server-panel-type').value = server.panel_type;
         document.getElementById('server-modal').classList.remove('hidden');
     }
@@ -886,7 +939,8 @@
             password: document.getElementById('server-password').value,
             panel_type: document.getElementById('server-panel-type').value,
             sub_path: document.getElementById('server-sub-path').value,
-            json_path: document.getElementById('server-json-path').value
+            json_path: document.getElementById('server-json-path').value,
+            sub_port: document.getElementById('server-sub-port').value
         };
 
         if (!data.name || !data.host || !data.username || !data.password) {

@@ -64,6 +64,7 @@ class Server(db.Model):
     panel_type = db.Column(db.String(50), default='auto')
     sub_path = db.Column(db.String(50), default='/sub/')
     json_path = db.Column(db.String(50), default='/json/')
+    sub_port = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def to_dict(self):
@@ -76,6 +77,7 @@ class Server(db.Model):
             'panel_type': self.panel_type,
             'sub_path': self.sub_path,
             'json_path': self.json_path,
+            'sub_port': self.sub_port,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -414,10 +416,35 @@ def process_inbounds(inbounds, server):
             for client in clients:
                 link = generate_client_link(client, inbound, server.host)
                 
-                # Generate subscription link
+                # Generate subscription links with proper port handling
                 inbound_id = inbound.get('id')
                 email = client.get('email', '')
                 sub_id = client.get('subId', '')
+                
+                # Parse server host to get scheme and hostname
+                parsed_host = urlparse(server.host)
+                scheme = parsed_host.scheme
+                hostname = parsed_host.hostname
+                
+                # Use subscription port if available, otherwise use panel port
+                if server.sub_port:
+                    port = server.sub_port
+                else:
+                    port = parsed_host.port
+                
+                port_str = f":{port}" if port else ""
+                base_sub_host = f"{scheme}://{hostname}{port_str}"
+                
+                # Generate subscription links
+                sub_url = ""
+                json_url = ""
+                if sub_id:
+                    s_path = server.sub_path.strip('/')
+                    j_path = server.json_path.strip('/')
+                    sub_url = f"{base_sub_host}/{s_path}/{sub_id}"
+                    json_url = f"{base_sub_host}/{j_path}/{sub_id}"
+                
+                # Legacy subscription_link for compatibility
                 base_url = server.host.rstrip('/')
                 s_path = server.sub_path.strip('/')
                 if server.panel_type == 'alireza':
@@ -484,6 +511,8 @@ def process_inbounds(inbounds, server):
                     "down_raw": client_down,
                     "link": link,
                     "subscription_link": subscription_link,
+                    "sub_url": sub_url,
+                    "json_url": json_url,
                     "inbound_id": inbound.get('id'),
                     "server_id": server.id
                 }
@@ -685,6 +714,15 @@ def add_server():
     if not data.get('name') or not data.get('host') or not data.get('username') or not data.get('password'):
         return jsonify({"success": False, "error": "All fields are required"})
     
+    sub_port = data.get('sub_port')
+    if sub_port:
+        try:
+            sub_port = int(sub_port)
+        except:
+            sub_port = None
+    else:
+        sub_port = None
+    
     server = Server(
         name=data['name'],
         host=data['host'].rstrip('/'),
@@ -693,7 +731,8 @@ def add_server():
         enabled=data.get('enabled', True),
         panel_type=data.get('panel_type', 'auto'),
         sub_path=data.get('sub_path', '/sub/').strip(),
-        json_path=data.get('json_path', '/json/').strip()
+        json_path=data.get('json_path', '/json/').strip(),
+        sub_port=sub_port
     )
     
     db.session.add(server)
@@ -723,6 +762,12 @@ def update_server(server_id):
         server.sub_path = data['sub_path'].strip()
     if data.get('json_path'):
         server.json_path = data['json_path'].strip()
+    if 'sub_port' in data:
+        try:
+            val = data['sub_port']
+            server.sub_port = int(val) if val else None
+        except:
+            server.sub_port = None
     
     db.session.commit()
     return jsonify({"success": True, "server": server.to_dict()})

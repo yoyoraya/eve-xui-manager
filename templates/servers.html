@@ -43,6 +43,27 @@
                 <label>Password</label>
                 <input type="password" id="server-password" placeholder="Password">
             </div>
+            
+            <div style="display: flex; gap: 10px;">
+                <div class="form-group" style="flex: 1;">
+                    <label>Sub Path</label>
+                    <input type="text" id="server-sub-path" placeholder="/sub/" value="/sub/">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Json Path</label>
+                    <input type="text" id="server-json-path" placeholder="/json/" value="/json/">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Panel Type</label>
+                <select id="server-panel-type" class="form-select">
+                    <option value="auto">Auto Detect</option>
+                    <option value="sanaei">3X-UI (Sanaei)</option>
+                    <option value="alireza">X-UI (Alireza)</option>
+                </select>
+            </div>
+
             <div class="form-group checkbox-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="server-enabled" checked>
@@ -131,6 +152,12 @@
         document.getElementById('server-host').value = '';
         document.getElementById('server-username').value = '';
         document.getElementById('server-password').value = '';
+        
+        // تنظیم مقادیر پیش‌فرض
+        document.getElementById('server-sub-path').value = '/sub/';
+        document.getElementById('server-json-path').value = '/json/';
+        document.getElementById('server-panel-type').value = 'auto';
+        
         document.getElementById('server-enabled').checked = true;
         document.getElementById('modal-title').textContent = 'Add Server';
         document.getElementById('server-modal').classList.remove('hidden');
@@ -149,6 +176,12 @@
         document.getElementById('server-host').value = server.host;
         document.getElementById('server-username').value = server.username;
         document.getElementById('server-password').value = server.password;
+        
+        // پر کردن مقادیر جدید
+        document.getElementById('server-sub-path').value = server.sub_path || '/sub/';
+        document.getElementById('server-json-path').value = server.json_path || '/json/';
+        document.getElementById('server-panel-type').value = server.panel_type || 'auto';
+        
         document.getElementById('server-enabled').checked = server.enabled;
         document.getElementById('modal-title').textContent = 'Edit Server';
         document.getElementById('server-modal').classList.remove('hidden');
@@ -161,13 +194,26 @@
         const username = document.getElementById('server-username').value.trim();
         const password = document.getElementById('server-password').value.trim();
         const enabled = document.getElementById('server-enabled').checked;
+        const panel_type = document.getElementById('server-panel-type').value;
+        const sub_path = document.getElementById('server-sub-path').value.trim();
+        const json_path = document.getElementById('server-json-path').value.trim();
         
         if (!name || !host || !username || !password) {
             showToast('Please fill in all fields', 'error');
             return;
         }
         
-        const data = { name, host, username, password, enabled };
+        const data = { 
+            name, 
+            host, 
+            username, 
+            password, 
+            enabled, 
+            panel_type,
+            sub_path,
+            json_path
+        };
+        
         const url = id ? `/api/servers/${id}` : '/api/servers';
         const method = id ? 'PUT' : 'POST';
         
