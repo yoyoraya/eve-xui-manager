@@ -4,587 +4,279 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Subscription - {{ client.email }}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              background: '#0B1121',
+              surface: '#151e32',
+              primary: '#6366f1',
+              secondary: '#10b981',
+            }
+          }
+        }
+      }
+    </script>
     <style>
-        :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1a1f35;
-            --card-bg: #1e293b;
-            --card-hover: #2a3650;
-            --primary: #6366f1;
-            --primary-light: #818cf8;
-            --success: #22c55e;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --text-primary: #f8fafc;
-            --text-secondary: #cbd5e1;
-            --text-muted: #94a3b8;
-            --border-color: #334155;
-            --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            font-family: 'Inter', sans-serif;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-            min-height: 100vh;
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: 
-                radial-gradient(circle at 20% 50%, rgba(99, 102, 241, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: -1;
-        }
-
-        .container {
-            width: 100%;
-            max-width: 700px;
-            position: relative;
-            z-index: 1;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 24px;
-            animation: slideDown 0.6s ease-out;
-        }
-
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .header h1 {
-            font-size: 1.8rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-            background: var(--gradient-primary);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .status-badge {
-            display: inline-block;
-            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-            color: white;
-            padding: 6px 14px;
-            border-radius: 50px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        .status-badge.disabled {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        }
-
-        .card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 24px;
-            margin-bottom: 18px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            animation: fadeIn 0.6s ease-out forwards;
-            opacity: 0;
-        }
-
-        @keyframes fadeIn {
-            to { opacity: 1; }
-        }
-
-        .card:nth-child(2) { animation-delay: 0.1s; }
-        .card:nth-child(3) { animation-delay: 0.2s; }
-        .card:nth-child(4) { animation-delay: 0.3s; }
-
-        .card:hover {
-            background: var(--card-hover);
-            border-color: var(--primary);
-            transform: translateY(-2px);
-        }
-
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-            color: var(--text-primary);
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-
-        .stat-item {
-            background: rgba(99, 102, 241, 0.1);
-            padding: 12px;
-            border-radius: 10px;
-            border: 1px solid rgba(99, 102, 241, 0.2);
-            text-align: center;
-        }
-
-        .stat-label {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            display: block;
-            margin-bottom: 6px;
-            font-weight: 600;
-        }
-
-        .stat-value {
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: var(--primary-light);
-            font-family: 'Courier New', monospace;
-        }
-
-        .progress-bar {
-            background: rgba(0, 0, 0, 0.3);
-            height: 8px;
-            border-radius: 8px;
-            overflow: hidden;
-            margin-bottom: 12px;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: var(--gradient-primary);
-            transition: width 0.5s ease;
-        }
-
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.9rem;
-            padding: 8px 0;
-        }
-
-        .info-label {
-            color: var(--text-muted);
-        }
-
-        .info-value {
-            font-weight: 600;
-            color: var(--text-primary);
-        }
-
-        .copy-container {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
-        }
-
-        .copy-input {
-            flex: 1;
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-            padding: 10px 12px;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            font-family: 'Courier New', monospace;
-        }
-
-        .copy-input:focus {
-            outline: none;
-            border-color: var(--primary);
-            background: rgba(99, 102, 241, 0.1);
-        }
-
-        .btn {
-            padding: 10px 16px;
-            border-radius: 8px;
-            border: none;
-            font-weight: 600;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .btn-primary {
-            background: var(--gradient-primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-        }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
-            border-bottom: 1px solid var(--border-color);
-            overflow-x: auto;
-            padding-bottom: 12px;
-        }
-
-        .tab-btn {
-            padding: 8px 14px;
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            font-weight: 600;
-            font-size: 0.85rem;
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-            transition: all 0.3s ease;
-            white-space: nowrap;
-        }
-
-        .tab-btn.active {
-            color: var(--primary);
-            border-bottom-color: var(--primary);
-        }
-
-        .tab-btn:hover {
-            color: var(--text-secondary);
-        }
-
-        .tab-content {
-            display: none;
-            animation: fadeIn 0.3s ease;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        .app-guide {
-            background: rgba(0, 0, 0, 0.2);
-            padding: 14px;
-            border-radius: 10px;
-            margin-bottom: 12px;
-            border-left: 3px solid var(--primary);
-        }
-
-        .app-guide h4 {
-            font-size: 0.9rem;
-            margin-bottom: 8px;
-            color: var(--text-primary);
-        }
-
-        .app-guide ol {
-            margin-left: 18px;
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            line-height: 1.5;
-        }
-
-        .app-guide li {
-            margin-bottom: 6px;
-        }
-
-        .download-links {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 14px;
-        }
-
-        .download-link {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 12px;
-            background: rgba(99, 102, 241, 0.15);
-            border: 1px solid rgba(99, 102, 241, 0.3);
-            border-radius: 8px;
-            text-decoration: none;
-            color: var(--primary-light);
-            font-weight: 600;
-            font-size: 0.8rem;
-            transition: all 0.3s ease;
-        }
-
-        .download-link:hover {
-            background: rgba(99, 102, 241, 0.25);
-            transform: translateY(-2px);
-        }
-
-        .download-link svg {
-            width: 14px;
-            height: 14px;
-        }
-
-        .success-message {
-            background: rgba(34, 197, 94, 0.15);
-            border: 1px solid var(--success);
-            color: #86efac;
-            padding: 10px;
-            border-radius: 8px;
-            text-align: center;
-            display: none;
-            margin-bottom: 12px;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-
-        .success-message.show {
-            display: block;
-        }
-
-        .config-item {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 8px;
-            font-size: 0.75rem;
-            color: #a3e635;
-            cursor: pointer;
-            border: 1px solid transparent;
-            font-family: 'Courier New', monospace;
-            transition: all 0.2s;
-        }
-
-        .config-item:hover {
-            background: rgba(99, 102, 241, 0.15);
-            border-color: var(--primary);
-        }
-
-        .footer {
-            text-align: center;
-            color: var(--text-muted);
-            font-size: 0.8rem;
-            margin-top: 20px;
-            padding-top: 16px;
-            border-top: 1px solid rgba(99, 102, 241, 0.1);
-        }
-
-        @media (max-width: 640px) {
-            .container {
-                max-width: 100%;
-            }
-
-            .header h1 {
-                font-size: 1.4rem;
-            }
-
-            .card {
-                padding: 16px;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .download-links {
-                grid-template-columns: 1fr;
-            }
-
-            .copy-container {
-                flex-direction: column;
-            }
-
-            .tabs {
-                gap: 4px;
-            }
-
-            .tab-btn {
-                padding: 6px 10px;
-                font-size: 0.8rem;
-            }
-        }
+      body {
+        background-color: #0B1121;
+        color: #e2e8f0;
+      }
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #0B1121;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #334155;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #475569;
+      }
+      .tab-btn {
+        @apply px-4 py-2 rounded-lg font-medium text-sm transition-all cursor-pointer;
+      }
+      .tab-btn.inactive {
+        @apply text-slate-400 hover:text-slate-300 hover:bg-slate-800/50;
+      }
+      .tab-btn.active {
+        @apply bg-primary text-white shadow-lg shadow-primary/50;
+      }
+      .success-toast {
+        @apply fixed bottom-4 right-4 bg-secondary text-white px-6 py-3 rounded-lg shadow-lg;
+      }
     </style>
 </head>
-<body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <h1>{{ client.email }}</h1>
-            <span class="status-badge {% if not client.is_active %}disabled{% endif %}">
-                {% if client.is_active %}✓ Active{% else %}✗ Inactive{% endif %}
-            </span>
+<body class="bg-background">
+    <div class="min-h-screen py-8 px-4 sm:px-6 lg:px-8">
+        <!-- Background gradient overlay -->
+        <div class="fixed inset-0 -z-10 opacity-30">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/20 via-background to-secondary/10"></div>
         </div>
 
-        <!-- Stats Card -->
-        <div class="card">
-            <div class="card-title">📊 Data Usage</div>
-            
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <span class="stat-label">Used</span>
-                    <span class="stat-value">{{ client.total_used }}</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Limit</span>
-                    <span class="stat-value">{{ client.total_limit }}</span>
+        <div class="max-w-3xl mx-auto">
+            <!-- Header -->
+            <div class="text-center mb-8">
+                <h1 class="text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                    {{ client.email }}
+                </h1>
+                <div class="flex justify-center gap-3 mt-4">
+                    <span class="inline-block px-4 py-1 rounded-full text-sm font-semibold {% if client.is_active %}bg-secondary/20 text-secondary{% else %}bg-red-500/20 text-red-400{% endif %}">
+                        {% if client.is_active %}✓ Active{% else %}✗ Inactive{% endif %}
+                    </span>
                 </div>
             </div>
 
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                <!-- Usage -->
+                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
+                    <div class="text-slate-400 text-sm font-medium mb-1">Used</div>
+                    <div class="text-2xl font-bold text-primary">{{ client.total_used }}</div>
+                </div>
+                <!-- Limit -->
+                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
+                    <div class="text-slate-400 text-sm font-medium mb-1">Limit</div>
+                    <div class="text-2xl font-bold text-slate-200">{{ client.total_limit }}</div>
+                </div>
+                <!-- Download -->
+                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
+                    <div class="text-slate-400 text-sm font-medium mb-1">↓ Download</div>
+                    <div class="text-2xl font-bold text-blue-400">{{ client.download }}</div>
+                </div>
+                <!-- Upload -->
+                <div class="bg-surface rounded-xl border border-slate-700/50 p-4 hover:border-primary/50 transition-all">
+                    <div class="text-slate-400 text-sm font-medium mb-1">↑ Upload</div>
+                    <div class="text-2xl font-bold text-cyan-400">{{ client.upload }}</div>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
             {% if client.percentage_used >= 0 %}
-            <div class="progress-bar">
-                <div class="progress-fill" style="width: {{ [client.percentage_used, 100]|min }}%;"></div>
+            <div class="mb-8">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-slate-400 text-sm">Data Usage Progress</span>
+                    <span class="text-primary font-semibold">{{ "{:.1f}".format(client.percentage_used) }}%</span>
+                </div>
+                <div class="h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-gradient-to-r from-primary to-secondary rounded-full transition-all duration-500" style="width: {{ [client.percentage_used, 100]|min }}%"></div>
+                </div>
             </div>
             {% endif %}
 
-            <div class="info-row">
-                <span class="info-label">⏰ Expires:</span>
-                <span class="info-value">{{ client.expiry }}</span>
-            </div>
-        </div>
-
-        <!-- Subscription Card -->
-        <div class="card">
-            <div class="card-title">📥 Import Setup</div>
-
-            <div class="success-message" id="successMsg">✓ Copied!</div>
-
-            <div class="copy-container">
-                <input 
-                    type="text" 
-                    id="subLink" 
-                    value="{{ client.subscription_url }}" 
-                    readonly 
-                    class="copy-input"
-                    placeholder="Subscription URL"
-                >
-                <button class="btn btn-primary" onclick="copyLink('subLink')">Copy</button>
-            </div>
-
-            <!-- Tabs for Apps -->
-            <div class="tabs">
-                <button class="tab-btn active" onclick="switchTab(event, 'v2ray')">v2rayNG</button>
-                <button class="tab-btn" onclick="switchTab(event, 'nekobox')">NekoBox</button>
-                <button class="tab-btn" onclick="switchTab(event, 'streisand')">Streisand</button>
-                <button class="tab-btn" onclick="switchTab(event, 'others')">Others</button>
-            </div>
-
-            <!-- v2rayNG Guide -->
-            <div id="v2ray" class="tab-content active">
-                <div class="app-guide">
-                    <h4>📱 v2rayNG Setup</h4>
-                    <ol>
-                        <li>Download v2rayNG from Google Play or APK sources</li>
-                        <li>Open the app → Tap "+" menu</li>
-                        <li>Select "Subscription" or "Import from clipboard"</li>
-                        <li>Paste the subscription link above</li>
-                        <li>Tap connect and enjoy!</li>
-                    </ol>
-                </div>
-                <div class="download-links">
-                    <a href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" class="download-link">
-                        <span>📲</span> Google Play
-                    </a>
-                    <a href="https://github.com/2dust/v2rayNG/releases" target="_blank" class="download-link">
-                        <span>⬇️</span> APK
-                    </a>
+            <!-- Info Row -->
+            <div class="bg-surface rounded-xl border border-slate-700/50 p-4 mb-8">
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">⏰ Expires In</span>
+                    <span class="font-semibold text-slate-200">{{ client.expiry }}</span>
                 </div>
             </div>
 
-            <!-- NekoBox Guide -->
-            <div id="nekobox" class="tab-content">
-                <div class="app-guide">
-                    <h4>📦 NekoBox Setup</h4>
-                    <ol>
-                        <li>Download NekoBox from GitHub Releases</li>
-                        <li>Open the app → Go to Profiles</li>
-                        <li>Tap "+" → "Add Profile from Clipboard"</li>
-                        <li>Paste the subscription link and save</li>
-                        <li>Select profile and connect!</li>
-                    </ol>
+            <!-- Subscription Section -->
+            <div class="bg-surface rounded-xl border border-slate-700/50 p-6 mb-8">
+                <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span>📥</span> Import Subscription
+                </h2>
+                
+                <div id="successMsg" class="success-toast opacity-0 pointer-events-none transition-opacity">
+                    ✓ Copied to clipboard!
                 </div>
-                <div class="download-links">
-                    <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" target="_blank" class="download-link">
-                        <span>⬇️</span> APK
-                    </a>
-                    <a href="https://play.google.com/store/apps/details?id=moe.nb4a" target="_blank" class="download-link">
-                        <span>📲</span> Play Store
-                    </a>
+
+                <!-- Copy Box -->
+                <div class="mb-6">
+                    <label class="text-slate-400 text-sm font-medium mb-2 block">Subscription Link</label>
+                    <div class="flex gap-2">
+                        <input 
+                            type="text" 
+                            id="subLink" 
+                            value="{{ client.subscription_url }}" 
+                            readonly 
+                            class="flex-1 bg-background border border-slate-600 rounded-lg px-4 py-2 text-slate-300 font-mono text-sm focus:border-primary focus:outline-none transition-colors"
+                        >
+                        <button onclick="copyLink('subLink')" class="px-4 py-2 bg-primary hover:bg-primary/80 text-white font-medium rounded-lg transition-all">
+                            Copy
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tabs -->
+                <div class="mb-6">
+                    <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
+                        <button class="tab-btn active" onclick="switchTab(event, 'v2ray')">📱 v2rayNG</button>
+                        <button class="tab-btn inactive" onclick="switchTab(event, 'nekobox')">📦 NekoBox</button>
+                        <button class="tab-btn inactive" onclick="switchTab(event, 'streisand')">🔐 Streisand</button>
+                        <button class="tab-btn inactive" onclick="switchTab(event, 'others')">🌐 Others</button>
+                    </div>
+
+                    <!-- v2rayNG -->
+                    <div id="v2ray" class="tab-content">
+                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
+                            <h3 class="font-semibold text-slate-200 mb-3">Setup Steps</h3>
+                            <ol class="text-slate-400 text-sm space-y-2 list-decimal list-inside">
+                                <li>Download v2rayNG from Google Play or APK sources</li>
+                                <li>Open the app → Tap "+" menu</li>
+                                <li>Select "Subscription" or "Import from clipboard"</li>
+                                <li>Paste the subscription link above</li>
+                                <li>Tap connect and enjoy!</li>
+                            </ol>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <a href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
+                                <span>📲</span> Google Play
+                            </a>
+                            <a href="https://github.com/2dust/v2rayNG/releases" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
+                                <span>⬇️</span> APK
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- NekoBox -->
+                    <div id="nekobox" class="tab-content hidden">
+                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
+                            <h3 class="font-semibold text-slate-200 mb-3">Setup Steps</h3>
+                            <ol class="text-slate-400 text-sm space-y-2 list-decimal list-inside">
+                                <li>Download NekoBox from GitHub Releases</li>
+                                <li>Open the app → Go to Profiles</li>
+                                <li>Tap "+" → "Add Profile from Clipboard"</li>
+                                <li>Paste the subscription link and save</li>
+                                <li>Select profile and connect!</li>
+                            </ol>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
+                                <span>⬇️</span> APK
+                            </a>
+                            <a href="https://play.google.com/store/apps/details?id=moe.nb4a" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
+                                <span>📲</span> Play Store
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Streisand -->
+                    <div id="streisand" class="tab-content hidden">
+                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
+                            <h3 class="font-semibold text-slate-200 mb-3">Setup Steps</h3>
+                            <ol class="text-slate-400 text-sm space-y-2 list-decimal list-inside">
+                                <li>Download Streisand for iOS from App Store</li>
+                                <li>Open the app → Tap "+" button</li>
+                                <li>Choose "Add from Clipboard"</li>
+                                <li>Paste your subscription link</li>
+                                <li>Save and connect!</li>
+                            </ol>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <a href="https://apps.apple.com/us/app/streisand/id6450534064" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
+                                <span>🍎</span> App Store
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Others -->
+                    <div id="others" class="tab-content hidden">
+                        <div class="bg-background/50 rounded-lg p-4 mb-4 border-l-4 border-primary">
+                            <h3 class="font-semibold text-slate-200 mb-3">Popular Apps</h3>
+                            <ul class="text-slate-400 text-sm space-y-2 list-disc list-inside">
+                                <li><strong class="text-slate-300">Shadowrocket (iOS):</strong> App → "+" → Import → Paste</li>
+                                <li><strong class="text-slate-300">Clash (Android):</strong> Profile → Add from clipboard</li>
+                                <li><strong class="text-slate-300">Sing-Box:</strong> Configuration → Add subscription</li>
+                                <li><strong class="text-slate-300">Hiddify:</strong> Profiles → Add → Paste link</li>
+                            </ul>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <a href="https://apps.apple.com/us/app/shadowrocket/id932747118" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
+                                <span>🍎</span> Shadowrocket
+                            </a>
+                            <a href="https://github.com/SagerNet/sing-box" target="_blank" class="px-4 py-2 bg-primary/20 text-primary hover:bg-primary/30 border border-primary/50 rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2">
+                                <span>⬇️</span> Sing-Box
+                            </a>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Streisand Guide -->
-            <div id="streisand" class="tab-content">
-                <div class="app-guide">
-                    <h4>🔐 Streisand Setup</h4>
-                    <ol>
-                        <li>Download Streisand for iOS from App Store</li>
-                        <li>Open the app → Tap "+" button</li>
-                        <li>Choose "Add from Clipboard"</li>
-                        <li>Paste your subscription link</li>
-                        <li>Save and connect!</li>
-                    </ol>
-                </div>
-                <div class="download-links">
-                    <a href="https://apps.apple.com/us/app/streisand/id6450534064" target="_blank" class="download-link">
-                        <span>🍎</span> App Store
-                    </a>
+            <!-- Manual Configs -->
+            {% if client.configs %}
+            <div class="bg-surface rounded-xl border border-slate-700/50 p-6">
+                <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span>⚙️</span> Manual Configs
+                </h2>
+                <div class="space-y-2">
+                    {% for config in client.configs %}
+                    <div class="bg-background/50 border border-slate-600/50 rounded-lg p-3 hover:border-primary/50 cursor-pointer transition-all font-mono text-xs text-slate-400 hover:text-slate-300 break-all" onclick="copyConfig(this, '{{ config }}')">
+                        {{ config[:100] }}{% if config|length > 100 %}...{% endif %}
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
+            {% endif %}
 
-            <!-- Other Apps -->
-            <div id="others" class="tab-content">
-                <div class="app-guide">
-                    <h4>🌐 Other Apps</h4>
-                    <ol>
-                        <li><strong>Shadowrocket (iOS):</strong> App → "+" → Import → Paste link</li>
-                        <li><strong>Clash (Android):</strong> Profile → Add from clipboard</li>
-                        <li><strong>Sing-Box (Cross-platform):</strong> Configuration → Add subscription</li>
-                        <li>Most apps support "Add from Clipboard" option</li>
-                    </ol>
-                </div>
-                <div class="download-links">
-                    <a href="https://apps.apple.com/us/app/shadowrocket/id932747118" target="_blank" class="download-link">
-                        <span>🍎</span> Shadowrocket
-                    </a>
-                    <a href="https://github.com/SagerNet/sing-box" target="_blank" class="download-link">
-                        <span>⬇️</span> Sing-Box
-                    </a>
-                </div>
+            <!-- Footer -->
+            <div class="text-center mt-12 text-slate-500 text-sm">
+                <p>Eve - Xui Manager</p>
             </div>
-        </div>
-
-        <!-- Configs Card -->
-        {% if client.configs %}
-        <div class="card">
-            <div class="card-title">⚙️ Manual Configs</div>
-            {% for config in client.configs %}
-            <div class="config-item" onclick="copyConfig(this, '{{ config }}')">
-                {{ config[:80] }}{% if config|length > 80 %}...{% endif %}
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-
-        <!-- Footer -->
-        <div class="footer">
-            <p><strong>Eve</strong> - Xui Manager</p>
         </div>
     </div>
 
     <script>
         function switchTab(e, tabName) {
-            // Hide all content
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('active');
+                el.classList.add('inactive');
+            });
             
-            // Show selected
-            document.getElementById(tabName).classList.add('active');
+            document.getElementById(tabName).classList.remove('hidden');
             e.target.classList.add('active');
+            e.target.classList.remove('inactive');
         }
 
         function copyToClipboard(text) {
@@ -603,17 +295,19 @@
 
         function copyConfig(element, config) {
             copyToClipboard(config);
-            element.style.background = 'rgba(34, 197, 94, 0.25)';
+            element.style.background = 'rgba(16, 185, 129, 0.2)';
+            element.style.borderColor = 'rgba(16, 185, 129, 0.5)';
             setTimeout(() => {
                 element.style.background = '';
+                element.style.borderColor = '';
             }, 500);
         }
 
         function showSuccess() {
             const msg = document.getElementById('successMsg');
-            msg.classList.add('show');
+            msg.classList.remove('opacity-0', 'pointer-events-none');
             setTimeout(() => {
-                msg.classList.remove('show');
+                msg.classList.add('opacity-0', 'pointer-events-none');
             }, 2000);
         }
 
