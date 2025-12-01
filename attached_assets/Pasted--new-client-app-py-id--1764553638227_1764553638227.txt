@@ -1,0 +1,56 @@
+مشکل اصلی اینجاست که شما در هنگام ساخت آبجکت new_client در فایل app.py، پارامترهای حیاتی مثل id (که همان UUID است) و subId را تولید نمی‌کنید.
+
+وقتی شما یک کلاینت بدون id به دیتابیس X-UI می‌فرستید، پنل آن را ذخیره می‌کند اما چون ساختار JSON ناقص است:
+
+ارور SQL که در تصویر می‌بینید رخ می‌دهد (چون نمی‌تواند فیلدهای خالی را بخواند).
+
+در پنل X-UI، دکمه ویرایش (Edit) کار نمی‌کند یا لیست باز نمی‌شود چون جاوااسکریپت پنل به دنبال id می‌گردد و آن را پیدا نمی‌کند.
+
+راه حل: اصلاح کد app.py
+شما باید کتابخانه‌های uuid و secrets را ایمپورت کنید و آبجکت new_client را کامل کنید.
+
+مرحله ۱: اضافه کردن ایمپورت‌ها
+در ابتدای فایل app.py، این دو خط را به لیست ایمپورت‌ها اضافه کنید:
+
+Python
+
+import uuid
+import secrets
+import string
+مرحله ۲: اصلاح تابع add_client
+در تابع add_client (حدود خط 578)، قسمت ساخت new_client را با کد زیر جایگزین کنید. این کد یک UUID و SubId تولید می‌کند و فیلدهای پیش‌فرض را اضافه می‌کند:
+
+Python
+
+        # ... کدهای قبلی ...
+        
+        # تولید شناسه یکتا (UUID)
+        client_uuid = str(uuid.uuid4())
+        
+        # تولید SubId تصادفی (16 کاراکتر)
+        alphabet = string.ascii_letters + string.digits
+        client_sub_id = ''.join(secrets.choice(alphabet) for i in range(16))
+
+        new_client = {
+            "id": client_uuid,           # بسیار مهم: بدون این پنل خراب می‌شود
+            "email": email,
+            "enable": True,
+            "expiryTime": -1 * (days * 86400000) if start_after_first_use else int((datetime.now() + timedelta(days=days)).timestamp() * 1000) if days > 0 else 0,
+            "totalGB": volume_gb * 1024 * 1024 * 1024 if volume_gb > 0 else 0,
+            "subId": client_sub_id,      # بسیار مهم برای لینک‌های اشتراک
+            "limitIp": 0,                # پیش‌فرض 0 (نامحدود)
+            "flow": "",                  # برای VLESS XTLS Vision
+            "tgId": "",                  # آیدی تلگرام (خالی بگذارید)
+            "reset": 0
+        }
+        
+        clients.append(new_client)
+        # ... ادامه کد ...
+توضیح تغییرات:
+"id": client_uuid: مهم‌ترین بخش است. پروتکل‌های VLESS و VMess برای احراز هویت به این نیاز دارند. حتی اگر پروتکل Trojan باشد، این فیلد به عنوان پسورد عمل می‌کند.
+
+"subId": client_sub_id: برای لینک‌های سابسکرایبشن ضروری است.
+
+"flow": "": جلوگیری از ارور در کلاینت‌های VLESS جدید.
+
+"limitIp": 0: مشخص می‌کند محدودیت IP وجود ندارد.

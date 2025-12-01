@@ -4,6 +4,9 @@ import json
 import base64
 import requests
 import qrcode
+import uuid
+import secrets
+import string
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
@@ -1007,11 +1010,21 @@ def add_client(server_id, inbound_id):
             if client.get('email') == email:
                 return jsonify({"success": False, "error": f"Email '{email}' already exists"})
         
+        # Generate unique client ID (UUID) and SubId
+        client_uuid = str(uuid.uuid4())
+        alphabet = string.ascii_letters + string.digits
+        client_sub_id = ''.join(secrets.choice(alphabet) for i in range(16))
+        
         new_client = {
+            "id": client_uuid,
             "email": email,
             "enable": True,
             "expiryTime": -1 * (days * 86400000) if start_after_first_use else int((datetime.now() + timedelta(days=days)).timestamp() * 1000) if days > 0 else 0,
             "totalGB": volume_gb * 1024 * 1024 * 1024 if volume_gb > 0 else 0,
+            "subId": client_sub_id,
+            "limitIp": 0,
+            "flow": "",
+            "tgId": "",
             "reset": 0
         }
         
