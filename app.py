@@ -963,7 +963,7 @@ def renew_client(server_id, inbound_id, email):
     
     data = request.json or {}
     days = int(data.get('days', 30))
-    volume_gb = int(data.get('volume_gb', 0))
+    volume_gb = int(data.get('volume', 0))
     start_after_first_use = bool(data.get('start_after_first_use', False))
     
     # When start_after_first_use is enabled, allow days=0 (expiry starts after first connection)
