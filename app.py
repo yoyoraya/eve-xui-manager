@@ -1143,6 +1143,108 @@ def add_client(server_id, inbound_id):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
+@app.route('/api/clients/search')
+@login_required
+def search_clients():
+    email_query = request.args.get('email', '').lower().strip()
+    
+    if not email_query or len(email_query) < 2:
+        return jsonify({"success": True, "results": []})
+    
+    try:
+        servers = Server.query.filter_by(enabled=True).all()
+        results = []
+        
+        for server in servers:
+            try:
+                session_obj = requests.Session()
+                session_obj.verify = False
+                
+                # Determine API endpoints based on panel type
+                if server.panel_type == 'alireza':
+                    inbound_url = f"{server.host}/xui/inbound/list"
+                    login_url = f"{server.host}/xui/login"
+                else:
+                    inbound_url = f"{server.host}/panel/api/inbounds/list"
+                    login_url = f"{server.host}/login"
+                
+                # Login to server
+                login_data = {"username": server.username, "password": server.password}
+                login_resp = session_obj.post(login_url, json=login_data, timeout=10)
+                
+                if login_resp.status_code != 200:
+                    continue
+                
+                # Get all inbounds
+                inbounds_resp = session_obj.get(inbound_url, timeout=10)
+                if inbounds_resp.status_code != 200:
+                    continue
+                
+                inbounds_json = inbounds_resp.json()
+                inbounds = inbounds_json.get('obj', inbounds_json.get('data', []))
+                
+                # Search for clients with matching email
+                for inbound in inbounds:
+                    try:
+                        settings = json.loads(inbound.get('settings', '{}'))
+                        clients = settings.get('clients', [])
+                        
+                        for client in clients:
+                            client_email = client.get('email', '').lower()
+                            if email_query in client_email:
+                                # Generate client link
+                                link = generate_client_link(client, inbound, server.host)
+                                
+                                result = {
+                                    "server_id": server.id,
+                                    "server_name": server.name,
+                                    "inbound_id": inbound.get('id'),
+                                    "inbound": {
+                                        "id": inbound.get('id'),
+                                        "remark": inbound.get('remark', 'N/A'),
+                                        "protocol": inbound.get('protocol', 'N/A'),
+                                        "port": inbound.get('port', 'N/A'),
+                                        "enable": inbound.get('enable', True)
+                                    },
+                                    "client": {
+                                        "email": client.get('email', ''),
+                                        "enable": client.get('enable', True),
+                                        "expiryTime": format_remaining_days(client.get('expiryTime', 0))['text'],
+                                        "expiryType": format_remaining_days(client.get('expiryTime', 0))['type'],
+                                        "totalGB": client.get('totalGB', 0),
+                                        "totalGB_formatted": format_bytes(client.get('totalGB', 0)) if client.get('totalGB', 0) > 0 else "Unlimited",
+                                        "upload": format_bytes(0),
+                                        "download": format_bytes(0),
+                                        "remaining_formatted": "Unlimited"
+                                    }
+                                }
+                                
+                                # Get traffic stats if available
+                                client_stats = inbound.get('clientStats', [])
+                                for stat in client_stats:
+                                    if stat.get('email') == client.get('email'):
+                                        up = stat.get('up', 0)
+                                        down = stat.get('down', 0)
+                                        result['client']['upload'] = format_bytes(up)
+                                        result['client']['download'] = format_bytes(down)
+                                        
+                                        total_gb = client.get('totalGB', 0)
+                                        if total_gb > 0:
+                                            used = up + down
+                                            remaining = max(0, total_gb - used)
+                                            result['client']['remaining_formatted'] = format_bytes(remaining)
+                                        break
+                                
+                                results.append(result)
+                    except:
+                        continue
+            except:
+                continue
+        
+        return jsonify({"success": True, "results": results})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 @app.route('/api/client/qrcode')
 @login_required
 def get_qrcode():

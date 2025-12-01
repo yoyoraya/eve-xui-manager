@@ -97,6 +97,15 @@
         <h2>Inbounds</h2>
         <span class="badge" id="inbounds-count">0 total</span>
     </div>
+    <div style="margin-bottom: 20px;">
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="global-search-input" placeholder="Search clients by email across all servers..." class="form-input" style="flex: 1; padding: 10px 12px;">
+            <button class="btn btn-secondary" onclick="clearSearch()" id="clear-search-btn" style="display: none;">Clear</button>
+        </div>
+        <div id="search-results" style="display: none; margin-top: 10px; padding: 10px; background: rgba(99, 102, 241, 0.1); border-radius: 8px; font-size: 14px;">
+            <span id="search-results-text"></span>
+        </div>
+    </div>
     <div class="inbounds-list" id="inbounds-container">
         <div class="empty-state" id="empty-state">
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -302,10 +311,12 @@
     let autoRefreshInterval = null;
     let currentLink = '';
     let inboundsData = [];
+    let allInboundsData = [];
 
     document.addEventListener('DOMContentLoaded', function() {
         refreshData();
         loadServers();
+        document.getElementById('global-search-input').addEventListener('input', performGlobalSearch);
     });
 
     function toggleAutoRefresh() {
@@ -991,6 +1002,175 @@
         } catch (error) {
             showToast('Error: ' + error.message, 'error');
         }
+    }
+
+    async function performGlobalSearch() {
+        const searchInput = document.getElementById('global-search-input');
+        const query = searchInput.value.trim().toLowerCase();
+        
+        if (query.length === 0) {
+            clearSearch();
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/clients/search?email=${encodeURIComponent(query)}`);
+            const data = await response.json();
+            
+            if (data.success && data.results.length > 0) {
+                displaySearchResults(data.results, query);
+            } else {
+                displaySearchResults([], query);
+            }
+        } catch (error) {
+            console.error('Search error:', error);
+        }
+    }
+
+    function displaySearchResults(results, query) {
+        const searchResultsDiv = document.getElementById('search-results');
+        const searchResultsText = document.getElementById('search-results-text');
+        const clearBtn = document.getElementById('clear-search-btn');
+        
+        if (results.length === 0) {
+            searchResultsDiv.style.display = 'block';
+            searchResultsText.textContent = `No clients found matching "${query}"`;
+            clearBtn.style.display = 'inline-block';
+            updateInboundsFiltered([]);
+            return;
+        }
+        
+        searchResultsDiv.style.display = 'block';
+        searchResultsText.textContent = `Found ${results.length} client(s) matching "${query}"`;
+        clearBtn.style.display = 'inline-block';
+        
+        updateInboundsFiltered(results);
+    }
+
+    function updateInboundsFiltered(filteredResults) {
+        if (filteredResults.length === 0) {
+            const container = document.getElementById('inbounds-container');
+            container.innerHTML = `<div class="empty-state"><h3>No results</h3></div>`;
+            return;
+        }
+        
+        const container = document.getElementById('inbounds-container');
+        const inboundsToShow = [];
+        
+        filteredResults.forEach(result => {
+            const existing = inboundsToShow.find(i => i.id === result.inbound_id && i.server_id === result.server_id);
+            if (existing) {
+                existing.clients.push(result.client);
+            } else {
+                inboundsToShow.push({
+                    id: result.inbound_id,
+                    server_id: result.server_id,
+                    server_name: result.server_name,
+                    remark: result.inbound.remark,
+                    protocol: result.inbound.protocol,
+                    port: result.inbound.port,
+                    enable: result.inbound.enable,
+                    network: 'tcp',
+                    security: 'tls',
+                    client_count: 1,
+                    total_up: '0 B',
+                    total_down: '0 B',
+                    clients: [result.client]
+                });
+            }
+        });
+        
+        const html = inboundsToShow.map(inbound => `
+            <div class="inbound-card ${!inbound.enable ? 'disabled' : ''}">
+                <div class="inbound-header">
+                    <div class="inbound-title">
+                        <span class="protocol-badge ${inbound.protocol.toLowerCase()}">${inbound.protocol}</span>
+                        <h3>${inbound.remark}</h3>
+                        <span class="port-badge">:${inbound.port}</span>
+                        <span class="server-badge">${inbound.server_name}</span>
+                    </div>
+                </div>
+                ${inbound.clients.length > 0 ? `
+                <div class="clients-section">
+                    <div class="clients-list">
+                        <div class="clients-table-wrapper">
+                            <table class="clients-table">
+                                <thead>
+                                    <tr>
+                                        <th>Email</th>
+                                        <th>Status</th>
+                                        <th>Expiry</th>
+                                        <th>Traffic</th>
+                                        <th>Volume</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${inbound.clients.map(client => `
+                                    <tr class="${!client.enable ? 'disabled-row' : ''}">
+                                        <td class="email-cell">${client.email}</td>
+                                        <td>
+                                            ${client.enable 
+                                                ? `<span class="client-status active">Enabled</span>` 
+                                                : `<span class="client-status inactive">Disabled</span>`}
+                                        </td>
+                                        <td>
+                                            <span class="expiry-badge ${getExpiryClass(client.expiryType)}">${client.expiryTime}</span>
+                                        </td>
+                                        <td class="traffic-cell">
+                                            <div class="traffic-combined-cell">
+                                                <span class="up">${client.upload}</span>
+                                                <span class="down">${client.download}</span>
+                                            </div>
+                                        </td>
+                                        <td class="volume-cell">
+                                            <div class="volume-info">
+                                                <span class="remaining">${client.remaining_formatted}</span>
+                                                <span class="total">/ ${client.totalGB_formatted}</span>
+                                            </div>
+                                        </td>
+                                        <td class="action-cell">
+                                            <div class="action-buttons">
+                                                <button class="action-btn renew" onclick="openRenewModal(${inbound.server_id}, '${inbound.id}', '${client.email}')" title="Renew">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <circle cx="12" cy="12" r="10"></circle>
+                                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                                    </svg>
+                                                </button>
+                                                <button class="action-btn ${client.enable ? 'danger' : 'success'}" onclick="toggleClient(${inbound.server_id}, '${inbound.id}', '${client.email}', ${!client.enable})" title="${client.enable ? 'Disable' : 'Enable'}">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        ${client.enable 
+                                                            ? '<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>'
+                                                            : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'}
+                                                    </svg>
+                                                </button>
+                                                <button class="action-btn warning" onclick="resetClientTraffic(${inbound.server_id}, '${inbound.id}', '${client.email}')" title="Reset Traffic">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <polyline points="1 4 1 10 7 10"></polyline>
+                                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+        `).join('');
+        
+        container.innerHTML = html;
+    }
+
+    function clearSearch() {
+        document.getElementById('global-search-input').value = '';
+        document.getElementById('search-results').style.display = 'none';
+        document.getElementById('clear-search-btn').style.display = 'none';
+        refreshData();
     }
 </script>
 {% endblock %}
