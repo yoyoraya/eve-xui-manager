@@ -167,6 +167,11 @@
         <div class="modal-body qr-body">
             <img id="qr-image" src="" alt="QR Code">
             <p id="qr-email" class="qr-email"></p>
+            
+            <div style="margin-bottom: 15px; word-break: break-all; font-size: 0.8rem; background: #0f172a; padding: 10px; border-radius: 8px; max-height: 100px; overflow-y: auto;">
+                <code id="qr-link-text" style="color: #6366f1;"></code>
+            </div>
+            
             <div class="qr-actions">
                 <button class="btn btn-secondary" onclick="copyLink()">Copy Link</button>
             </div>
@@ -503,19 +508,20 @@
     async function showQrCode(encodedLink, email) {
         const link = decodeURIComponent(encodedLink);
         if (!link) {
-            showToast('Link not found', 'error');
+            showToast('Link not found (Client might be missing UUID)', 'error');
             return;
         }
         
         currentLink = link;
         document.getElementById('qr-email').textContent = email;
+        document.getElementById('qr-link-text').textContent = link;
         
         try {
             const response = await fetch(`/api/client/qrcode?link=${encodedLink}`);
             const data = await response.json();
             
             if (data.success) {
-                document.getElementById('qr-image').src = data.qr_code;
+                document.getElementById('qr-image').src = data.qrcode;
                 document.getElementById('qr-modal').classList.remove('hidden');
             } else {
                 showToast('Error generating QR Code', 'error');
