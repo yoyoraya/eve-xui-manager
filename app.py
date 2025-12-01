@@ -1015,22 +1015,29 @@ def add_client(server_id, inbound_id):
             "reset": 0
         }
         
+        clients.append(new_client)
+        settings['clients'] = clients
+        
+        update_data = inbound_data.copy()
+        update_data['id'] = inbound_id
+        update_data['settings'] = json.dumps(settings)
+        
         if server.panel_type == 'alireza':
-            add_url = f"{server.host}/xui/API/inbounds/addClient/"
+            update_url = f"{server.host}/xui/inbound/update/{inbound_id}"
         else:
-            add_url = f"{server.host}/panel/api/inbounds/addClient"
+            update_url = f"{server.host}/panel/api/inbounds/update/{inbound_id}"
         
-        add_data = {
-            "inboundId": inbound_id,
-            "clientData": json.dumps(new_client)
-        }
+        update_resp = session_obj.post(update_url, json=update_data, verify=False, timeout=10)
         
-        add_resp = session_obj.post(add_url, json=add_data, verify=False, timeout=10)
+        try:
+            resp_data = update_resp.json()
+        except:
+            resp_data = {}
         
-        if add_resp.status_code == 200 and add_resp.json().get('success'):
+        if update_resp.status_code == 200 and resp_data.get('success'):
             return jsonify({"success": True})
         
-        error_msg = add_resp.json().get('msg', add_resp.json().get('message', 'Failed to add client'))
+        error_msg = resp_data.get('msg', resp_data.get('message', 'Failed to add client'))
         return jsonify({"success": False, "error": error_msg})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
