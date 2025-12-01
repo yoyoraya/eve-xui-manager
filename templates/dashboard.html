@@ -187,34 +187,34 @@
             <h2>QR Codes - <span id="qr-email" class="qr-email"></span></h2>
             <button class="modal-close" onclick="closeQrModal()">&times;</button>
         </div>
-        <div class="modal-body qr-body" style="padding: 20px;">
+        <div class="modal-body qr-body" style="padding: 15px;">
             <div class="qr-grid">
                 
-                <div class="qr-item" id="box-sub">
+                <div class="qr-item ripple" id="box-sub" onclick="copyText('input-sub')">
                     <div class="qr-title">Subscription</div>
                     <img id="img-sub" src="" alt="Sub QR">
-                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-sub')" style="width: 100%; justify-content: center;">Copy Sub</button>
+                    <div class="click-hint">Tap to Copy</div>
                     <input type="hidden" id="input-sub">
                 </div>
 
-                <div class="qr-item" id="box-json">
+                <div class="qr-item ripple" id="box-json" onclick="copyText('input-json')">
                     <div class="qr-title">Subscription JSON</div>
                     <img id="img-json" src="" alt="Json QR">
-                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-json')" style="width: 100%; justify-content: center;">Copy JSON</button>
+                    <div class="click-hint">Tap to Copy</div>
                     <input type="hidden" id="input-json">
                 </div>
 
-                <div class="qr-item" id="box-config">
+                <div class="qr-item ripple" id="box-config" onclick="copyText('input-config')">
                     <div class="qr-title" id="title-config">Direct Link</div>
                     <img id="img-config" src="" alt="Config QR">
-                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-config')" style="width: 100%; justify-content: center;">Copy Direct</button>
+                    <div class="click-hint">Tap to Copy</div>
                     <input type="hidden" id="input-config">
                 </div>
 
-                <div class="qr-item" id="box-dash">
+                <div class="qr-item ripple" id="box-dash" onclick="copyText('input-dash')">
                     <div class="qr-title">Dash Sub</div>
                     <img id="img-dash" src="" alt="Dash QR">
-                    <button class="btn btn-secondary btn-sm" onclick="copyText('input-dash')" style="width: 100%; justify-content: center;">Copy Link</button>
+                    <div class="click-hint">Tap to Copy</div>
                     <input type="hidden" id="input-dash">
                 </div>
                 

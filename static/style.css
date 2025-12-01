@@ -1887,6 +1887,26 @@ input:checked + .slider:before {
     flex-shrink: 0;
 }
 
+/* افکت کلیک (Ripple Effect) */
+.qr-item {
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.1s, background-color 0.2s;
+}
+
+.qr-item.ripple:active {
+    transform: scale(0.98);
+    background-color: var(--bg-card-hover);
+    border-color: var(--primary);
+}
+
+.click-hint {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    margin-top: 5px;
+    opacity: 0.7;
+}
+
 .btn-sm {
     padding: 4px 8px;
     font-size: 0.65rem;
@@ -1917,26 +1937,51 @@ input:checked + .slider:before {
 
 @media (max-width: 768px) {
     .qr-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
+        overflow: visible !important;
     }
-    
+
+    .qr-item {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 15px !important;
+        min-height: auto !important;
+        text-align: left;
+    }
+
     .qr-item img {
-        width: 110px;
-        height: 110px;
+        width: 60px !important;
+        height: 60px !important;
+        margin: 0 !important;
+        order: 2;
     }
-    
+
     .qr-title {
-        font-size: 0.7rem;
-        padding: 2px 6px;
+        order: 1;
+        margin: 0 !important;
+        font-size: 0.85rem !important;
+        background: none !important;
+        padding: 0 !important;
+        color: var(--text-primary) !important;
+        width: auto !important;
     }
-    
-    .btn-sm {
-        padding: 3px 6px;
-        font-size: 0.6rem;
+
+    .click-hint {
+        display: none;
     }
-    
+
+    .modal-body {
+        padding: 10px !important;
+    }
+
     .modal {
+        max-height: 90vh !important;
         max-width: 95% !important;
     }
 }
@@ -1947,7 +1992,7 @@ input:checked + .slider:before {
     }
     
     .qr-item img {
-        width: 100px;
-        height: 100px;
+        width: 60px !important;
+        height: 60px !important;
     }
 }
