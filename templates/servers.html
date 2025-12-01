@@ -56,6 +56,11 @@
             </div>
 
             <div class="form-group">
+                <label>Sub Port (Optional)</label>
+                <input type="number" id="server-sub-port" placeholder="Leave empty to use panel port">
+            </div>
+
+            <div class="form-group">
                 <label>Panel Type</label>
                 <select id="server-panel-type" class="form-select">
                     <option value="auto">Auto Detect</option>
@@ -156,6 +161,7 @@
         // تنظیم مقادیر پیش‌فرض
         document.getElementById('server-sub-path').value = '/sub/';
         document.getElementById('server-json-path').value = '/json/';
+        document.getElementById('server-sub-port').value = '';
         document.getElementById('server-panel-type').value = 'auto';
         
         document.getElementById('server-enabled').checked = true;
@@ -180,6 +186,7 @@
         // پر کردن مقادیر جدید
         document.getElementById('server-sub-path').value = server.sub_path || '/sub/';
         document.getElementById('server-json-path').value = server.json_path || '/json/';
+        document.getElementById('server-sub-port').value = server.sub_port || '';
         document.getElementById('server-panel-type').value = server.panel_type || 'auto';
         
         document.getElementById('server-enabled').checked = server.enabled;
@@ -197,6 +204,7 @@
         const panel_type = document.getElementById('server-panel-type').value;
         const sub_path = document.getElementById('server-sub-path').value.trim();
         const json_path = document.getElementById('server-json-path').value.trim();
+        const sub_port = document.getElementById('server-sub-port').value.trim();
         
         if (!name || !host || !username || !password) {
             showToast('Please fill in all fields', 'error');
@@ -211,7 +219,8 @@
             enabled, 
             panel_type,
             sub_path,
-            json_path
+            json_path,
+            sub_port: sub_port ? parseInt(sub_port) : null
         };
         
         const url = id ? `/api/servers/${id}` : '/api/servers';
