@@ -67,8 +67,8 @@
             
             <h1 class="mt-4 text-2xl font-bold text-white tracking-wide">{{ client.email }}</h1>
             
-            <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-card border border-border text-xs font-medium text-success">
-                <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+            <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-card border border-border text-xs font-medium {% if client.is_active %}text-success{% else %}text-red-500{% endif %}">
+                <span class="w-2 h-2 rounded-full {% if client.is_active %}bg-success animate-pulse{% else %}bg-red-500{% endif %}"></span>
                 {% if client.is_active %}ACTIVE SUBSCRIPTION{% else %}INACTIVE{% endif %}
             </div>
         </div>
