@@ -1063,8 +1063,6 @@ input:checked + .slider:before {
 .server-actions {
     display: flex;
     gap: 6px;
-    flex-wrap: wrap;
-    align-items: center;
 }
 
 .no-servers,
@@ -1208,7 +1206,7 @@ input:checked + .slider:before {
 
 .servers-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 16px;
 }
 
@@ -1221,7 +1219,6 @@ input:checked + .slider:before {
     flex-direction: column;
     gap: 12px;
     transition: all 0.2s;
-    overflow: hidden;
 }
 
 .server-card:hover {

@@ -93,46 +93,26 @@
 
     function renderApps() {
         const container = document.getElementById('apps-container');
-        
-        if (apps.length === 0) {
-            container.innerHTML = '<p class="no-data">No apps defined. Add one to get started.</p>';
-            return;
-        }
-
         container.innerHTML = apps.map(app => `
-            <div class="server-card ${!app.is_enabled ? 'disabled' : ''}" style="min-height: auto;">
-                
-                <div class="server-header" style="margin-bottom: 12px; align-items: flex-start;">
-                    <div class="server-title">
-                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
-                            <h3 style="font-size: 1.1rem; margin: 0;">${app.name}</h3>
-                            <span class="badge ${app.is_enabled ? 'active' : 'inactive'}" style="font-size: 0.65rem;">
-                                ${app.is_enabled ? 'Visible' : 'Hidden'}
-                            </span>
+            <div class="server-card ${!app.is_enabled ? 'disabled' : ''}">
+                <div class="server-header">
+                    <div class="server-title" style="width: 100%;">
+                        <h3 style="margin-bottom: 5px;">${app.name}</h3>
+                        <div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; margin-bottom: 5px;">
+                            <p class="server-url" style="direction: rtl; text-align: right; color: #94a3b8; font-size: 0.8rem;">
+                                ${app.title_fa || 'No Persian Title'}
+                            </p>
                         </div>
-                        <p style="font-size: 0.85rem; color: var(--text-secondary); direction: rtl; text-align: right;">
-                            ${app.title_fa || 'بدون عنوان فارسی'}
-                        </p>
-                    </div>
-                    
-                    <div class="server-icon" style="width: 36px; height: 36px; background: rgba(99, 102, 241, 0.1);">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);">
-                            <path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle>
-                        </svg>
                     </div>
                 </div>
-
-                <div class="server-actions" style="border-top: 1px solid var(--border-color); padding-top: 15px; margin-top: 10px; justify-content: flex-end; gap: 8px;">
-                    
-                    <button class="btn btn-secondary btn-sm" onclick="openEditModal(${app.id})" style="font-size: 0.8rem; padding: 8px 16px;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                        Edit Content
+                <div class="server-badges">
+                    ${app.is_enabled ? '<span class="badge active">Visible</span>' : '<span class="badge inactive">Hidden</span>'}
+                </div>
+                <div class="server-actions" style="margin-top: 15px; display: flex; gap: 10px;">
+                    <button class="btn btn-primary btn-sm" onclick="openEditModal(${app.id})" style="width: auto; padding-left: 20px; padding-right: 20px;">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteApp(${app.id})" style="width: 40px; display: flex; justify-content: center; align-items: center;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     </button>
-
-                    <button class="btn btn-danger btn-sm" onclick="deleteApp(${app.id})" style="padding: 8px 12px;" title="Delete">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                    </button>
-                    
                 </div>
             </div>
         `).join('');
