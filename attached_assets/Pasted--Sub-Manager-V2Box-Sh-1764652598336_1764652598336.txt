@@ -1,0 +1,131 @@
+بله، دقیقاً\! با ساختاری که طراحی کردیم (Sub Manager)، شما می‌توانید **هر برنامه‌ای** (مثل V2Box، Shadowrocket، Hiddify و غیره) را به لیست اضافه کنید.
+
+اما یک نکته ظریف وجود دارد: در کدی که در مرحله قبل دادم، ما فقط قابلیت **ویرایش (Edit)** برنامه‌های پیش‌فرض را گذاشتیم. برای اینکه بتوانید **برنامه جدید اضافه کنید (Create)** و یا **حذف کنید (Delete)**، باید دو تکه کد کوچک دیگر به `app.py` و `sub_manager.html` اضافه کنیم.
+
+این تکمیلی‌ها را انجام دهید تا سیستم مدیریت شما کامل شود:
+
+### ۱. تکمیل بکند (`app.py`)
+
+این دو تابع جدید را به `app.py` اضافه کنید (زیر تابع `update_sub_app`):
+
+```python
+# API برای افزودن برنامه جدید
+@app.route('/api/sub-apps', methods=['POST'])
+@login_required
+def add_sub_app():
+    data = request.json
+    
+    # تولید یک کد یکتا اگر داده نشده باشد
+    import uuid
+    app_code = data.get('app_code', str(uuid.uuid4())[:8])
+    
+    new_app = SubAppConfig(
+        app_code=app_code,
+        name=data.get('name', 'New App'),
+        is_enabled=True, # پیش‌فرض فعال
+        title_fa=data.get('title_fa', ''),
+        description_fa=data.get('description_fa', ''),
+        title_en=data.get('title_en', ''),
+        description_en=data.get('description_en', ''),
+        download_link=data.get('download_link', ''),
+        store_link=data.get('store_link', ''),
+        tutorial_link=data.get('tutorial_link', '')
+    )
+    
+    try:
+        db.session.add(new_app)
+        db.session.commit()
+        return jsonify({"success": True, "app": new_app.to_dict()})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+# API برای حذف برنامه
+@app.route('/api/sub-apps/<int:app_id>', methods=['DELETE'])
+@login_required
+def delete_sub_app(app_id):
+    app_config = SubAppConfig.query.get_or_404(app_id)
+    db.session.delete(app_config)
+    db.session.commit()
+    return jsonify({"success": True})
+```
+
+-----
+
+### ۲. تکمیل فرانت (`templates/sub_manager.html`)
+
+حالا باید دکمه "Add App" و "Delete" را به صفحه مدیریت اضافه کنیم.
+
+**الف) اضافه کردن دکمه "افزودن" در هدر:**
+در بلوک `header_actions` (اگر ندارید اضافه کنید):
+
+```html
+{% block header_actions %}
+<button class="btn btn-success" onclick="createNewApp()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    Add New App
+</button>
+{% endblock %}
+```
+
+**ب) اضافه کردن دکمه "حذف" به کارت‌ها:**
+در تابع `renderApps` در جاوااسکریپت، دکمه حذف را اضافه کنید:
+
+```javascript
+// داخل تابع renderApps در قسمت server-actions:
+<div class="server-actions" style="margin-top: 15px; display: flex; gap: 10px;">
+    <button class="btn btn-primary btn-sm" onclick="openEditModal(${app.id})" style="flex: 1;">Edit</button>
+    <button class="btn btn-danger btn-sm" onclick="deleteApp(${app.id})" style="width: 40px; display: flex; justify-content: center; align-items: center;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+    </button>
+</div>
+```
+
+**ج) اضافه کردن توابع جاوااسکریپت جدید:**
+این توابع را به بخش `<script>` اضافه کنید:
+
+```javascript
+    async function createNewApp() {
+        const name = prompt("Enter App Name (e.g. Hiddify):");
+        if (!name) return;
+
+        try {
+            const response = await fetch('/api/sub-apps', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                showToast('App added successfully');
+                loadApps();
+                // بلافاصله مودال ویرایش را باز کن تا بقیه اطلاعات را پر کند
+                setTimeout(() => openEditModal(result.app.id), 500);
+            } else {
+                showToast('Error: ' + result.error, 'error');
+            }
+        } catch (error) {
+            showToast('Error creating app', 'error');
+        }
+    }
+
+    async function deleteApp(id) {
+        if (!confirm('Are you sure you want to delete this app?')) return;
+        
+        try {
+            await fetch(`/api/sub-apps/${id}`, { method: 'DELETE' });
+            showToast('App deleted');
+            loadApps();
+        } catch (error) {
+            showToast('Error deleting app', 'error');
+        }
+    }
+```
+
+### نتیجه نهایی:
+
+الان شما یک پنل مدیریت کامل دارید که:
+
+1.  می‌توانید دکمه **"Add New App"** را بزنید و مثلاً "Hiddify" را اضافه کنید.
+2.  سپس دکمه **Edit** آن را بزنید و لینک دانلود، متن فارسی/انگلیسی و آموزش آن را وارد کنید.
+3.  کاربر در صفحه سابسکریپشن، تب جدیدی به اسم "Hiddify" خواهد دید که تمام اطلاعاتی که وارد کردید را نمایش می‌دهد.
