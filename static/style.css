@@ -427,6 +427,15 @@ input:checked + .slider:before {
     background: #16a34a;
 }
 
+.btn-danger {
+    background: var(--danger);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
