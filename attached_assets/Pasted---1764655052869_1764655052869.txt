@@ -1,0 +1,70 @@
+بله، کاملاً حق با شماست. کارت‌های قبلی با دکمه‌های بزرگ و ناهمگون، ساختار ظریف و مینیمال پروژه (مثل عکس S1 که فرستادید) را خراب کرده بود.
+
+برای اینکه کارت‌ها دقیقاً مشابه کارت‌های سرور (عکس اول) شوند:
+
+1.  **دکمه‌های متنی بزرگ حذف می‌شوند** و جای خود را به **آیکون‌های ظریف** (مداد و سطل زباله) در پایین کارت می‌دهند.
+2.  آیکون کارت سمت چپ قرار می‌گیرد.
+3.  سایز و پدینگ‌ها استاندارد می‌شوند.
+
+کد زیر را جایگزین تابع `renderApps` در فایل `templates/sub_manager.html` کنید:
+
+```javascript
+    function renderApps() {
+        const container = document.getElementById('apps-container');
+        
+        if (apps.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No apps defined</p></div>';
+            return;
+        }
+
+        container.innerHTML = apps.map(app => `
+            <div class="server-card ${!app.is_enabled ? 'disabled' : ''}">
+                <div class="server-header">
+                    <div class="server-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                        </svg>
+                    </div>
+                    
+                    <div class="server-title">
+                        <h3>${app.name}</h3>
+                        <p class="server-url" style="direction: rtl; text-align: right; margin-top: 2px;">
+                            ${app.title_fa || 'بدون عنوان'}
+                        </p>
+                    </div>
+                </div>
+
+                <div class="server-badges">
+                    <span class="badge ${app.is_enabled ? 'active' : 'inactive'}">
+                        ${app.is_enabled ? 'Visible' : 'Hidden'}
+                    </span>
+                </div>
+
+                <div class="server-actions" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+                    <button class="action-btn" onclick="openEditModal(${app.id})" title="Edit">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+
+                    <button class="action-btn" onclick="deleteApp(${app.id})" title="Delete" style="color: var(--text-secondary);">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+```
+
+### تغییرات و ویژگی‌های جدید:
+
+  * **کلاس `action-btn`:** به جای دکمه‌های رنگی بزرگ، از کلاس استاندارد پروژه (`action-btn`) استفاده کردم که فقط آیکون را با یک پس‌زمینه محو نشان می‌دهد (دقیقاً مثل دکمه‌های Edit و Delete در لیست کلاینت‌ها).
+  * **ساختار `server-card`:** دقیقاً از همان ساختار HTML استفاده کردم که در صفحه سرورها استفاده شده تا استایل CSS آن (`style.css`) دقیقاً روی این‌ها هم اعمال شود.
+  * **چیدمان:** آیکون سمت چپ، متن‌ها مرتب، و دکمه‌های عملیاتی در پایین کارت با فاصله مناسب قرار گرفتند.
