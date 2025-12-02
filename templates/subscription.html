@@ -73,7 +73,7 @@
             </div>
         </div>
 
-        <div class="bg-card rounded-2xl border border-border p-6 shadow-xl relative overflow-hidden">
+        <div class="bg-card rounded-lg border border-border p-6 shadow-lg relative overflow-hidden transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
             <div class="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
 
             <div class="flex items-center gap-2 mb-6 text-primary font-semibold">
@@ -114,7 +114,7 @@
             </div>
         </div>
 
-        <div class="bg-card rounded-2xl border border-border p-6 shadow-xl">
+        <div class="bg-card rounded-lg border border-border p-6 shadow-lg transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
             <div class="flex items-center gap-2 mb-6 text-success font-semibold">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                 Subscription Setup
@@ -124,7 +124,7 @@
                 <div class="flex-1 px-3 flex items-center overflow-hidden">
                     <div class="truncate text-sm text-muted font-mono">{{ client.subscription_url }}</div>
                 </div>
-                <button onclick="copyLink('subLink')" class="bg-primary hover:bg-primary/90 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 shadow-lg shadow-primary/20 whitespace-nowrap">
+                <button onclick="copyLink('subLink')" class="btn btn-primary text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     COPY
                 </button>
@@ -135,7 +135,7 @@
             <div id="tabs-content-container"></div>
         </div>
 
-        <div class="bg-card rounded-2xl border border-border overflow-hidden">
+        <div class="bg-card rounded-lg border border-border overflow-hidden transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
             <button onclick="toggleConfig()" class="w-full flex items-center justify-between p-5 text-left bg-card hover:bg-bg/50 transition-colors">
                 <span class="flex items-center gap-2 font-semibold text-white">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -213,9 +213,9 @@
                         <h3 class="font-semibold text-white mb-4" style="direction: rtl; text-align: right;">${app.title_fa || app.name}</h3>
                         <ul class="space-y-3 mb-5" style="direction: rtl; text-align: right;">${desc}</ul>
                         <div class="flex gap-3">
-                            ${app.download_link ? `<a href="${app.download_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">⬇️ Download</a>` : ''}
-                            ${app.store_link ? `<a href="${app.store_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">🛒 Store</a>` : ''}
-                            ${app.tutorial_link ? `<a href="${app.tutorial_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">📹 Tutorial</a>` : ''}
+                            ${app.download_link ? `<a href="${app.download_link}" target="_blank" class="flex-1 btn btn-secondary text-white py-2.5 rounded-lg text-sm font-medium text-center">⬇️ Download</a>` : ''}
+                            ${app.store_link ? `<a href="${app.store_link}" target="_blank" class="flex-1 btn btn-secondary text-white py-2.5 rounded-lg text-sm font-medium text-center">🛒 Store</a>` : ''}
+                            ${app.tutorial_link ? `<a href="${app.tutorial_link}" target="_blank" class="flex-1 btn btn-secondary text-white py-2.5 rounded-lg text-sm font-medium text-center">📹 Tutorial</a>` : ''}
                         </div>
                     </div>
                 `;
