@@ -96,6 +96,38 @@ class Server(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+class SubAppConfig(db.Model):
+    __tablename__ = 'sub_app_configs'
+    id = db.Column(db.Integer, primary_key=True)
+    app_code = db.Column(db.String(50), unique=True, nullable=False)
+    name = db.Column(db.String(100))
+    is_enabled = db.Column(db.Boolean, default=True)
+    
+    title_fa = db.Column(db.String(200))
+    description_fa = db.Column(db.Text)
+    
+    title_en = db.Column(db.String(200))
+    description_en = db.Column(db.Text)
+    
+    download_link = db.Column(db.String(500))
+    store_link = db.Column(db.String(500))
+    tutorial_link = db.Column(db.String(500))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'app_code': self.app_code,
+            'name': self.name,
+            'is_enabled': self.is_enabled,
+            'title_fa': self.title_fa,
+            'description_fa': self.description_fa,
+            'title_en': self.title_en,
+            'description_en': self.description_en,
+            'download_link': self.download_link,
+            'store_link': self.store_link,
+            'tutorial_link': self.tutorial_link
+        }
+
 with app.app_context():
     db.create_all()
     if not Admin.query.filter_by(username='admin').first():
@@ -104,6 +136,37 @@ with app.app_context():
         initial_password = os.environ.get("INITIAL_ADMIN_PASSWORD", "admin")
         default_admin.set_password(initial_password)
         db.session.add(default_admin)
+        db.session.commit()
+    
+    # ایجاد برنامه‌های پیش‌فرض اگر وجود نداشتند
+    if not SubAppConfig.query.first():
+        apps = [
+            SubAppConfig(
+                app_code='v2rayng', name='v2rayNG (Android)',
+                title_fa='راهنمای v2rayNG', description_fa='۱. برنامه را دانلود کنید.\n۲. لینک اشتراک را کپی کنید.\n۳. در برنامه دکمه + را بزنید و Import from Clipboard را انتخاب کنید.',
+                title_en='v2rayNG Guide', description_en='1. Download the app.\n2. Copy subscription link.\n3. Tap + and select Import from Clipboard.',
+                download_link='https://github.com/2dust/v2rayNG/releases/download/1.8.19/v2rayNG_1.8.19.apk',
+                store_link='https://play.google.com/store/apps/details?id=com.v2ray.ang',
+                tutorial_link=''
+            ),
+            SubAppConfig(
+                app_code='nekobox', name='NekoBox (Android)',
+                title_fa='راهنمای NekoBox', description_fa='نکوباکس یکی از بهترین جایگزین‌هاست.',
+                title_en='NekoBox Guide', description_en='NekoBox is a powerful alternative.',
+                download_link='https://github.com/MatsuriDayo/NekoBoxForAndroid/releases',
+                store_link='',
+                tutorial_link=''
+            ),
+            SubAppConfig(
+                app_code='streisand', name='Streisand (iOS)',
+                title_fa='راهنمای Streisand', description_fa='برای آیفون پیشنهاد می‌شود.',
+                title_en='Streisand Guide', description_en='Recommended for iOS devices.',
+                download_link='',
+                store_link='https://apps.apple.com/us/app/streisand/id6450534064',
+                tutorial_link=''
+            )
+        ]
+        db.session.add_all(apps)
         db.session.commit()
 
 def login_required(f):
@@ -1248,6 +1311,75 @@ def search_clients():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
+# Sub Manager Routes
+@app.route('/sub-manager')
+@login_required
+def sub_manager_page():
+    if not session.get('is_superadmin'):
+        return redirect(url_for('dashboard'))
+    return render_template('sub_manager.html', 
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False))
+
+@app.route('/api/sub-apps', methods=['GET'])
+@login_required
+def get_sub_apps():
+    apps = SubAppConfig.query.all()
+    return jsonify([a.to_dict() for a in apps])
+
+@app.route('/api/sub-apps/<int:app_id>', methods=['PUT'])
+@login_required
+def update_sub_app(app_id):
+    app_config = SubAppConfig.query.get_or_404(app_id)
+    data = request.json
+    
+    app_config.is_enabled = data.get('is_enabled', app_config.is_enabled)
+    app_config.title_fa = data.get('title_fa', app_config.title_fa)
+    app_config.description_fa = data.get('description_fa', app_config.description_fa)
+    app_config.title_en = data.get('title_en', app_config.title_en)
+    app_config.description_en = data.get('description_en', app_config.description_en)
+    app_config.download_link = data.get('download_link', app_config.download_link)
+    app_config.store_link = data.get('store_link', app_config.store_link)
+    app_config.tutorial_link = data.get('tutorial_link', app_config.tutorial_link)
+    
+    db.session.commit()
+    return jsonify({"success": True})
+
+@app.route('/api/sub-apps', methods=['POST'])
+@login_required
+def add_sub_app():
+    data = request.json
+    app_code = data.get('app_code', str(uuid.uuid4())[:8])
+    
+    new_app = SubAppConfig(
+        app_code=app_code,
+        name=data.get('name', 'New App'),
+        is_enabled=True,
+        title_fa=data.get('title_fa', ''),
+        description_fa=data.get('description_fa', ''),
+        title_en=data.get('title_en', ''),
+        description_en=data.get('description_en', ''),
+        download_link=data.get('download_link', ''),
+        store_link=data.get('store_link', ''),
+        tutorial_link=data.get('tutorial_link', '')
+    )
+    
+    try:
+        db.session.add(new_app)
+        db.session.commit()
+        return jsonify({"success": True, "app": new_app.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route('/api/sub-apps/<int:app_id>', methods=['DELETE'])
+@login_required
+def delete_sub_app(app_id):
+    app_config = SubAppConfig.query.get_or_404(app_id)
+    db.session.delete(app_config)
+    db.session.commit()
+    return jsonify({"success": True})
+
 @app.route('/api/client/qrcode')
 @login_required
 def get_qrcode():
@@ -1367,7 +1499,11 @@ def client_subscription(server_id, sub_id):
             'subscription_url': request.base_url + '?format=b64'
         }
         
-        return render_template('subscription.html', client=client_info)
+        # دریافت لیست برنامه‌های فعال از دیتابیس
+        active_apps = SubAppConfig.query.filter_by(is_enabled=True).all()
+        apps_data = [a.to_dict() for a in active_apps]
+        
+        return render_template('subscription.html', client=client_info, apps=apps_data)
     
     except Exception as e:
         app.logger.error(f"Subscription page error: {e}")

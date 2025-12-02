@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Sub Manager{% endblock %}
+{% block page_title %}Subscription Page Manager{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-success" onclick="createNewApp()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    Add New App
+</button>
+{% endblock %}
+
+{% block content %}
+<div id="apps-container" class="servers-grid"></div>
+
+<div class="modal-overlay hidden" id="edit-app-modal">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h2 id="modal-title">Edit App</h2>
+            <button class="modal-close" onclick="closeEditModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-app-id">
+            
+            <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="edit-enabled">
+                    <span>Show in Subscription Page</span>
+                </label>
+            </div>
+
+            <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                <div style="flex: 1;">
+                    <h4 style="color: #4ade80; margin-bottom: 10px;">Persian Content</h4>
+                    <div class="form-group">
+                        <label>Title (FA)</label>
+                        <input type="text" id="edit-title-fa" class="form-input" dir="rtl">
+                    </div>
+                    <div class="form-group">
+                        <label>Description (FA)</label>
+                        <textarea id="edit-desc-fa" class="form-input" rows="4" dir="rtl" style="width:100%; background:var(--bg-dark); color:white; border:1px solid var(--border-color); border-radius:8px; padding:10px;"></textarea>
+                    </div>
+                </div>
+                <div style="flex: 1;">
+                    <h4 style="color: #60a5fa; margin-bottom: 10px;">English Content</h4>
+                    <div class="form-group">
+                        <label>Title (EN)</label>
+                        <input type="text" id="edit-title-en" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>Description (EN)</label>
+                        <textarea id="edit-desc-en" class="form-input" rows="4" style="width:100%; background:var(--bg-dark); color:white; border:1px solid var(--border-color); border-radius:8px; padding:10px;"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <h4 style="color: #fbbf24; margin-bottom: 10px;">Links</h4>
+            <div class="form-group">
+                <label>Direct Download Link</label>
+                <input type="text" id="edit-download" class="form-input">
+            </div>
+            <div class="form-group">
+                <label>Store Link (Google Play / App Store)</label>
+                <input type="text" id="edit-store" class="form-input">
+            </div>
+            <div class="form-group">
+                <label>Video Tutorial Link</label>
+                <input type="text" id="edit-video" class="form-input">
+            </div>
+
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveApp()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let apps = [];
+    document.addEventListener('DOMContentLoaded', loadApps);
+
+    async function loadApps() {
+        try {
+            const response = await fetch('/api/sub-apps');
+            apps = await response.json();
+            renderApps();
+        } catch (error) {
+            showToast('Error loading apps', 'error');
+        }
+    }
+
+    function renderApps() {
+        const container = document.getElementById('apps-container');
+        container.innerHTML = apps.map(app => `
+            <div class="server-card ${!app.is_enabled ? 'disabled' : ''}">
+                <div class="server-header">
+                    <div class="server-title">
+                        <h3>${app.name}</h3>
+                        <p class="server-url" style="direction: rtl; text-align: right;">${app.title_fa}</p>
+                    </div>
+                </div>
+                <div class="server-badges">
+                    ${app.is_enabled ? '<span class="badge active">Visible</span>' : '<span class="badge inactive">Hidden</span>'}
+                </div>
+                <div class="server-actions" style="margin-top: 15px; display: flex; gap: 10px;">
+                    <button class="btn btn-primary btn-sm" onclick="openEditModal(${app.id})" style="flex: 1;">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteApp(${app.id})" style="width: 40px; display: flex; justify-content: center; align-items: center;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function openEditModal(appId) {
+        const app = apps.find(a => a.id === appId);
+        if (!app) return;
+
+        document.getElementById('edit-app-id').value = appId;
+        document.getElementById('edit-enabled').checked = app.is_enabled;
+        document.getElementById('edit-title-fa').value = app.title_fa || '';
+        document.getElementById('edit-desc-fa').value = app.description_fa || '';
+        document.getElementById('edit-title-en').value = app.title_en || '';
+        document.getElementById('edit-desc-en').value = app.description_en || '';
+        document.getElementById('edit-download').value = app.download_link || '';
+        document.getElementById('edit-store').value = app.store_link || '';
+        document.getElementById('edit-video').value = app.tutorial_link || '';
+        document.getElementById('modal-title').textContent = `Edit ${app.name}`;
+        
+        document.getElementById('edit-app-modal').classList.remove('hidden');
+    }
+
+    function closeEditModal() {
+        document.getElementById('edit-app-modal').classList.add('hidden');
+    }
+
+    async function saveApp() {
+        const appId = document.getElementById('edit-app-id').value;
+        const data = {
+            is_enabled: document.getElementById('edit-enabled').checked,
+            title_fa: document.getElementById('edit-title-fa').value,
+            description_fa: document.getElementById('edit-desc-fa').value,
+            title_en: document.getElementById('edit-title-en').value,
+            description_en: document.getElementById('edit-desc-en').value,
+            download_link: document.getElementById('edit-download').value,
+            store_link: document.getElementById('edit-store').value,
+            tutorial_link: document.getElementById('edit-video').value
+        };
+
+        try {
+            const response = await fetch(`/api/sub-apps/${appId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                showToast('App updated successfully');
+                closeEditModal();
+                loadApps();
+            } else {
+                showToast('Error saving app', 'error');
+            }
+        } catch (error) {
+            showToast('Error saving app', 'error');
+        }
+    }
+
+    async function createNewApp() {
+        const name = prompt("Enter App Name (e.g. Hiddify, V2Box):");
+        if (!name) return;
+
+        try {
+            const response = await fetch('/api/sub-apps', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                showToast('App added successfully');
+                loadApps();
+                setTimeout(() => openEditModal(result.app.id), 500);
+            } else {
+                showToast('Error: ' + result.error, 'error');
+            }
+        } catch (error) {
+            showToast('Error creating app', 'error');
+        }
+    }
+
+    async function deleteApp(id) {
+        if (!confirm('Are you sure you want to delete this app?')) return;
+        
+        try {
+            const response = await fetch(`/api/sub-apps/${id}`, { method: 'DELETE' });
+            if (response.ok) {
+                showToast('App deleted');
+                loadApps();
+            } else {
+                showToast('Error deleting app', 'error');
+            }
+        } catch (error) {
+            showToast('Error deleting app', 'error');
+        }
+    }
+</script>
+{% endblock %}

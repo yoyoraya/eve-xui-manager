@@ -131,104 +131,8 @@
                 <input type="hidden" id="subLink" value="{{ client.subscription_url }}">
             </div>
 
-            <div class="flex gap-2 mb-6 border-b border-white/10 pb-1 overflow-x-auto no-scrollbar">
-                <button class="px-4 py-2 text-sm font-medium text-white border-b-2 border-primary transition-colors" onclick="switchTab(event, 'v2ray')">v2rayNG</button>
-                <button class="px-4 py-2 text-sm font-medium text-muted hover:text-white transition-colors" onclick="switchTab(event, 'nekobox')">NekoBox</button>
-                <button class="px-4 py-2 text-sm font-medium text-muted hover:text-white transition-colors" onclick="switchTab(event, 'ios')">iOS</button>
-            </div>
-
-            <div id="v2ray" class="tab-content">
-                <div class="bg-bg/50 rounded-xl p-4 border border-white/5">
-                    <div class="flex items-center gap-3 mb-4">
-                        <div class="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
-                        </div>
-                        <h3 class="font-semibold text-white">v2rayNG Setup Guide</h3>
-                    </div>
-                    <ul class="space-y-3 mb-5">
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">1</span>
-                            Download v2rayNG from Play Store.
-                        </li>
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">2</span>
-                            Copy the subscription link above.
-                        </li>
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">3</span>
-                            Open app, tap Menu → Subscription Group → Add.
-                        </li>
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">4</span>
-                            Update subscription and tap Connect! 🚀
-                        </li>
-                    </ul>
-                    <div class="flex gap-3">
-                        <a href="v2ray://install-sub?url={{ client.subscription_url }}&name={{ client.email }}" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">
-                            ⚡ One-Click Import
-                        </a>
-                        <a href="https://play.google.com/store/apps/details?id=com.v2ray.ang" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">
-                            ⬇️ Download App
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <div id="nekobox" class="tab-content hidden">
-                <div class="bg-bg/50 rounded-xl p-4 border border-white/5">
-                    <div class="flex items-center gap-3 mb-4">
-                        <div class="w-8 h-8 rounded-lg bg-pink-500/20 text-pink-400 flex items-center justify-center">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                        </div>
-                        <h3 class="font-semibold text-white">NekoBox Setup Guide</h3>
-                    </div>
-                    <ul class="space-y-3 mb-5">
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">1</span>
-                            Download NekoBox.
-                        </li>
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">2</span>
-                            Copy the subscription link.
-                        </li>
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">3</span>
-                            Go to Profiles → "Add from Clipboard".
-                        </li>
-                    </ul>
-                    <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" target="_blank" class="block w-full bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">
-                        ⬇️ Download NekoBox
-                    </a>
-                </div>
-            </div>
-
-            <div id="ios" class="tab-content hidden">
-                <div class="bg-bg/50 rounded-xl p-4 border border-white/5">
-                    <div class="flex items-center gap-3 mb-4">
-                        <div class="w-8 h-8 rounded-lg bg-gray-100 text-black flex items-center justify-center">
-                            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.3-3.14-2.53-4.25-6.18-1.77-13.43 3.92-13.56 1.72-.03 2.87.97 4.09.97 1.21 0 2.51-1.29 4.39-1.18 1.43.06 2.73.69 3.54 1.76-3.26 1.9-2.73 6.92.51 8.35zm-2.8-15.14c.67-.81 1.13-1.92 1-3.07-1.03.04-2.27.69-2.98 1.52-.64.73-1.2 1.9-1.05 3.03 1.15.09 2.33-.59 3.03-1.48z"/></svg>
-                        </div>
-                        <h3 class="font-semibold text-white">iOS Setup (Streisand / V2Box)</h3>
-                    </div>
-                    <ul class="space-y-3 mb-5">
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">1</span>
-                            Download Streisand or V2Box from App Store.
-                        </li>
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">2</span>
-                            Copy the subscription link.
-                        </li>
-                        <li class="flex gap-3 text-sm text-muted">
-                            <span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">3</span>
-                            Tap "+" and select "Add from Clipboard".
-                        </li>
-                    </ul>
-                    <a href="https://apps.apple.com/us/app/streisand/id6450534064" target="_blank" class="block w-full bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">
-                        🍎 Download App
-                    </a>
-                </div>
-            </div>
+            <div id="tabs-container" class="flex gap-2 mb-6 border-b border-white/10 pb-1 overflow-x-auto no-scrollbar"></div>
+            <div id="tabs-content-container"></div>
         </div>
 
         <div class="bg-card rounded-2xl border border-border overflow-hidden">
@@ -270,22 +174,56 @@
     </div>
 
     <script>
+        const apps = {{ apps|tojson }};
+        
         function switchTab(e, tabId) {
-            // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-            
-            // Reset all buttons
-            const buttons = e.target.parentElement.querySelectorAll('button');
+            const buttons = document.querySelectorAll('#tabs-container button');
             buttons.forEach(btn => {
                 btn.className = "px-4 py-2 text-sm font-medium text-muted hover:text-white transition-colors";
             });
-            
-            // Activate current button
             e.target.className = "px-4 py-2 text-sm font-medium text-white border-b-2 border-primary transition-colors";
-            
-            // Show content
             document.getElementById(tabId).classList.remove('hidden');
         }
+        
+        function initializeTabs() {
+            const tabsContainer = document.getElementById('tabs-container');
+            const contentContainer = document.getElementById('tabs-content-container');
+            
+            apps.forEach((app, index) => {
+                // Create tab button
+                const btn = document.createElement('button');
+                btn.className = index === 0 
+                    ? "px-4 py-2 text-sm font-medium text-white border-b-2 border-primary transition-colors"
+                    : "px-4 py-2 text-sm font-medium text-muted hover:text-white transition-colors";
+                btn.textContent = app.name;
+                btn.onclick = (e) => switchTab(e, `tab-${app.id}`);
+                tabsContainer.appendChild(btn);
+                
+                // Create tab content
+                const desc = (app.description_fa || '').split('\\n').map((line, i) => 
+                    `<li class="flex gap-3 text-sm text-muted"><span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">${i+1}</span>${line}</li>`
+                ).join('');
+                
+                const content = document.createElement('div');
+                content.id = `tab-${app.id}`;
+                content.className = index === 0 ? "tab-content" : "tab-content hidden";
+                content.innerHTML = `
+                    <div class="bg-bg/50 rounded-xl p-4 border border-white/5">
+                        <h3 class="font-semibold text-white mb-4">${app.title_fa || app.name}</h3>
+                        <ul class="space-y-3 mb-5">${desc}</ul>
+                        <div class="flex gap-3">
+                            ${app.download_link ? `<a href="${app.download_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">⬇️ Download</a>` : ''}
+                            ${app.store_link ? `<a href="${app.store_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">🛒 Store</a>` : ''}
+                            ${app.tutorial_link ? `<a href="${app.tutorial_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">📹 Tutorial</a>` : ''}
+                        </div>
+                    </div>
+                `;
+                contentContainer.appendChild(content);
+            });
+        }
+        
+        document.addEventListener('DOMContentLoaded', initializeTabs);
 
         function copyLink(elementId) {
             const element = document.getElementById(elementId);
