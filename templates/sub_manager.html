@@ -3,7 +3,7 @@
 {% block page_title %}Subscription Page Manager{% endblock %}
 
 {% block header_actions %}
-<button class="btn btn-success" onclick="createNewApp()">
+<button class="btn btn-success" onclick="openAddModal()">
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
     Add New App
 </button>
@@ -21,6 +21,11 @@
         <div class="modal-body">
             <input type="hidden" id="edit-app-id">
             
+            <div class="form-group" style="margin-bottom: 20px;">
+                <label style="color: var(--primary); font-weight: bold;">App Name (Display Name)</label>
+                <input type="text" id="edit-app-name" class="form-input" placeholder="e.g. v2rayNG (Android)">
+            </div>
+
             <div class="form-group checkbox-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="edit-enabled">
@@ -144,11 +149,33 @@
         `).join('');
     }
 
-    function openEditModal(appId) {
-        const app = apps.find(a => a.id === appId);
-        if (!app) return;
+    function closeEditModal() {
+        document.getElementById('edit-app-modal').classList.add('hidden');
+    }
 
-        document.getElementById('edit-app-id').value = appId;
+    function openAddModal() {
+        document.getElementById('edit-app-id').value = '';
+        document.getElementById('modal-title').textContent = 'Add New App';
+        
+        document.getElementById('edit-app-name').value = '';
+        document.getElementById('edit-enabled').checked = true;
+        document.getElementById('edit-title-fa').value = '';
+        document.getElementById('edit-desc-fa').value = '';
+        document.getElementById('edit-title-en').value = '';
+        document.getElementById('edit-desc-en').value = '';
+        document.getElementById('edit-download').value = '';
+        document.getElementById('edit-store').value = '';
+        document.getElementById('edit-video').value = '';
+        
+        document.getElementById('edit-app-modal').classList.remove('hidden');
+    }
+
+    function openEditModal(id) {
+        const app = apps.find(a => a.id === id);
+        document.getElementById('edit-app-id').value = app.id;
+        document.getElementById('modal-title').textContent = 'Edit App';
+        
+        document.getElementById('edit-app-name').value = app.name;
         document.getElementById('edit-enabled').checked = app.is_enabled;
         document.getElementById('edit-title-fa').value = app.title_fa || '';
         document.getElementById('edit-desc-fa').value = app.description_fa || '';
@@ -157,18 +184,14 @@
         document.getElementById('edit-download').value = app.download_link || '';
         document.getElementById('edit-store').value = app.store_link || '';
         document.getElementById('edit-video').value = app.tutorial_link || '';
-        document.getElementById('modal-title').textContent = `Edit ${app.name}`;
         
         document.getElementById('edit-app-modal').classList.remove('hidden');
     }
 
-    function closeEditModal() {
-        document.getElementById('edit-app-modal').classList.add('hidden');
-    }
-
     async function saveApp() {
-        const appId = document.getElementById('edit-app-id').value;
+        const id = document.getElementById('edit-app-id').value;
         const data = {
+            name: document.getElementById('edit-app-name').value,
             is_enabled: document.getElementById('edit-enabled').checked,
             title_fa: document.getElementById('edit-title-fa').value,
             description_fa: document.getElementById('edit-desc-fa').value,
@@ -179,47 +202,39 @@
             tutorial_link: document.getElementById('edit-video').value
         };
 
+        if (!data.name.trim()) {
+            showToast('App Name is required', 'error');
+            return;
+        }
+
         try {
-            const response = await fetch(`/api/sub-apps/${appId}`, {
-                method: 'PUT',
+            let url, method;
+            
+            if (id) {
+                url = `/api/sub-apps/${id}`;
+                method = 'PUT';
+            } else {
+                url = '/api/sub-apps';
+                method = 'POST';
+            }
+
+            const response = await fetch(url, {
+                method: method,
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(data)
             });
+            
             const result = await response.json();
             
             if (result.success) {
-                showToast('App updated successfully');
+                showToast(id ? 'App updated successfully' : 'App added successfully');
                 closeEditModal();
                 loadApps();
-            } else {
-                showToast('Error saving app', 'error');
-            }
-        } catch (error) {
-            showToast('Error saving app', 'error');
-        }
-    }
-
-    async function createNewApp() {
-        const name = prompt("Enter App Name (e.g. Hiddify, V2Box):");
-        if (!name) return;
-
-        try {
-            const response = await fetch('/api/sub-apps', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name: name })
-            });
-            const result = await response.json();
-            
-            if (result.success) {
-                showToast('App added successfully');
-                loadApps();
-                setTimeout(() => openEditModal(result.app.id), 500);
             } else {
                 showToast('Error: ' + result.error, 'error');
             }
         } catch (error) {
-            showToast('Error creating app', 'error');
+            showToast('Connection error', 'error');
         }
     }
 

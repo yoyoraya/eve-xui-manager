@@ -1333,6 +1333,7 @@ def update_sub_app(app_id):
     app_config = SubAppConfig.query.get_or_404(app_id)
     data = request.json
     
+    app_config.name = data.get('name', app_config.name)
     app_config.is_enabled = data.get('is_enabled', app_config.is_enabled)
     app_config.title_fa = data.get('title_fa', app_config.title_fa)
     app_config.description_fa = data.get('description_fa', app_config.description_fa)
