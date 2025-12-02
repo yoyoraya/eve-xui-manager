@@ -96,16 +96,20 @@
         container.innerHTML = apps.map(app => `
             <div class="server-card ${!app.is_enabled ? 'disabled' : ''}">
                 <div class="server-header">
-                    <div class="server-title">
-                        <h3>${app.name}</h3>
-                        <p class="server-url" style="direction: rtl; text-align: right;">${app.title_fa}</p>
+                    <div class="server-title" style="width: 100%;">
+                        <h3 style="margin-bottom: 5px;">${app.name}</h3>
+                        <div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; margin-bottom: 5px;">
+                            <p class="server-url" style="direction: rtl; text-align: right; color: #94a3b8; font-size: 0.8rem;">
+                                ${app.title_fa || 'No Persian Title'}
+                            </p>
+                        </div>
                     </div>
                 </div>
                 <div class="server-badges">
                     ${app.is_enabled ? '<span class="badge active">Visible</span>' : '<span class="badge inactive">Hidden</span>'}
                 </div>
                 <div class="server-actions" style="margin-top: 15px; display: flex; gap: 10px;">
-                    <button class="btn btn-primary btn-sm" onclick="openEditModal(${app.id})" style="flex: 1;">Edit</button>
+                    <button class="btn btn-primary btn-sm" onclick="openEditModal(${app.id})" style="width: auto; padding-left: 20px; padding-right: 20px;">Edit</button>
                     <button class="btn btn-danger btn-sm" onclick="deleteApp(${app.id})" style="width: 40px; display: flex; justify-content: center; align-items: center;">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     </button>

@@ -201,8 +201,8 @@
                 tabsContainer.appendChild(btn);
                 
                 // Create tab content
-                const desc = (app.description_fa || '').split('\\n').map((line, i) => 
-                    `<li class="flex gap-3 text-sm text-muted"><span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">${i+1}</span>${line}</li>`
+                const desc = (app.description_fa || '').split('\n').map((line, i) => 
+                    `<li class="flex gap-3 text-sm text-muted"><span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">${i+1}</span><span style="direction: rtl; text-align: right;">${line}</span></li>`
                 ).join('');
                 
                 const content = document.createElement('div');
@@ -210,8 +210,8 @@
                 content.className = index === 0 ? "tab-content" : "tab-content hidden";
                 content.innerHTML = `
                     <div class="bg-bg/50 rounded-xl p-4 border border-white/5">
-                        <h3 class="font-semibold text-white mb-4">${app.title_fa || app.name}</h3>
-                        <ul class="space-y-3 mb-5">${desc}</ul>
+                        <h3 class="font-semibold text-white mb-4" style="direction: rtl; text-align: right;">${app.title_fa || app.name}</h3>
+                        <ul class="space-y-3 mb-5" style="direction: rtl; text-align: right;">${desc}</ul>
                         <div class="flex gap-3">
                             ${app.download_link ? `<a href="${app.download_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">⬇️ Download</a>` : ''}
                             ${app.store_link ? `<a href="${app.store_link}" target="_blank" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-colors border border-white/5">🛒 Store</a>` : ''}

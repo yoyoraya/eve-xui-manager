@@ -1,0 +1,72 @@
+برای رفع این دو مشکل (به‌هم‌ریختگی متن فارسی و کش آمدن دکمه Edit)، باید تغییرات کوچکی در CSS و HTML اعمال کنیم.
+
+### ۱. حل مشکل کش آمدن دکمه Edit
+
+دلیل اینکه دکمه Edit کل عرض را گرفته، وجود استایل `flex: 1` در کد قبلی بود. این استایل به دکمه می‌گوید "هر چقدر فضای خالی هست را پُر کن".
+
+فایل `templates/sub_manager.html` را باز کنید و در بخش `<script>`، تابع `renderApps` را پیدا کنید. قسمت دکمه‌ها را با کد زیر جایگزین کنید (استایل `flex: 1` حذف شده و اندازه ثابت داده شده):
+
+```javascript
+// در فایل templates/sub_manager.html - داخل تابع renderApps
+
+// این قسمت را جایگزین دکمه‌های قبلی کنید:
+<div class="server-actions" style="margin-top: 15px; display: flex; gap: 10px;">
+    <button class="btn btn-primary btn-sm" onclick="openEditModal(${app.id})" style="width: auto; padding-left: 20px; padding-right: 20px;">Edit</button>
+    
+    <button class="btn btn-danger btn-sm" onclick="deleteApp(${app.id})" style="width: 40px; display: flex; justify-content: center; align-items: center;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+    </button>
+</div>
+```
+
+-----
+
+### ۲. حل مشکل به‌هم‌ریختگی متن راهنما (فارسی/انگلیسی)
+
+مشکل اینجاست که وقتی کلمات انگلیسی (مثل v2rayNG) و فارسی با هم ترکیب می‌شوند، اگر جهت متن (Direction) دقیق تنظیم نباشد، مرورگر گیج می‌شود. همچنین برای نمایش خط‌به‌خط توضیحات (اینترهایی که زدید)، باید از کلاس `whitespace-pre-line` استفاده کنیم.
+
+**الف) اصلاح در صفحه اشتراک (`templates/subscription.html`)**
+این فایل را باز کنید و بخش نمایش توضیحات (`<p>`) داخل حلقه `for app in apps` را با کد زیر جایگزین کنید.
+
+تغییرات انجام شده:
+
+1.  اضافه کردن کلاس `whitespace-pre-line` (برای احترام به اینترها).
+2.  اضافه کردن کلاس `text-right` و `dir="rtl"` برای بخش فارسی.
+3.  اضافه کردن کلاس `text-left` و `dir="ltr"` برای بخش انگلیسی.
+
+<!-- end list -->
+
+```html
+<h3 class="font-semibold text-white mb-3 flex items-center gap-2">
+    <span class="lang-fa w-full text-right" dir="rtl">{{ app.title_fa }}</span>
+    <span class="lang-en hidden w-full text-left" dir="ltr">{{ app.title_en }}</span>
+</h3>
+
+<div class="text-sm text-gray-400 mb-5 leading-relaxed">
+    <p class="lang-fa whitespace-pre-line text-right" dir="rtl">{{ app.description_fa }}</p>
+    
+    <p class="lang-en hidden whitespace-pre-line text-left" dir="ltr">{{ app.description_en }}</p>
+</div>
+```
+
+**ب) اصلاح نمایش در مدیریت (`templates/sub_manager.html`)**
+برای اینکه در پنل مدیریت هم متن را درست ببینید، در تابع `renderApps`، قسمت نمایش توضیحات را هم به این صورت اصلاح کنید:
+
+```javascript
+// در فایل templates/sub_manager.html - داخل تابع renderApps
+
+<div class="server-title" style="width: 100%;">
+    <h3 style="margin-bottom: 5px;">${app.name}</h3>
+    
+    <div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; margin-bottom: 5px;">
+        <p class="server-url" style="direction: rtl; text-align: right; color: #94a3b8; font-size: 0.8rem;">
+            ${app.title_fa || 'No Persian Title'}
+        </p>
+    </div>
+</div>
+```
+
+### خلاصه تغییرات:
+
+1.  **دکمه Edit:** با حذف `flex: 1` و دادن پدینگ، اندازه‌اش نرمال شد.
+2.  **متن فارسی:** با اضافه کردن `dir="rtl"`، `text-right` و `whitespace-pre-line`، هم راست‌چین می‌شود، هم کلمات انگلیسی وسط متن فارسی پرش نمی‌کنند و هم اینترها (خط جدید) درست نمایش داده می‌شوند.
