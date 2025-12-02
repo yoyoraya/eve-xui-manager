@@ -132,7 +132,7 @@
                 <div class="flex-1 px-3 flex items-center overflow-hidden">
                     <div class="truncate text-sm text-muted font-mono">{{ client.subscription_url }}</div>
                 </div>
-                <button onclick="copyLink('subLink')" class="btn btn-primary text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap">
+                <button onclick="copyLink('subLink')" class="bg-primary hover:bg-accent text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     COPY
                 </button>
@@ -221,9 +221,9 @@
                         <h3 class="font-semibold text-white mb-4" style="direction: rtl; text-align: right;">${app.title_fa || app.name}</h3>
                         <ul class="space-y-3 mb-5" style="direction: rtl; text-align: right;">${desc}</ul>
                         <div class="flex gap-3">
-                            ${app.download_link ? `<a href="${app.download_link}" target="_blank" class="flex-1 btn btn-secondary text-white py-2.5 rounded-lg text-sm font-medium text-center">⬇️ Download</a>` : ''}
-                            ${app.store_link ? `<a href="${app.store_link}" target="_blank" class="flex-1 btn btn-secondary text-white py-2.5 rounded-lg text-sm font-medium text-center">🛒 Store</a>` : ''}
-                            ${app.tutorial_link ? `<a href="${app.tutorial_link}" target="_blank" class="flex-1 btn btn-secondary text-white py-2.5 rounded-lg text-sm font-medium text-center">📹 Tutorial</a>` : ''}
+                            ${app.download_link ? `<a href="${app.download_link}" target="_blank" class="flex-1 border border-white/20 bg-white/5 hover:bg-white/10 hover:border-primary/50 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-all">⬇️ Download</a>` : ''}
+                            ${app.store_link ? `<a href="${app.store_link}" target="_blank" class="flex-1 border border-white/20 bg-white/5 hover:bg-white/10 hover:border-primary/50 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-all">🛒 Store</a>` : ''}
+                            ${app.tutorial_link ? `<a href="${app.tutorial_link}" target="_blank" class="flex-1 border border-white/20 bg-white/5 hover:bg-white/10 hover:border-primary/50 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-all">📹 Tutorial</a>` : ''}
                         </div>
                     </div>
                 `;
