@@ -231,6 +231,27 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
   - Traffic and volume tracking
   - Mobile responsive design
 
+## Quick Installation on VPS
+
+📖 **Complete Installation Guide**: See `INSTALL.md`
+
+### One-Line Quick Start
+```bash
+curl -fsSL https://raw.githubusercontent.com/yoyoraya/eve-xui-manager/main/INSTALL.md | less
+```
+
+### Manual Installation Steps:
+1. **Clone Repository**: `git clone https://github.com/yoyoraya/eve-xui-manager.git /opt/eve-xui-manager`
+2. **Setup PostgreSQL**: Create database and user
+3. **Install Dependencies**: Python 3.11, Flask, PostgreSQL driver
+4. **Configure .env**: Set DATABASE_URL, SESSION_SECRET
+5. **Initialize Database**: Run migrations
+6. **Setup Systemd Service**: For auto-restart
+7. **Configure Nginx**: Reverse proxy setup
+8. **Setup SSL**: Optional HTTPS with Certbot
+
+For detailed instructions, see **`INSTALL.md`** in the repository root.
+
 ## User Preferences
 - Dark theme
 - English-only interface (LTR)
