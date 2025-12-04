@@ -121,3 +121,35 @@ The system features a professional login page, responsive sidebar navigation, a 
 📊 Transaction ledger ready for financial tracking
 
 **Next Phase**: Add billing logic to add_client endpoint
+
+---
+
+## PHASE 2 - PURCHASING LOGIC ✅
+
+**December 04, 2025 - Billing Engine Complete**
+
+### Helper Functions Added:
+- `get_config(key, default)` - Fetch pricing config from database
+- `log_transaction(user_id, amount, type, desc)` - Record transactions in ledger
+
+### New Endpoint:
+- **POST /api/client/{server_id}/{inbound_id}/add** - Create client with billing
+
+### Billing Features:
+✅ **Package Mode**: Select pre-made package (automatic price, days, volume)
+✅ **Custom Mode**: Manual entry with dynamic price calculation
+✅ **Price Calculation**: `(days × cost_per_day) + (volume × cost_per_gb)`
+✅ **Credit Validation**: Reseller credit check before creation
+✅ **Credit Deduction**: Automatic deduction from reseller wallet on success
+✅ **Transaction Logging**: All purchases recorded in transaction ledger
+✅ **Expiry Management**: Support for "start after first use" and date-based expiry
+✅ **Duplicate Prevention**: Check for existing email before adding
+✅ **Server Permission**: Reseller can only add to allowed servers
+
+### System Status:
+🟢 Phase 2 complete - Billing engine fully operational
+💰 Wallet system now enforces credit limits
+📝 Transaction ledger captures all financial activity
+✅ Package and custom pricing both working
+
+**Next Phase**: Frontend UI for client creation with package selection

@@ -241,6 +241,14 @@ def superadmin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def get_config(key, default=0):
+    conf = SystemConfig.query.get(key)
+    return int(conf.value) if conf else default
+
+def log_transaction(user_id, amount, type, desc):
+    trans = Transaction(admin_id=user_id, amount=amount, type=type, description=desc)
+    db.session.add(trans)
+
 def format_bytes(size):
     if size is None or size == 0: return "0 B"
     power = 2**10
@@ -750,6 +758,130 @@ def client_qrcode():
         return jsonify({"success": True, "qrcode": f"data:image/png;base64,{qr_base64}"})
     except:
         return jsonify({"success": False}), 400
+
+@app.route('/api/client/<int:server_id>/<int:inbound_id>/add', methods=['POST'])
+@login_required
+def add_client(server_id, inbound_id):
+    user = Admin.query.get(session['admin_id'])
+    server = Server.query.get_or_404(server_id)
+    
+    data = request.json or {}
+    email = data.get('email', '').strip()
+    mode = data.get('mode', 'custom')
+    start_after_first_use = bool(data.get('start_after_first_use', False))
+    
+    if not email: return jsonify({"success": False, "error": "Email is required"})
+
+    price = 0
+    days = 0
+    volume_gb = 0
+    description = ""
+
+    if mode == 'package':
+        pkg_id = data.get('package_id')
+        package = Package.query.get(pkg_id)
+        if not package: return jsonify({"success": False, "error": "Invalid Package"}), 400
+        
+        price = package.price
+        days = package.days
+        volume_gb = package.volume
+        description = f"Purchase Package: {package.name} - {email}"
+        
+    else:
+        days = int(data.get('days', 30))
+        volume_gb = int(data.get('volume', 0))
+        
+        cost_per_day = get_config('cost_per_day', 0)
+        cost_per_gb = get_config('cost_per_gb', 0)
+        price = (days * cost_per_day) + (volume_gb * cost_per_gb)
+        description = f"Custom Plan: {days} Days, {volume_gb} GB - {email}"
+
+    if user.role == 'reseller':
+        allowed = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
+        if user.allowed_servers != '*' and server_id not in allowed:
+            return jsonify({"success": False, "error": "Access to this server is denied"}), 403
+        
+        if user.credit < price:
+            return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
+
+    session_obj, error = get_xui_session(server)
+    if error: return jsonify({"success": False, "error": error})
+    
+    try:
+        client_uuid = str(uuid.uuid4())
+        client_sub_id = ''.join(secrets.choice(string.ascii_letters + string.digits) for i in range(16))
+        
+        expiry_time = 0
+        if start_after_first_use:
+            expiry_time = -1 * (days * 86400000)
+        elif days > 0:
+            expiry_time = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
+            
+        new_client = {
+            "id": client_uuid,
+            "email": email,
+            "enable": True,
+            "expiryTime": expiry_time,
+            "totalGB": volume_gb * 1024 * 1024 * 1024 if volume_gb > 0 else 0,
+            "subId": client_sub_id,
+            "limitIp": 0,
+            "flow": "",
+            "tgId": "",
+            "reset": 0
+        }
+        
+        if server.panel_type == 'alireza':
+             get_url = f"{server.host}/xui/inbound/get/{inbound_id}"
+        else:
+             get_url = f"{server.host}/panel/api/inbounds/get/{inbound_id}"
+             
+        get_resp = session_obj.get(get_url, verify=False, timeout=10)
+        if get_resp.status_code != 200: raise Exception("Failed to fetch inbound data from panel")
+        
+        inbound_data = get_resp.json().get('obj', get_resp.json().get('data', {}))
+        if not inbound_data: raise Exception("Empty inbound data")
+
+        settings = json.loads(inbound_data['settings'])
+        
+        for c in settings['clients']:
+            if c['email'] == email: return jsonify({"success": False, "error": f"Email '{email}' already exists on server"})
+            
+        settings['clients'].append(new_client)
+        
+        update_data = inbound_data.copy()
+        update_data['settings'] = json.dumps(settings)
+        
+        if server.panel_type == 'alireza':
+            up_url = f"{server.host}/xui/inbound/update/{inbound_id}"
+        else:
+            up_url = f"{server.host}/panel/api/inbounds/update/{inbound_id}"
+            
+        up_resp = session_obj.post(up_url, json=update_data, verify=False, timeout=10)
+        
+        if up_resp.status_code == 200 and up_resp.json().get('success'):
+            
+            if user.role == 'reseller' and price > 0:
+                user.credit -= price
+                log_transaction(user.id, -price, 'purchase', description)
+            
+            ownership = ClientOwnership(
+                reseller_id=user.id,
+                server_id=server.id,
+                inbound_id=inbound_id,
+                client_email=email,
+                client_uuid=client_uuid,
+                price=price
+            )
+            db.session.add(ownership)
+            db.session.commit()
+            
+            return jsonify({"success": True})
+        else:
+            msg = up_resp.json().get('msg', 'Unknown error') if up_resp.content else 'Panel update failed'
+            return jsonify({"success": False, "error": f"Panel Error: {msg}"})
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/packages', methods=['GET'])
 @login_required
