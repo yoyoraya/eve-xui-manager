@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Transactions{% endblock %}
+{% block page_title %}Financial Report{% endblock %}
+
+{% block content %}
+<div class="server-card">
+    <div class="server-header">
+        <div class="server-title">
+            <h3>Transaction History</h3>
+        </div>
+    </div>
+    <div style="overflow-x: auto;">
+        <table class="clients-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="padding: 15px; text-align: left;">Date</th>
+                    <th style="padding: 15px; text-align: left;">Type</th>
+                    <th style="padding: 15px; text-align: left;">Amount</th>
+                    <th style="padding: 15px; text-align: left;">Description</th>
+                </tr>
+            </thead>
+            <tbody id="trans-list">
+                <tr><td colspan="4" style="text-align: center; padding: 20px;">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            const res = await fetch('/api/transactions');
+            const data = await res.json();
+            const tbody = document.getElementById('trans-list');
+            
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="padding: 20px; text-align: center; color: var(--text-secondary);">No transactions found.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.map(t => {
+                const isPositive = t.amount > 0;
+                const color = isPositive ? '#4ade80' : '#ef4444';
+                const sign = isPositive ? '+' : '';
+                const date = new Date(t.date).toLocaleString();
+                
+                let typeBadgeClass = 'badge';
+                if (t.type === 'deposit') typeBadgeClass += ' active';
+                else if (t.type === 'purchase') typeBadgeClass += ' inactive';
+                
+                return `
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 15px; color: var(--text-primary);">${date}</td>
+                        <td style="padding: 15px;">
+                            <span class="${typeBadgeClass}" style="text-transform: uppercase; font-size: 0.7rem;">${t.type}</span>
+                        </td>
+                        <td style="padding: 15px; color: ${color}; font-weight: bold; direction: ltr;">
+                            ${sign}${t.amount.toLocaleString()} T
+                        </td>
+                        <td style="padding: 15px; color: var(--text-secondary);">${t.description || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        } catch (e) {
+            console.error(e);
+            document.getElementById('trans-list').innerHTML = '<tr><td colspan="4" style="text-align: center; color: #ef4444;">Error loading data</td></tr>';
+        }
+    });
+</script>
+{% endblock %}

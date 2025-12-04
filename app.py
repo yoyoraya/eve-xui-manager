@@ -970,5 +970,20 @@ def get_sub_apps():
     apps = SubAppConfig.query.all()
     return jsonify([a.to_dict() for a in apps])
 
+@app.route('/packages')
+@superadmin_required
+def packages_page():
+    cost_gb = SystemConfig.query.get('cost_per_gb')
+    cost_day = SystemConfig.query.get('cost_per_day')
+    
+    return render_template('packages.html', 
+                         base_cost_gb=int(cost_gb.value) if cost_gb else 0,
+                         base_cost_day=int(cost_day.value) if cost_day else 0)
+
+@app.route('/transactions')
+@login_required
+def transactions_page():
+    return render_template('transactions.html')
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
