@@ -5,6 +5,12 @@
 
 {% block header_actions %}
 <div class="header-controls">
+    {% if role == 'reseller' %}
+    <div class="credit-badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; padding: 8px 15px; border-radius: 12px; font-weight: bold; border: 1px solid rgba(34, 197, 94, 0.3);">
+        💰 Credit: {{ credit }}
+    </div>
+    {% endif %}
+
     <label class="toggle-switch" title="Auto Refresh">
         <input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh()">
         <span class="slider"></span>
@@ -323,6 +329,32 @@
         </div>
     </div>
 </div>
+
+<div class="modal-overlay hidden" id="assign-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2>Assign to Reseller</h2>
+            <button class="modal-close" onclick="closeAssignModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="color: var(--text-secondary); margin-bottom: 15px;">Client: <strong id="assign-client-email" style="color: var(--text-primary);"></strong></p>
+            <input type="hidden" id="assign-server-id">
+            <input type="hidden" id="assign-client-email-hidden">
+            
+            <div class="form-group">
+                <label>Select Reseller</label>
+                <select id="assign-reseller-select" class="form-select">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+            
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeAssignModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitAssignment()">Assign</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -332,11 +364,15 @@
     let inboundsData = [];
     let allInboundsData = [];
 
+    const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
+    const USER_ROLE = "{{ role }}";
+
     document.addEventListener('DOMContentLoaded', function() {
         showLoading();
         refreshData(true).then(() => hideLoading());
         loadServers();
         document.getElementById('global-search-input').addEventListener('input', performGlobalSearch);
+        if (IS_SUPERADMIN) loadResellersForModal();
     });
 
     function toggleAutoRefresh() {
@@ -1222,6 +1258,11 @@
                                                         <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
                                                     </svg>
                                                 </button>
+                                                ${IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${inbound.server_id}, '${client.email}', '${inbound.id}')" title="Assign Owner">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><path d="M22 11h-2.5a2.5 2.5 0 0 0 0 5H22"></path>
+                                                    </svg>
+                                                </button>` : ''}
                                             </div>
                                         </td>
                                     </tr>
@@ -1243,6 +1284,64 @@
         document.getElementById('search-results').style.display = 'none';
         document.getElementById('clear-search-btn').style.display = 'none';
         refreshData();
+    }
+
+    async function loadResellersForModal() {
+        try {
+            const response = await fetch('/api/admins');
+            const admins = await response.json();
+            const resellers = admins.filter(a => a.role === 'reseller');
+            const select = document.getElementById('assign-reseller-select');
+            select.innerHTML = '<option value="">Select Reseller</option>' + 
+                resellers.map(r => `<option value="${r.id}">${r.username} (Credit: ${r.credit})</option>`).join('');
+        } catch (error) {
+            console.error('Error loading resellers:', error);
+        }
+    }
+
+    function openAssignModal(serverId, email, inboundId = 0) {
+        document.getElementById('assign-server-id').value = serverId;
+        document.getElementById('assign-client-email-hidden').value = email;
+        document.getElementById('assign-client-email').textContent = email;
+        document.getElementById('assign-modal').classList.remove('hidden');
+    }
+
+    function closeAssignModal() {
+        document.getElementById('assign-modal').classList.add('hidden');
+    }
+
+    async function submitAssignment() {
+        const serverId = document.getElementById('assign-server-id').value;
+        const email = document.getElementById('assign-client-email-hidden').value;
+        const resellerId = document.getElementById('assign-reseller-select').value;
+
+        if (!resellerId) {
+            showToast('Please select a reseller', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/assign-client', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    server_id: parseInt(serverId),
+                    email: email,
+                    reseller_id: parseInt(resellerId)
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast('Client assigned successfully');
+                closeAssignModal();
+                refreshData();
+            } else {
+                showToast(result.error || 'Error assigning client', 'error');
+            }
+        } catch (error) {
+            showToast('Error assigning client', 'error');
+        }
     }
 </script>
 {% endblock %}
