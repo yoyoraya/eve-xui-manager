@@ -196,14 +196,13 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 
 ## Recent Changes (December 2025)
 
-- **December 04 (Latest)**: Reseller System Phase 3 - UI Implementation
-  - Updated `admins.html` with role-based user creation (superadmin/admin/reseller)
-  - Credit field for resellers in admin modal
-  - Allowed servers configuration (per-server access control)
-  - Dashboard shows credit badge for resellers (💰 Credit: X)
-  - New "Assign Owner" button in client action table (superadmins only)
-  - Assign modal for selecting reseller and assigning clients
-  - All UI components fully integrated and tested
+- **December 04 (Checkpoint)**: Reseller System - COMPLETE & STABLE ✅
+  - Phase 1: Database schema (Admin model: role, credit, allowed_servers | ClientOwnership table)
+  - Phase 2: Backend APIs & Filtering (Smart filtering based on roles | /api/assign-client endpoint)
+  - Phase 3: UI Implementation (admins.html: role/credit/servers | dashboard.html: Assign Owner button)
+  - Fixed: Dashboard menu visibility bug (now checks both role AND legacy is_superadmin flag)
+  - All features tested and working correctly
+  - Ready for feature expansion or production deployment
 
 - **December 04**: Reseller System Phase 2 - Filtering & Client Assignment
   - Smart filtering: Resellers only see clients they own via `ClientOwnership` table
