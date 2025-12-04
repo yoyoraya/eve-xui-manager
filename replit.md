@@ -1,325 +1,7 @@
 # Eve - Xui Manager
 
 ## Overview
-A professional web-based monitoring dashboard for multiple X-UI VPN panels with **enterprise security features**, secure authentication, and comprehensive statistics. Supports unlimited X-UI servers (Sanaei 3X-UI or Alireza X-UI).
-
-## Security Features
-
-### ✅ Implemented Security Measures
-
-1. **Rate Limiting (Brute-Force Protection)**
-   - **5 login attempts per minute** maximum per IP
-   - Prevents automated password guessing attacks
-   - Uses `Flask-Limiter` with in-memory storage
-   - Global limits: 200 requests/day, 50 requests/hour per IP
-
-2. **Secure Cookie Settings**
-   - `SESSION_COOKIE_HTTPONLY=True`: Prevents JavaScript access to session cookies
-   - `SESSION_COOKIE_SAMESITE='Lax'`: Protects against CSRF attacks (most situations)
-   - Session cookies are secure and cannot be accessed from XSS attacks
-
-3. **Environment-Based Default Password**
-   - Initial admin password from `INITIAL_ADMIN_PASSWORD` environment variable
-   - Falls back to `'admin'` if not set
-   - Prevents hardcoded default credentials exposure
-   - Can be changed via admin settings after login
-
-4. **Failed Login Logging**
-   - All failed login attempts are logged with username and IP address
-   - Enables monitoring of suspicious activity
-   - Useful for security audits and intrusion detection
-
-5. **Password Hashing**
-   - Uses Werkzeug's `generate_password_hash()` with PBKDF2 algorithm
-   - Salted and hashed passwords stored in database
-   - `check_password_hash()` for secure verification
-
-### 🔒 Security Best Practices
-
-- Session management with secure flags
-- Disabled database modification tracking for performance
-- Connection pooling with pre-ping health checks
-- 7-day session lifetime (can be configured)
-
-## Key Features
-
-### Authentication & Security
-- Professional login page with rate limiting
-- Secure session management
-- Admin management system (superadmin can manage other admins)
-- Failed login attempt logging
-- Environment variable support for sensitive configuration
-
-### Multi-Server Support
-- Add unlimited X-UI panels
-- Auto-detect panel type (Sanaei 3X-UI vs Alireza X-UI)
-- Per-server session handling
-- **Customizable subscription and JSON paths** per server
-- **Configurable subscription port** (handles different ports)
-
-### Dashboard Features
-- Sidebar navigation (responsive, mobile-friendly)
-- Statistics overview: servers, inbounds, clients, traffic
-- Inbound configurations with protocol, port, status
-- **3-Column QR Code Grid** (Subscription, JSON, Direct Link)
-- Traffic display and volume tracking
-- **Silent auto-refresh** with configurable interval (no blocking overlay)
-- **Smart manual refresh** with button spinner (non-blocking)
-- **Global search** to find clients by email across all servers in real-time
-
-### Client Management
-- Enable/Disable clients
-- Reset client traffic
-- Renew client with "Start after first use" option
-- **3 Types of QR Codes per client:**
-  - Subscription: Copy Sub
-  - Subscription JSON: Copy JSON
-  - Direct Link: Copy Direct (account connection link)
-
-### Expiry Display
-- Shows remaining days instead of dates
-- "Start after first use" support
-- Color-coded expiry badges
-- Jalali calendar integration
-
-### Responsive Design
-- Mobile-friendly sidebar (hamburger menu)
-- Responsive stats grid and tables
-- Touch-friendly buttons
-- 3-column QR grid → 2-column tablet → 1-column mobile
-
-## Project Architecture
-
-### Tech Stack
-- **Backend**: Python 3.11 with Flask
-- **Database**: PostgreSQL
-- **Frontend**: HTML5, CSS3, Vanilla JavaScript
-- **Security**: Werkzeug, Flask-Limiter
-- **Styling**: Custom CSS dark theme
-
-### File Structure
-```
-├── app.py                    # Main Flask application
-├── templates/
-│   ├── base.html            # Base template with sidebar
-│   ├── login.html           # Login page
-│   ├── dashboard.html       # Main dashboard
-│   ├── servers.html         # Server management
-│   └── admins.html          # Admin management
-├── static/
-│   └── style.css            # Comprehensive stylesheet
-├── pyproject.toml           # Python dependencies
-└── replit.md                # This file
-```
-
-## Database Schema
-
-### Admins Table
-| Column | Type | Description |
-|--------|------|-------------|
-| id | Integer | Primary key |
-| username | String(100) | Unique username |
-| password_hash | String(255) | Hashed password (PBKDF2) |
-| is_superadmin | Boolean | Can manage other admins |
-| enabled | Boolean | Account active status |
-| created_at | DateTime | Creation timestamp |
-| last_login | DateTime | Last login time |
-
-### Servers Table
-| Column | Type | Description |
-|--------|------|-------------|
-| id | Integer | Primary key |
-| name | String(100) | Server display name |
-| host | String(255) | X-UI panel URL |
-| username | String(100) | Login username |
-| password | String(255) | Login password |
-| enabled | Boolean | Is server active |
-| panel_type | String(50) | auto/sanaei/alireza |
-| sub_path | String(50) | Subscription path (default: /sub/) |
-| json_path | String(50) | JSON path (default: /json/) |
-| sub_port | Integer | Optional subscription port |
-| created_at | DateTime | Creation timestamp |
-
-## API Endpoints
-
-### Authentication
-- `GET/POST /login` - Login page (rate limited: 5/min)
-- `GET /logout` - Logout
-
-### Pages
-- `GET /` - Dashboard (role-aware, shows filtered servers and clients)
-- `GET /servers` - Server management
-- `GET /admins` - Admin management (superadmin only)
-
-### Admin Management API
-- `GET /api/admins` - List all admins (superadmin only)
-- `POST /api/admins` - Add admin (superadmin only) - supports role, credit, allowed_servers
-- `PUT /api/admins/<id>` - Update admin (superadmin only) - can update role, credit, allowed_servers
-- `DELETE /api/admins/<id>` - Delete admin (superadmin only)
-
-### Server Management API
-- `GET /api/servers` - List servers (all users)
-- `POST /api/servers` - Add server (all users)
-- `PUT /api/servers/<id>` - Update server (all users)
-- `DELETE /api/servers/<id>` - Delete server (all users)
-- `POST /api/servers/<id>/test` - Test server connection
-
-### Reseller Client Assignment API (NEW)
-- `POST /api/assign-client` - Assign existing client to reseller (superadmin only)
-  - **Parameters**: `server_id`, `email`, `reseller_id`, `inbound_id` (optional)
-  - Assigns an X-UI client to a reseller for tracking and management
-
-### Data & Client Management API
-- `GET /api/refresh` - Refresh all data (role-aware filtering applied)
-- `POST /api/client/<server_id>/<inbound_id>/<email>/toggle` - Toggle client
-- `POST /api/client/<server_id>/<inbound_id>/<email>/reset` - Reset traffic
-- `POST /api/client/<server_id>/<inbound_id>/<email>/renew` - Renew client
-- `GET /api/client/qrcode` - Generate QR code
-
-## Environment Variables
-
-### Required
-- `DATABASE_URL` - PostgreSQL connection string
-
-### Security
-- `SESSION_SECRET` - Flask session secret key
-- `INITIAL_ADMIN_PASSWORD` - Initial admin password (default: "admin")
-
-### Optional
-- `XUI_HOST`, `XUI_USERNAME`, `XUI_PASSWORD` - Default X-UI connection
-
-## Default Credentials
-
-- **Username**: `admin`
-- **Password**: From `INITIAL_ADMIN_PASSWORD` env var (default: `admin`)
-- ⚠️ **IMPORTANT**: Change password after first login!
-
-## Recent Changes (December 2025)
-
-- **December 04 (FINAL CHECKPOINT)**: Complete Reseller System - PRODUCTION READY ✅
-  - Complete `app.py` rewrite with all reseller features fully integrated
-  - Phase 1: Database schema (Admin model: role, credit, allowed_servers | ClientOwnership table)
-  - Phase 2: Backend APIs & Filtering (Smart filtering based on roles | /api/assign-client endpoint)
-  - Phase 3: UI Implementation (admins.html: role/credit/servers | dashboard.html: Assign Owner button)
-  - Fixed: Dashboard menu visibility bug (now checks both role AND legacy is_superadmin flag)
-  
-  **Complete Features Implemented:**
-  - ✅ Three-tier role system (superadmin/admin/reseller)
-  - ✅ Credit system with role-based deduction
-  - ✅ Server access control per reseller
-  - ✅ Client ownership tracking via ClientOwnership table
-  - ✅ Smart filtering - resellers see only their clients
-  - ✅ Security checks - resellers can't modify others' clients
-  - ✅ Client assignment endpoint (/api/assign-client)
-  - ✅ All authentication & rate limiting
-  - ✅ Session management & security headers
-  
-  **All systems tested and verified working correctly.**
-
-- **December 04**: Reseller System Phase 2 - Filtering & Client Assignment
-  - Smart filtering: Resellers only see clients they own via `ClientOwnership` table
-  - Server access control: Resellers only see allowed servers (via `allowed_servers` JSON)
-  - Dashboard displays reseller credit balance
-  - New API endpoint `/api/assign-client` (superadmin only) to assign existing clients to resellers
-  - `process_inbounds()` accepts optional `user` parameter for role-based filtering
-  - `api_refresh()` now filters servers and passes user context for filtering
-  - Base foundation ready for credit deduction and client creation workflow
-
-- **December 04**: Reseller System Phase 1 - Database Schema
-  - Updated `Admin` model with 3 new fields: `role`, `credit`, `allowed_servers`
-  - New `ClientOwnership` table to track client ownership by reseller
-  - Backward compatible with existing admins (legacy `is_superadmin` flag preserved)
-  - PostgreSQL migration: added columns and new table
-
-- **December 01 (Previous)**: Subscription Page with User-Agent Detection
-  - New route `/s/<server_id>/<sub_id>` for subscription sharing
-  - Beautiful HTML page for browsers showing client data, usage stats, expiry info
-  - Base64 encoded configs for VPN apps (v2ray, xray, Streisand, NekoBox)
-  - User-Agent detection: automatically serves correct format
-  - One-click import link for v2rayNG with deep linking
-  - Copyable subscription links and manual configs
-  
-- **December 01**: UX Improvements & Blocking Overlay Fix
-  - Fixed blocking overlay: Auto-refresh now runs silently without showing loader
-  - Manual refresh shows spinner on button only (no full-page overlay)
-  - Global search field: Search clients by email across all servers in real-time
-  - Search results display server name, inbound details, and all client actions
-  - Silent auto-refresh (configurable interval) for seamless updates
-
-- **December 01**: Security hardening
-  - Added Flask-Limiter for rate limiting (5 attempts/minute)
-  - Implemented secure cookie settings (HTTPONLY, SAMESITE)
-  - Environment variable for initial admin password
-  - Failed login attempt logging
-  
-- **December 01**: QR Code UI improvements
-  - Fixed QR code sizing (140×140px) with responsive scaling
-  - Prevent scroll overflow with optimized layout
-  - 3 distinct labels: Copy Sub, Copy JSON, Copy Direct
-  
-- **December 01**: 3-Column QR Code Grid
-  - Subscription QR code
-  - Subscription JSON QR code
-  - Direct connection link QR code
-  
-- **December 01**: Configurable subscription port
-  - Added `sub_port` column to Server model
-  - Per-server custom subscription port support
-  - Updated subscription link generation
-  
-- **November 2025**: Full feature release
-  - Multi-server support with unlimited panels
-  - Professional login system
-  - Admin management page
-  - Responsive sidebar navigation
-  - Panel type auto-detection
-  - Client renewal with start-after-first-use
-  - Expiry display as remaining days
-  - Traffic and volume tracking
-  - Mobile responsive design
-
-## Quick Installation on VPS
-
-📖 **Complete Installation Guide**: See `INSTALL.md`
-
-### One-Line Quick Start
-```bash
-curl -fsSL https://raw.githubusercontent.com/yoyoraya/eve-xui-manager/main/INSTALL.md | less
-```
-
-### Manual Installation Steps:
-1. **Clone Repository**: `git clone https://github.com/yoyoraya/eve-xui-manager.git /opt/eve-xui-manager`
-2. **Setup PostgreSQL**: Create database and user
-3. **Install Dependencies**: Python 3.11, Flask, PostgreSQL driver
-4. **Configure .env**: Set DATABASE_URL, SESSION_SECRET
-5. **Initialize Database**: Run migrations
-6. **Setup Systemd Service**: For auto-restart
-7. **Configure Nginx**: Reverse proxy setup
-8. **Setup SSL**: Optional HTTPS with Certbot
-
-For detailed instructions, see **`INSTALL.md`** in the repository root.
-
-## Reseller System Architecture
-
-### Role System
-- **superadmin**: Full access to all servers and all clients. Can manage admins and resellers.
-- **admin**: Can manage servers and see all clients (no credit system).
-- **reseller**: Limited access. Only sees assigned servers and owns clients via `ClientOwnership` table. Has credit limit.
-
-### Access Control Flow
-1. **Dashboard**: Filters servers based on `allowed_servers` JSON
-   - `"*"` = access all servers
-   - `[1, 2, 3]` = access only servers with those IDs
-2. **API Refresh**: Filters inbounds/clients based on `ClientOwnership` entries
-   - Resellers: Only see clients where `ClientOwnership.reseller_id = their_id`
-   - Admins/SuperAdmins: See all clients
-3. **Client Assignment**: Superadmin assigns existing X-UI clients to resellers via `/api/assign-client`
-
-### Next Steps for Complete Implementation
-1. **Credit Deduction**: Modify `add_client()` to deduct from `reseller.credit` on client creation
-2. **Credit Top-up UI**: Create superadmin page to view/modify reseller credits
-3. **Client Creation Restrictions**: Prevent resellers from creating clients on non-allowed servers
-4. **Usage Tracking**: Track client usage and generate billing reports per reseller
+Eve is a professional web-based monitoring dashboard designed for multiple X-UI VPN panels. It offers enterprise-grade security, secure authentication, and comprehensive statistics. The platform supports an unlimited number of X-UI servers (both Sanaei 3X-UI and Alireza X-UI variants) and includes a robust reseller management system. Its main purpose is to provide a centralized, secure, and efficient solution for managing VPN services, targeting businesses and individuals who require scalable and secure VPN panel oversight.
 
 ## User Preferences
 - Dark theme
@@ -329,3 +11,40 @@ For detailed instructions, see **`INSTALL.md`** in the repository root.
 - Enterprise security
 - Reseller system for multi-level management
 
+## System Architecture
+
+### UI/UX Decisions
+The system features a professional login page, responsive sidebar navigation, a 3-column QR Code grid (adaptable to 2-column on tablet and 1-column on mobile), and color-coded expiry badges. The design emphasizes a dark theme, clean aesthetics, and mobile-friendliness. Silent auto-refresh for data ensures a non-blocking user experience, while smart manual refresh provides immediate updates with a button spinner.
+
+### Technical Implementations
+- **Authentication & Security**: Professional login with rate limiting (5 attempts/minute per IP), secure session management (HTTPONLY, SAMESITE), password hashing (PBKDF2), environment-based default passwords, and failed login logging.
+- **Multi-Server Support**: Ability to add unlimited X-UI panels with auto-detection of panel type (Sanaei/Alireza). Features per-server session handling and customizable subscription/JSON paths and configurable subscription ports.
+- **Dashboard Features**: Statistics overview (servers, inbounds, clients, traffic), global search for clients by email across all servers, and real-time traffic display.
+- **Client Management**: Enable/disable clients, reset client traffic, renew clients with "Start after first use" option, and generation of three types of QR codes per client (Subscription, Subscription JSON, Direct Link).
+- **Expiry Display**: Shows remaining days (color-coded) and supports "Start after first use" with Jalali calendar integration.
+- **Reseller System**: Three-tier role system (superadmin, admin, reseller), credit system with role-based deduction, server access control per reseller, and client ownership tracking. Resellers only see clients and servers they are authorized for.
+
+### System Design Choices
+- **Backend**: Python 3.11 with Flask.
+- **Database**: PostgreSQL for robust data storage.
+- **Frontend**: HTML5, CSS3, and Vanilla JavaScript for a lightweight and responsive interface.
+- **Security**: Utilizes Werkzeug for security utilities and Flask-Limiter for rate limiting.
+- **Styling**: Custom CSS for a dark theme.
+- **Database Schema**:
+    - **Admins Table**: Stores admin credentials, roles (superadmin, admin, reseller), credit limits, and allowed servers.
+    - **Servers Table**: Stores details for each X-UI panel, including connection info and custom paths.
+    - **ClientOwnership Table**: Tracks which reseller owns which client, facilitating the reseller system.
+
+### API Endpoints
+- **Authentication**: `/login`, `/logout`
+- **Page Endpoints**: `/`, `/servers`, `/admins`
+- **Admin Management API**: CRUD operations for admins.
+- **Server Management API**: CRUD operations for servers, including connection testing.
+- **Reseller Client Assignment API**: `/api/assign-client` for assigning clients to resellers.
+- **Data & Client Management API**: Refresh data, toggle, reset, and renew client services, and QR code generation.
+
+## External Dependencies
+- **PostgreSQL**: Used as the primary database for storing all application data.
+- **X-UI Panels**: Integrates with both Sanaei 3X-UI and Alireza X-UI for VPN server management.
+- **Werkzeug**: Used for security, specifically password hashing.
+- **Flask-Limiter**: Implements rate limiting for brute-force protection.

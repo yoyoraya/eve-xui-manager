@@ -648,6 +648,15 @@ def delete_server(server_id):
     db.session.commit()
     return jsonify({"success": True})
 
+@app.route('/api/servers/<int:server_id>/test', methods=['POST'])
+@login_required
+def test_server_connection(server_id):
+    server = Server.query.get_or_404(server_id)
+    session_obj, error = get_xui_session(server)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+    return jsonify({"success": True})
+
 @app.route('/api/assign-client', methods=['POST'])
 @superadmin_required
 def assign_client():
