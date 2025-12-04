@@ -189,8 +189,147 @@ class ClientOwnership(db.Model):
     reseller = db.relationship('Admin', backref=db.backref('clients', lazy=True))
     server = db.relationship('Server', backref=db.backref('owned_clients', lazy=True))
 
+class PanelAPI(db.Model):
+    __tablename__ = 'panel_apis'
+    id = db.Column(db.Integer, primary_key=True)
+    panel_type = db.Column(db.String(50), unique=True, nullable=False)  # 'sanaei', 'alireza', etc
+    display_name = db.Column(db.String(100))
+    login_endpoint = db.Column(db.String(100))
+    
+    # Inbound endpoints
+    inbounds_list = db.Column(db.String(200))
+    inbounds_get = db.Column(db.String(200))
+    inbounds_add = db.Column(db.String(200))
+    inbounds_update = db.Column(db.String(200))
+    inbounds_delete = db.Column(db.String(200))
+    
+    # Client endpoints
+    client_add = db.Column(db.String(200))
+    client_update = db.Column(db.String(200))
+    client_delete = db.Column(db.String(200))
+    client_reset_traffic = db.Column(db.String(200))
+    client_get_traffic = db.Column(db.String(200))
+    
+    # Server endpoints
+    server_status = db.Column(db.String(200))
+    server_restart = db.Column(db.String(200))
+    server_stop = db.Column(db.String(200))
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'panel_type': self.panel_type,
+            'display_name': self.display_name,
+            'login_endpoint': self.login_endpoint,
+            'inbounds_list': self.inbounds_list,
+            'inbounds_get': self.inbounds_get,
+            'client_add': self.client_add,
+            'client_reset_traffic': self.client_reset_traffic
+        }
+
+def get_panel_api(panel_type):
+    """Return PanelAPI config for given panel_type or None."""
+    if not panel_type or panel_type == 'auto':
+        return None
+    return PanelAPI.query.filter_by(panel_type=panel_type).first()
+
+
+CLIENT_UPDATE_FALLBACKS = [
+    "/panel/api/inbounds/updateClient/:clientId",
+    "/panel/api/inbounds/:id/updateClient/:clientId",
+    "/xui/API/inbounds/updateClient/:clientId",
+    "/xui/inbound/updateClient/:clientId"
+]
+
+CLIENT_RESET_FALLBACKS = [
+    "/panel/api/inbounds/:id/resetClientTraffic/:email",
+    "/xui/API/inbounds/:id/resetClientTraffic/:email",
+    "/xui/inbounds/:id/resetClientTraffic/:email",
+    "/xui/inbound/:id/resetClientTraffic/:email"
+]
+
+
+def collect_endpoint_templates(panel_type, attr_name, fallbacks):
+    """Return ordered list of endpoint templates for the requested action."""
+    templates = []
+    panel_api = get_panel_api(panel_type)
+    if panel_api:
+        value = getattr(panel_api, attr_name, None)
+        if value:
+            templates.append(value)
+    for api in PanelAPI.query.all():
+        value = getattr(api, attr_name, None)
+        if value and value not in templates:
+            templates.append(value)
+    for item in fallbacks:
+        if item not in templates:
+            templates.append(item)
+    return templates
+
+
+def build_panel_url(host, template, replacements):
+    if not template:
+        return None
+    endpoint = template
+    for key, value in (replacements or {}).items():
+        if value is None:
+            continue
+        safe_value = quote(str(value), safe='')
+        endpoint = endpoint.replace(f":{key}", safe_value).replace(f"{{{key}}}", safe_value)
+    if endpoint.startswith('http://') or endpoint.startswith('https://'):
+        return endpoint
+    host_clean = host.rstrip('/')
+    endpoint_clean = endpoint if endpoint.startswith('/') else f"/{endpoint}"
+    return f"{host_clean}{endpoint_clean}"
+
 with app.app_context():
     db.create_all()
+    
+    # Initialize PanelAPI data
+    if not PanelAPI.query.first():
+        panel_apis = [
+            PanelAPI(
+                panel_type='sanaei',
+                display_name='3X-UI (Sanaei)',
+                login_endpoint='/login',
+                inbounds_list='/panel/api/inbounds/list',
+                inbounds_get='/panel/api/inbounds/get/:id',
+                inbounds_add='/panel/api/inbounds/add',
+                inbounds_update='/panel/api/inbounds/update/:id',
+                inbounds_delete='/panel/api/inbounds/del/:id',
+                client_add='/panel/api/inbounds/addClient',
+                client_update='/panel/api/inbounds/updateClient/:clientId',
+                client_delete='/panel/api/inbounds/:id/delClient/:clientId',
+                client_reset_traffic='/panel/api/inbounds/:id/resetClientTraffic/:email',
+                client_get_traffic='/panel/api/inbounds/getClientTraffics/:email',
+                server_status='/panel/api/server/status',
+                server_restart='/panel/api/server/restartXrayService',
+                server_stop='/panel/api/server/stopXrayService'
+            ),
+            PanelAPI(
+                panel_type='alireza',
+                display_name='X-UI (Alireza)',
+                login_endpoint='/login',
+                inbounds_list='/xui/API/inbounds/',
+                inbounds_get='/xui/API/inbounds/get/:id',
+                inbounds_add='/xui/API/inbounds/add',
+                inbounds_update='/xui/API/inbounds/update/:id',
+                inbounds_delete='/xui/API/inbounds/del/:id',
+                client_add='/xui/API/inbounds/addClient/',
+                client_update='/xui/API/inbounds/updateClient/:clientId',
+                client_delete='/xui/API/inbounds/:id/delClient/:clientId',
+                client_reset_traffic='/xui/API/inbounds/:id/resetClientTraffic/:email',
+                client_get_traffic='/xui/API/inbounds/getClientTraffics/:email',
+                server_status='/xui/API/server/status',
+                server_restart='/xui/API/server/restartXrayService',
+                server_stop='/xui/API/server/stopXrayService'
+            )
+        ]
+        db.session.add_all(panel_apis)
+    
     if not Admin.query.filter_by(username='admin').first():
         default_admin = Admin(
             username='admin',
@@ -235,14 +374,14 @@ def superadmin_required(f):
     def decorated_function(*args, **kwargs):
         if 'admin_id' not in session:
             return jsonify({"success": False, "error": "Unauthorized"}), 401
-        admin = Admin.query.get(session['admin_id'])
+        admin = db.session.get(Admin, session['admin_id'])
         if not admin or (admin.role != 'superadmin' and not admin.is_superadmin):
             return jsonify({"success": False, "error": "Access Denied: SuperAdmin only"}), 403
         return f(*args, **kwargs)
     return decorated_function
 
 def get_config(key, default=0):
-    conf = SystemConfig.query.get(key)
+    conf = db.session.get(SystemConfig, key)
     return int(conf.value) if conf else default
 
 def log_transaction(user_id, amount, type, desc):
@@ -293,13 +432,24 @@ def get_xui_session(server):
         return None, f"Error: {str(e)}"
 
 def fetch_inbounds(session_obj, host, panel_type='auto'):
-    endpoints = ["/panel/api/inbounds/list", "/xui/inbound/list", "/panel/inbound/list"]
+    panel_api = get_panel_api(panel_type)
+    endpoints = []
+    if panel_api and panel_api.inbounds_list:
+        endpoints.append(panel_api.inbounds_list)
+    endpoints.extend(["/panel/api/inbounds/list", "/xui/API/inbounds/", "/xui/inbound/list"])
+    
     for ep in endpoints:
+        if not ep:
+            continue
         try:
-            if 'xui' in ep:
-                resp = session_obj.post(f"{host}{ep}", json={"page": 1, "limit": 100}, verify=False, timeout=10)
+            url = ep if ep.startswith('http') else f"{host}{ep}"
+            if '/xui/' in ep.lower() and 'api' in ep.lower():
+                resp = session_obj.get(url, verify=False, timeout=10)
+            elif '/xui/' in ep.lower():
+                resp = session_obj.post(url, json={"page": 1, "limit": 100}, verify=False, timeout=10)
             else:
-                resp = session_obj.get(f"{host}{ep}", verify=False, timeout=10)
+                resp = session_obj.get(url, verify=False, timeout=10)
+            
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('success'):
@@ -307,7 +457,9 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
                     if 'data' in data:
                         d = data['data']
                         return d if isinstance(d, list) else d.get('list', []), None
-        except: continue
+        except Exception as e:
+            app.logger.debug(f"Failed inbounds endpoint {ep}: {str(e)}")
+            continue
     return None, "Failed to fetch inbounds"
 
 def generate_client_link(client, inbound, server_host):
@@ -322,6 +474,19 @@ def generate_client_link(client, inbound, server_host):
             return f"vless://{uuid}@{host}:{port}?type=tcp&security=none#{remark}"
         return f"{protocol}://..."
     except: return None
+
+def find_client(inbounds, inbound_id, email):
+    for inbound in inbounds:
+        if inbound.get('id') != inbound_id:
+            continue
+        try:
+            settings = json.loads(inbound.get('settings', '{}'))
+        except Exception:
+            settings = {}
+        for client in settings.get('clients', []):
+            if client.get('email') == email:
+                return client, inbound
+    return None, None
 
 def process_inbounds(inbounds, server, user):
     processed = []
@@ -403,11 +568,18 @@ def process_inbounds(inbounds, server, user):
             if user.role == 'reseller' and not processed_clients:
                 continue
 
+            # استخراج network و security از settings
+            streamSettings = settings.get('streamSettings', {})
+            network = streamSettings.get('network', 'tcp')
+            security = streamSettings.get('security', 'none')
+            
             processed.append({
                 "id": inbound.get('id'),
                 "remark": inbound.get('remark', ''),
                 "port": inbound.get('port', ''),
                 "protocol": inbound.get('protocol', ''),
+                "network": network,
+                "security": security,
                 "clients": processed_clients,
                 "client_count": len(processed_clients),
                 "enable": inbound.get('enable', False),
@@ -460,7 +632,7 @@ def logout():
 @app.route('/')
 @login_required
 def dashboard():
-    user = Admin.query.get(session['admin_id'])
+    user = db.session.get(Admin, session['admin_id'])
     
     if user.role == 'reseller':
         allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
@@ -505,7 +677,7 @@ def admins_page():
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
-    user = Admin.query.get(session['admin_id'])
+    user = db.session.get(Admin, session['admin_id'])
     
     if user.role == 'reseller':
         allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
@@ -553,9 +725,20 @@ def api_refresh():
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/toggle', methods=['POST'])
 @login_required
 def toggle_client(server_id, inbound_id):
-    user = Admin.query.get(session['admin_id'])
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
     server = Server.query.get_or_404(server_id)
-    email = request.json.get('email')
+    
+    try:
+        data = request.get_json() or {}
+        email = data.get('email')
+        enable = data.get('enable', True)
+        if not email:
+            return jsonify({"success": False, "error": "Email required"}), 400
+    except:
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
     
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
@@ -566,18 +749,77 @@ def toggle_client(server_id, inbound_id):
     if error: return jsonify({"success": False, "error": error}), 400
     
     try:
-        resp = session_obj.post(f"{server.host}/xui/client/update", json={"id": inbound_id, "settings": json.dumps({"clients": [{"email": email}]})}, verify=False, timeout=10)
-        if resp.status_code == 200: return jsonify({"success": True})
-        return jsonify({"success": False, "error": "Failed to toggle"}), 400
+        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        if fetch_err:
+            return jsonify({"success": False, "error": fetch_err}), 400
+        target_client, _ = find_client(inbounds, inbound_id, email)
+        if not target_client:
+            return jsonify({"success": False, "error": "Client not found"}), 404
+        
+        target_client['enable'] = bool(enable)
+        client_identifier = target_client.get('id') or target_client.get('password') or target_client.get('email')
+        
+        payload = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [target_client]})
+        }
+
+        replacements = {
+            'id': inbound_id,
+            'inbound_id': inbound_id,
+            'inboundId': inbound_id,
+            'clientId': client_identifier,
+            'client_id': client_identifier,
+            'email': email
+        }
+
+        templates = collect_endpoint_templates(server.panel_type, 'client_update', CLIENT_UPDATE_FALLBACKS)
+        errors = []
+        for template in templates:
+            full_url = build_panel_url(server.host, template, replacements)
+            if not full_url:
+                continue
+            try:
+                resp = session_obj.post(full_url, json=payload, verify=False, timeout=10)
+            except Exception as exc:
+                errors.append(f"{template}: {exc}")
+                continue
+
+            if resp.status_code == 200:
+                try:
+                    resp_json = resp.json()
+                    if isinstance(resp_json, dict) and resp_json.get('success') is False:
+                        errors.append(f"{template}: success false")
+                        continue
+                except ValueError:
+                    pass
+                return jsonify({"success": True})
+
+            errors.append(f"{template}: {resp.status_code}")
+            if resp.status_code != 404:
+                break
+        app.logger.warning(f"Toggle failed for {email}: {'; '.join(errors)}")
+        return jsonify({"success": False, "error": "Client update endpoint returned error"}), 400
     except Exception as e:
+        app.logger.error(f"Toggle error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 400
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/reset', methods=['POST'])
 @login_required
 def reset_client_traffic(server_id, inbound_id):
-    user = Admin.query.get(session['admin_id'])
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
     server = Server.query.get_or_404(server_id)
-    email = request.json.get('email')
+    
+    try:
+        data = request.get_json() or {}
+        email = data.get('email')
+        if not email:
+            return jsonify({"success": False, "error": "Email required"}), 400
+    except:
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
     
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
@@ -588,10 +830,152 @@ def reset_client_traffic(server_id, inbound_id):
     if error: return jsonify({"success": False, "error": error}), 400
     
     try:
-        resp = session_obj.post(f"{server.host}/xui/client/reset", json={"email": email}, verify=False, timeout=10)
-        if resp.status_code == 200: return jsonify({"success": True})
-        return jsonify({"success": False, "error": "Failed to reset"}), 400
+        templates = collect_endpoint_templates(server.panel_type, 'client_reset_traffic', CLIENT_RESET_FALLBACKS)
+        replacements = {
+            'id': inbound_id,
+            'inbound_id': inbound_id,
+            'inboundId': inbound_id,
+            'email': email
+        }
+        errors = []
+        for template in templates:
+            full_url = build_panel_url(server.host, template, replacements)
+            if not full_url:
+                continue
+            requires_path_email = (':email' in template) or ('{email}' in template)
+            payload = None if requires_path_email else {"email": email}
+            try:
+                if payload is None:
+                    resp = session_obj.post(full_url, verify=False, timeout=10)
+                else:
+                    resp = session_obj.post(full_url, json=payload, verify=False, timeout=10)
+            except Exception as exc:
+                errors.append(f"{template}: {exc}")
+                continue
+
+            if resp.status_code == 200:
+                try:
+                    resp_json = resp.json()
+                    if isinstance(resp_json, dict) and resp_json.get('success') is False:
+                        errors.append(f"{template}: success false")
+                        continue
+                except ValueError:
+                    pass
+                return jsonify({"success": True})
+
+            errors.append(f"{template}: {resp.status_code}")
+            if resp.status_code != 404:
+                break
+
+        app.logger.warning(f"Reset traffic failed for {email}: {'; '.join(errors)}")
+        return jsonify({"success": False, "error": "Reset endpoint returned error"}), 400
     except Exception as e:
+        app.logger.error(f"Reset error: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 400
+
+@app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew', methods=['POST'])
+@login_required
+def renew_client(server_id, inbound_id, email):
+    """Renew client expiry and/or volume"""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
+    server = Server.query.get_or_404(server_id)
+    
+    try:
+        data = request.get_json() or {}
+        days = int(data.get('days', 0))
+        volume = int(data.get('volume', 0))
+        start_after_first_use = data.get('start_after_first_use', False)
+        
+        if days <= 0:
+            return jsonify({"success": False, "error": "Days must be positive"}), 400
+    except:
+        return jsonify({"success": False, "error": "Invalid data"}), 400
+    
+    if user.role == 'reseller':
+        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
+        if not ownership:
+            return jsonify({"success": False, "error": "Access denied"}), 403
+    
+    session_obj, error = get_xui_session(server)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+    
+    try:
+        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        if fetch_err:
+            return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+        target_client, _ = find_client(inbounds, inbound_id, email)
+        if not target_client:
+            return jsonify({"success": False, "error": "Client not found"}), 404
+        
+        # Calculate new expiry
+        if start_after_first_use:
+            new_expiry = -1 * (days * 86400000)
+        else:
+            current_expiry = target_client.get('expiryTime', 0)
+            if current_expiry > 0:
+                current_date = datetime.fromtimestamp(current_expiry / 1000)
+                new_date = current_date + timedelta(days=days)
+            else:
+                new_date = datetime.now() + timedelta(days=days)
+            new_expiry = int(new_date.timestamp() * 1000)
+        
+        # Update volume
+        current_volume = target_client.get('totalGB', 0)
+        new_volume = current_volume + (volume * 1024 * 1024 * 1024) if volume > 0 else current_volume
+        
+        # Update client
+        target_client['expiryTime'] = new_expiry
+        target_client['totalGB'] = new_volume
+        
+        client_id = target_client.get('id', target_client.get('password', email))
+
+        update_payload = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [target_client]})
+        }
+
+        replacements = {
+            'id': inbound_id,
+            'inbound_id': inbound_id,
+            'inboundId': inbound_id,
+            'clientId': client_id,
+            'client_id': client_id,
+            'email': email
+        }
+
+        templates = collect_endpoint_templates(server.panel_type, 'client_update', CLIENT_UPDATE_FALLBACKS)
+        errors = []
+        for template in templates:
+            full_url = build_panel_url(server.host, template, replacements)
+            if not full_url:
+                continue
+            try:
+                resp = session_obj.post(full_url, json=update_payload, verify=False, timeout=10)
+            except Exception as exc:
+                errors.append(f"{template}: {exc}")
+                continue
+            if resp.status_code == 200:
+                try:
+                    resp_json = resp.json()
+                    if isinstance(resp_json, dict) and resp_json.get('success') is False:
+                        errors.append(f"{template}: success false")
+                        continue
+                except ValueError:
+                    pass
+                return jsonify({"success": True})
+
+            errors.append(f"{template}: {resp.status_code}")
+            if resp.status_code != 404:
+                break
+
+        app.logger.warning(f"Renew failed for {email}: {'; '.join(errors)}")
+        return jsonify({"success": False, "error": "Client update endpoint returned error"}), 400
+    except Exception as e:
+        app.logger.error(f"Renew error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 400
 
 @app.route('/api/admins', methods=['GET'])
@@ -648,7 +1032,7 @@ def delete_admin(admin_id):
 @app.route('/api/servers', methods=['GET'])
 @login_required
 def get_servers():
-    user = Admin.query.get(session['admin_id'])
+    user = db.session.get(Admin, session['admin_id'])
     if user.role == 'reseller':
         allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
         if user.allowed_servers == '*':
@@ -743,6 +1127,28 @@ def assign_client():
     db.session.commit()
     return jsonify({"success": True})
 
+@app.route('/api/client/qrcode', methods=['GET'])
+def generate_qrcode():
+    """Generate QR code from URL query parameter (GET request)"""
+    link = request.args.get('link', '')
+    if not link:
+        return jsonify({"success": False, "error": "Link required"}), 400
+    
+    try:
+        qr = qrcode.QRCode(version=1, box_size=10, border=2)
+        qr.add_data(link)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+        return jsonify({"success": True, "qrcode": f"data:image/png;base64,{qr_base64}"})
+    except Exception as e:
+        app.logger.error(f"QR Code error: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 400
+
 @app.route('/api/client/<int:server_id>/qrcode', methods=['POST'])
 @login_required
 def client_qrcode():
@@ -767,7 +1173,7 @@ def client_qrcode():
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/add', methods=['POST'])
 @login_required
 def add_client(server_id, inbound_id):
-    user = Admin.query.get(session['admin_id'])
+    user = db.session.get(Admin, session['admin_id'])
     server = Server.query.get_or_404(server_id)
     
     data = request.json or {}
@@ -784,7 +1190,7 @@ def add_client(server_id, inbound_id):
 
     if mode == 'package':
         pkg_id = data.get('package_id')
-        package = Package.query.get(pkg_id)
+        package = db.session.get(Package, pkg_id)
         if not package: return jsonify({"success": False, "error": "Invalid Package"}), 400
         
         price = package.price
@@ -914,7 +1320,7 @@ def create_package():
 def update_config():
     data = request.json
     for key, value in data.items():
-        config = SystemConfig.query.get(key)
+        config = db.session.get(SystemConfig, key)
         if config:
             config.value = str(value)
         else:
@@ -946,7 +1352,7 @@ def charge_admin():
 @app.route('/api/transactions', methods=['GET'])
 @login_required
 def get_transactions():
-    user = Admin.query.get(session['admin_id'])
+    user = db.session.get(Admin, session['admin_id'])
     
     if user.role == 'reseller':
         transactions = Transaction.query.filter_by(admin_id=user.id).all()
@@ -962,8 +1368,11 @@ def get_transactions():
 @app.route('/sub-manager')
 @superadmin_required
 def sub_manager_page():
-    user = Admin.query.get(session['admin_id'])
-    return render_template('sub_manager.html', admin_username=user.username, role=user.role, is_superadmin=True)
+    user = db.session.get(Admin, session['admin_id'])
+    return render_template('sub_manager.html',
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
 
 @app.route('/api/sub-apps', methods=['GET'])
 def get_sub_apps():
@@ -973,17 +1382,23 @@ def get_sub_apps():
 @app.route('/packages')
 @superadmin_required
 def packages_page():
-    cost_gb = SystemConfig.query.get('cost_per_gb')
-    cost_day = SystemConfig.query.get('cost_per_day')
+    cost_gb = db.session.get(SystemConfig, 'cost_per_gb')
+    cost_day = db.session.get(SystemConfig, 'cost_per_day')
     
     return render_template('packages.html', 
                          base_cost_gb=int(cost_gb.value) if cost_gb else 0,
-                         base_cost_day=int(cost_day.value) if cost_day else 0)
+                         base_cost_day=int(cost_day.value) if cost_day else 0,
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
 
 @app.route('/transactions')
 @login_required
 def transactions_page():
-    return render_template('transactions.html')
+    return render_template('transactions.html',
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
