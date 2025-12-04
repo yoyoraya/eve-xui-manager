@@ -760,7 +760,7 @@ def dashboard():
                          servers=servers, 
                          server_count=len(servers),
                          admin_username=user.username,
-                         is_superadmin=(user.role == 'superadmin'),
+                         is_superadmin=(user.role == 'superadmin' or user.is_superadmin),
                          role=user.role,
                          credit=user.credit)
 
