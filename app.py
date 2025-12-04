@@ -47,7 +47,15 @@ class Admin(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    is_superadmin = db.Column(db.Boolean, default=False)
+    
+    # Role System: 'superadmin', 'admin', 'reseller'
+    role = db.Column(db.String(20), default='admin')
+    is_superadmin = db.Column(db.Boolean, default=False)  # Keep for backward compatibility
+    
+    # Reseller Fields
+    credit = db.Column(db.Integer, default=0)  # Credit amount (e.g. Toman or Users count)
+    allowed_servers = db.Column(db.Text, default='[]')  # JSON string of allowed server IDs: "[1, 2]" or "*"
+    
     enabled = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
@@ -62,7 +70,10 @@ class Admin(db.Model):
         return {
             'id': self.id,
             'username': self.username,
+            'role': self.role,
             'is_superadmin': self.is_superadmin,
+            'credit': self.credit,
+            'allowed_servers': json.loads(self.allowed_servers) if self.allowed_servers else [],
             'enabled': self.enabled,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
@@ -95,6 +106,20 @@ class Server(db.Model):
             'sub_port': self.sub_port,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+class ClientOwnership(db.Model):
+    __tablename__ = 'client_ownerships'
+    id = db.Column(db.Integer, primary_key=True)
+    reseller_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=False)
+    server_id = db.Column(db.Integer, db.ForeignKey('servers.id'), nullable=False)
+    inbound_id = db.Column(db.Integer, nullable=False)
+    client_email = db.Column(db.String(100), nullable=False)
+    client_uuid = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    price = db.Column(db.Integer, default=0)
+    
+    reseller = db.relationship('Admin', backref=db.backref('clients', lazy=True))
+    server = db.relationship('Server', backref=db.backref('owned_clients', lazy=True))
 
 class SubAppConfig(db.Model):
     __tablename__ = 'sub_app_configs'
@@ -131,7 +156,13 @@ class SubAppConfig(db.Model):
 with app.app_context():
     db.create_all()
     if not Admin.query.filter_by(username='admin').first():
-        default_admin = Admin(username='admin', is_superadmin=True, enabled=True)
+        default_admin = Admin(
+            username='admin', 
+            is_superadmin=True, 
+            role='superadmin',
+            enabled=True,
+            allowed_servers='*'
+        )
         # Get initial password from environment variable for security
         initial_password = os.environ.get("INITIAL_ADMIN_PASSWORD", "admin")
         default_admin.set_password(initial_password)
@@ -185,7 +216,8 @@ def superadmin_required(f):
         if 'admin_id' not in session:
             return jsonify({"success": False, "error": "Unauthorized"}), 401
         admin = Admin.query.get(session['admin_id'])
-        if not admin or not admin.is_superadmin:
+        # Check both role and legacy flag
+        if not admin or (admin.role != 'superadmin' and not admin.is_superadmin):
             return jsonify({"success": False, "error": "Superadmin access required"}), 403
         return f(*args, **kwargs)
     return decorated_function
@@ -674,7 +706,8 @@ def login():
             session.permanent = True
             session['admin_id'] = admin.id
             session['admin_username'] = admin.username
-            session['is_superadmin'] = admin.is_superadmin
+            session['is_superadmin'] = admin.is_superadmin or (admin.role == 'superadmin')
+            session['role'] = admin.role
             
             admin.last_login = datetime.utcnow()
             db.session.commit()
@@ -705,14 +738,16 @@ def dashboard():
                          servers=servers, 
                          server_count=len(servers),
                          admin_username=session.get('admin_username'),
-                         is_superadmin=session.get('is_superadmin', False))
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
 
 @app.route('/servers')
 @login_required
 def servers_page():
     return render_template('servers.html',
                          admin_username=session.get('admin_username'),
-                         is_superadmin=session.get('is_superadmin', False))
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
 
 @app.route('/admins')
 @login_required
@@ -721,7 +756,8 @@ def admins_page():
         return redirect(url_for('dashboard'))
     return render_template('admins.html',
                          admin_username=session.get('admin_username'),
-                         is_superadmin=session.get('is_superadmin', False))
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
 
 @app.route('/api/admins', methods=['GET'])
 @superadmin_required
@@ -743,6 +779,9 @@ def add_admin():
     admin = Admin(
         username=data['username'],
         is_superadmin=data.get('is_superadmin', False),
+        role=data.get('role', 'admin'),
+        credit=data.get('credit', 0),
+        allowed_servers=json.dumps(data.get('allowed_servers', [])) if data.get('allowed_servers') else '[]',
         enabled=data.get('enabled', True)
     )
     admin.set_password(data['password'])
@@ -768,6 +807,15 @@ def update_admin(admin_id):
     
     if 'is_superadmin' in data:
         admin.is_superadmin = data['is_superadmin']
+    
+    if 'role' in data:
+        admin.role = data['role']
+    
+    if 'credit' in data:
+        admin.credit = data['credit']
+    
+    if 'allowed_servers' in data:
+        admin.allowed_servers = json.dumps(data['allowed_servers']) if isinstance(data['allowed_servers'], list) else data['allowed_servers']
     
     if 'enabled' in data:
         admin.enabled = data['enabled']
