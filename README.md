@@ -2,6 +2,11 @@
 
 A professional web-based monitoring dashboard for multiple X-UI VPN panels with enterprise security features, secure authentication, and comprehensive statistics. Supports unlimited X-UI servers (Sanaei 3X-UI or Alireza X-UI).
 
+## 🚀 Installation (One-Command)
+un the following command on your Ubuntu/Debian server:
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/yoyoraya/eve-xui-manager/main/setup.sh)
+```
 ## Features
 
 ### 🔐 Enterprise Security
