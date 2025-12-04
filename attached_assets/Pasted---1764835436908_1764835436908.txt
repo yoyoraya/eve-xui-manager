@@ -1,0 +1,531 @@
+بسیار عالی. به **فاز ۵ و نهایی** رسیدیم.
+
+در این فاز، ما دکمه‌های لازم را به رابط کاربری اضافه می‌کنیم تا همه چیز به هم متصل شود.
+۱. دکمه **شارژ (Charge)** را به صفحه مدیریت کاربران اضافه می‌کنیم.
+۲. منوی کناری (**Sidebar**) را آپدیت می‌کنیم تا لینک‌های جدید و اعتبار ریسلر را نشان دهد.
+
+این متن را به Replit بدهید:
+
+````text
+Please implement **Phase 5: Final UI Integration**.
+
+I need you to update `templates/admins.html` and `templates/base.html` to expose the new features.
+
+**1. Update `templates/admins.html`:**
+Add a "Charge" button to the admin cards and a Modal to handle the charging process.
+
+Replace the entire content of `templates/admins.html` with this updated code:
+
+```html
+{% extends "base.html" %}
+
+{% block title %}Admins - Eve Manager{% endblock %}
+{% block page_title %}User Management{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-primary" onclick="openAddAdminModal()">
+    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+    </svg>
+    Add User
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="admins-section">
+    <div class="admins-grid" id="admins-container">
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="admin-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="modal-title">Add User</h2>
+            <button class="modal-close" onclick="closeAdminModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-admin-id">
+            
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="admin-username" placeholder="Username">
+            </div>
+            
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="admin-password" placeholder="Leave empty to keep current">
+            </div>
+
+            <div class="form-group">
+                <label>Role</label>
+                <select id="admin-role" class="form-select" onchange="toggleResellerFields()">
+                    <option value="reseller">Reseller</option>
+                    <option value="admin">Admin</option>
+                    <option value="superadmin">Super Admin</option>
+                </select>
+            </div>
+
+            <div id="reseller-fields">
+                <div class="form-group">
+                    <label>Credit (Amount)</label>
+                    <input type="number" id="admin-credit" placeholder="0" value="0">
+                    <small style="color: var(--text-secondary);">Initial credit for new user</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Allowed Servers (IDs separated by comma or *)</label>
+                    <input type="text" id="admin-allowed-servers" placeholder="e.g. 1, 2 or *" value="*">
+                    <small style="color: var(--text-secondary); font-size: 0.7rem;">Use * for all servers</small>
+                </div>
+            </div>
+
+            <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="admin-enabled" checked>
+                    <span>Enabled</span>
+                </label>
+            </div>
+            
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeAdminModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveAdmin()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="charge-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2>Charge Wallet</h2>
+            <button class="modal-close" onclick="document.getElementById('charge-modal').classList.add('hidden')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="charge-admin-id">
+            <p style="margin-bottom: 15px;">Charging wallet for: <strong id="charge-username" style="color: var(--primary);"></strong></p>
+            
+            <div class="form-group">
+                <label>Amount (Toman)</label>
+                <input type="number" id="charge-amount" class="form-input" placeholder="e.g. 500000">
+                <small style="color: var(--text-secondary);">Use negative value to deduct.</small>
+            </div>
+            
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" id="charge-desc" class="form-input" placeholder="e.g. Bank Transfer #123">
+            </div>
+            
+            <div class="form-actions">
+                <button class="btn btn-primary" onclick="submitCharge()">Submit Transaction</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let admins = [];
+    
+    document.addEventListener('DOMContentLoaded', loadAdmins);
+    
+    function toggleResellerFields() {
+        const role = document.getElementById('admin-role').value;
+        const fields = document.getElementById('reseller-fields');
+        if (role === 'reseller') {
+            fields.style.display = 'block';
+        } else {
+            fields.style.display = 'none';
+        }
+    }
+
+    async function loadAdmins() {
+        try {
+            const response = await fetch('/api/admins');
+            admins = await response.json();
+            renderAdmins();
+        } catch (error) {
+            showToast('Error loading admins', 'error');
+        }
+    }
+    
+    function formatJalaliDate(isoString) {
+        if (!isoString) return 'Never';
+        const date = new Date(isoString);
+        return date.toLocaleDateString('fa-IR'); // Simple locale date
+    }
+    
+    function renderAdmins() {
+        const container = document.getElementById('admins-container');
+        
+        if (admins.length === 0) {
+            container.innerHTML = '<p class="no-data">No users found</p>';
+            return;
+        }
+        
+        container.innerHTML = admins.map(admin => `
+            <div class="admin-card ${!admin.enabled ? 'disabled' : ''}">
+                <div class="admin-avatar">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </div>
+                <div class="admin-info">
+                    <h3>${admin.username}</h3>
+                    <div class="admin-badges">
+                        <span class="badge ${admin.role}">${admin.role.toUpperCase()}</span>
+                        ${admin.enabled ? '<span class="badge active">Enabled</span>' : '<span class="badge inactive">Disabled</span>'}
+                    </div>
+                    ${admin.role === 'reseller' ? `
+                        <div style="margin-top: 8px; font-size: 0.8rem; color: #4ade80;">
+                            💰 Credit: <strong>${admin.credit.toLocaleString()} T</strong>
+                        </div>
+                    ` : ''}
+                    <p class="admin-meta" style="margin-top: 5px;">
+                        Last Login: ${formatJalaliDate(admin.last_login)}
+                    </p>
+                </div>
+                <div class="admin-actions">
+                    <button class="action-btn" onclick="openChargeModal(${admin.id}, '${admin.username}')" title="Charge Wallet" style="color: #4ade80;">
+                        <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    </button>
+
+                    <button class="action-btn" onclick="editAdmin(${admin.id})" title="Edit">
+                        <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="action-btn danger" onclick="deleteAdmin(${admin.id})" title="Delete">
+                        <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    function openChargeModal(id, username) {
+        document.getElementById('charge-admin-id').value = id;
+        document.getElementById('charge-username').textContent = username;
+        document.getElementById('charge-amount').value = '';
+        document.getElementById('charge-desc').value = '';
+        document.getElementById('charge-modal').classList.remove('hidden');
+    }
+
+    async function submitCharge() {
+        const id = document.getElementById('charge-admin-id').value;
+        const amount = document.getElementById('charge-amount').value;
+        const desc = document.getElementById('charge-desc').value;
+        
+        if (!amount) return showToast('Amount is required', 'error');
+        
+        try {
+            const res = await fetch('/admin/charge', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ admin_id: id, amount: amount, description: desc })
+            });
+            if (res.ok) {
+                showToast('Transaction successful');
+                document.getElementById('charge-modal').classList.add('hidden');
+                loadAdmins();
+            } else {
+                showToast('Error processing transaction', 'error');
+            }
+        } catch(e) { showToast('Network error', 'error'); }
+    }
+
+    function openAddAdminModal() {
+        document.getElementById('modal-title').textContent = 'Add User';
+        document.getElementById('edit-admin-id').value = '';
+        document.getElementById('admin-username').value = '';
+        document.getElementById('admin-password').value = '';
+        document.getElementById('admin-role').value = 'reseller';
+        document.getElementById('admin-credit').value = '0';
+        document.getElementById('admin-allowed-servers').value = '*';
+        document.getElementById('admin-enabled').checked = true;
+        
+        toggleResellerFields();
+        document.getElementById('admin-modal').classList.remove('hidden');
+    }
+    
+    function editAdmin(id) {
+        const admin = admins.find(a => a.id === id);
+        if (!admin) return;
+        
+        document.getElementById('modal-title').textContent = 'Edit User';
+        document.getElementById('edit-admin-id').value = admin.id;
+        document.getElementById('admin-username').value = admin.username;
+        document.getElementById('admin-password').value = '';
+        document.getElementById('admin-role').value = admin.role || 'admin';
+        document.getElementById('admin-credit').value = admin.credit || 0;
+        
+        let servers = admin.allowed_servers;
+        if (Array.isArray(servers)) {
+            servers = servers.length > 0 ? servers.join(', ') : '*';
+        }
+        document.getElementById('admin-allowed-servers').value = servers || '*';
+        
+        document.getElementById('admin-enabled').checked = admin.enabled;
+        
+        toggleResellerFields();
+        document.getElementById('admin-modal').classList.remove('hidden');
+    }
+    
+    function closeAdminModal() {
+        document.getElementById('admin-modal').classList.add('hidden');
+    }
+    
+    async function saveAdmin() {
+        const id = document.getElementById('edit-admin-id').value;
+        const role = document.getElementById('admin-role').value;
+        
+        // Parse Allowed Servers
+        let allowedServersRaw = document.getElementById('admin-allowed-servers').value.trim();
+        let allowedServers = [];
+        if (allowedServersRaw === '*') {
+            allowedServers = '*'; // Special flag for all
+        } else {
+            allowedServers = allowedServersRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+        }
+
+        const data = {
+            username: document.getElementById('admin-username').value,
+            password: document.getElementById('admin-password').value,
+            role: role,
+            credit: parseInt(document.getElementById('admin-credit').value) || 0,
+            allowed_servers: allowedServers, // Send as array or '*'
+            enabled: document.getElementById('admin-enabled').checked
+        };
+        
+        if (!data.username) {
+            showToast('Username is required', 'error');
+            return;
+        }
+        
+        try {
+            const url = id ? `/api/admins/${id}` : '/api/admins';
+            const method = id ? 'PUT' : 'POST';
+            
+            const response = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showToast(id ? 'User updated' : 'User added');
+                closeAdminModal();
+                loadAdmins();
+            } else {
+                showToast(result.error || 'Error saving', 'error');
+            }
+        } catch (error) {
+            showToast('Error saving', 'error');
+        }
+    }
+    
+    async function deleteAdmin(id) {
+        if (!confirm('Are you sure you want to delete this user?')) return;
+        try {
+            const response = await fetch(`/api/admins/${id}`, { method: 'DELETE' });
+            if (response.ok) {
+                showToast('User deleted');
+                loadAdmins();
+            }
+        } catch (error) { showToast('Error deleting', 'error'); }
+    }
+</script>
+{% endblock %}
+````
+
+**2. Update `templates/base.html`:**
+Add the "Transactions" and "Packages" links to the sidebar, and display the user's credit if they are a reseller.
+
+Replace the content of `templates/base.html` with this updated code:
+
+```html
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Eve Manager{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="[https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap](https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap)" rel="stylesheet">
+</head>
+<body class="ltr">
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <span>Eve</span>
+                </div>
+                <button class="sidebar-toggle" onclick="toggleSidebar()">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="{{ url_for('dashboard') }}" class="nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    <span>Dashboard</span>
+                </a>
+
+                <a href="{{ url_for('transactions_page') }}" class="nav-item {% if request.endpoint == 'transactions_page' %}active{% endif %}">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    <span>Transactions</span>
+                </a>
+                
+                {% if is_superadmin %}
+                <a href="{{ url_for('servers_page') }}" class="nav-item {% if request.endpoint == 'servers_page' %}active{% endif %}">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="2" width="20" height="8"></rect>
+                        <rect x="2" y="14" width="20" height="8"></rect>
+                        <line x1="6" y1="6" x2="6" y2="6"></line>
+                        <line x1="6" y1="18" x2="6" y2="18"></line>
+                    </svg>
+                    <span>Servers</span>
+                </a>
+
+                <a href="{{ url_for('packages_page') }}" class="nav-item {% if request.endpoint == 'packages_page' %}active{% endif %}">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                    <span>Packages</span>
+                </a>
+                
+                <a href="{{ url_for('sub_manager_page') }}" class="nav-item {% if request.endpoint == 'sub_manager_page' %}active{% endif %}">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    <span>Sub Manager</span>
+                </a>
+                
+                <a href="{{ url_for('admins_page') }}" class="nav-item {% if request.endpoint == 'admins_page' %}active{% endif %}">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                    <span>Users</span>
+                </a>
+                {% endif %}
+            </nav>
+            
+            <div class="sidebar-footer">
+                {% if role == 'reseller' %}
+                <div style="margin-bottom: 15px; padding: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 8px; border: 1px solid rgba(34, 197, 94, 0.2); display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-size: 0.8rem; color: #94a3b8;">Credit:</span>
+                    <span style="font-weight: bold; color: #4ade80;">{{ credit|default(0) }}</span>
+                </div>
+                {% endif %}
+
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                    </div>
+                    <div class="user-details">
+                        <span class="user-name">{{ admin_username }}</span>
+                        <span class="user-role" style="text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px;">{{ role }}</span>
+                    </div>
+                </div>
+                <a href="{{ url_for('logout') }}" class="logout-btn" title="Logout">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                </a>
+            </div>
+        </aside>
+        
+        <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+        
+        <main class="main-content">
+            <header class="top-header">
+                <button class="mobile-menu-btn" onclick="toggleSidebar()">
+                    <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
+                <div class="header-actions">
+                    {% block header_actions %}{% endblock %}
+                </div>
+            </header>
+            
+            <div class="content-area">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+    
+    <div class="loading-overlay hidden" id="loading">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+    </div>
+    
+    <div class="toast hidden" id="toast"></div>
+    
+    <script>
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('sidebar-overlay').classList.toggle('show');
+            document.body.classList.toggle('sidebar-open');
+        }
+        
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+        
+        function showLoading() {
+            document.getElementById('loading').classList.remove('hidden');
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').classList.add('hidden');
+        }
+    </script>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>
+```
+
+```
+
+---
+
+با انجام این مرحله، پروژه شما تبدیل به یک **سیستم فروش و مدیریت کامل** شده است.
+* **سوپرادمین** بسته‌ها را تعریف می‌کند، کاربر می‌سازد و حساب‌ها را شارژ می‌کند.
+* **ریسلر** اعتبارش را می‌بیند، بسته می‌خرد، و تراکنش‌هایش را چک می‌کند.
+* **کاربر نهایی** (کلاینت) می‌تواند از صفحه سابسکریپشن استفاده کند.
+
+**آیا دستور دیگری هست که بخواهید برای Replit آماده کنم؟**
+```

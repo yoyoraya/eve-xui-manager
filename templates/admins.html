@@ -49,8 +49,9 @@
 
             <div id="reseller-fields">
                 <div class="form-group">
-                    <label>Credit (Amount/Count)</label>
+                    <label>Credit (Amount)</label>
                     <input type="number" id="admin-credit" placeholder="0" value="0">
+                    <small style="color: var(--text-secondary);">Initial credit for new user</small>
                 </div>
                 
                 <div class="form-group">
@@ -70,6 +71,34 @@
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeAdminModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="saveAdmin()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="charge-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2>Charge Wallet</h2>
+            <button class="modal-close" onclick="document.getElementById('charge-modal').classList.add('hidden')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="charge-admin-id">
+            <p style="margin-bottom: 15px;">Charging wallet for: <strong id="charge-username" style="color: var(--primary);"></strong></p>
+            
+            <div class="form-group">
+                <label>Amount (Toman)</label>
+                <input type="number" id="charge-amount" class="form-input" placeholder="e.g. 500000">
+                <small style="color: var(--text-secondary);">Use negative value to deduct.</small>
+            </div>
+            
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" id="charge-desc" class="form-input" placeholder="e.g. Bank Transfer #123">
+            </div>
+            
+            <div class="form-actions">
+                <button class="btn btn-primary" onclick="submitCharge()">Submit Transaction</button>
             </div>
         </div>
     </div>
@@ -132,7 +161,7 @@
                     </div>
                     ${admin.role === 'reseller' ? `
                         <div style="margin-top: 8px; font-size: 0.8rem; color: #4ade80;">
-                            💰 Credit: <strong>${admin.credit}</strong>
+                            💰 Credit: <strong>${admin.credit.toLocaleString()} T</strong>
                         </div>
                     ` : ''}
                     <p class="admin-meta" style="margin-top: 5px;">
@@ -140,6 +169,10 @@
                     </p>
                 </div>
                 <div class="admin-actions">
+                    <button class="action-btn" onclick="openChargeModal(${admin.id}, '${admin.username}')" title="Charge Wallet" style="color: #4ade80;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    </button>
+
                     <button class="action-btn" onclick="editAdmin(${admin.id})" title="Edit">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -157,6 +190,37 @@
         `).join('');
     }
     
+    function openChargeModal(id, username) {
+        document.getElementById('charge-admin-id').value = id;
+        document.getElementById('charge-username').textContent = username;
+        document.getElementById('charge-amount').value = '';
+        document.getElementById('charge-desc').value = '';
+        document.getElementById('charge-modal').classList.remove('hidden');
+    }
+
+    async function submitCharge() {
+        const id = document.getElementById('charge-admin-id').value;
+        const amount = document.getElementById('charge-amount').value;
+        const desc = document.getElementById('charge-desc').value;
+        
+        if (!amount) return showToast('Amount is required', 'error');
+        
+        try {
+            const res = await fetch('/admin/charge', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ admin_id: id, amount: amount, description: desc })
+            });
+            if (res.ok) {
+                showToast('Transaction successful');
+                document.getElementById('charge-modal').classList.add('hidden');
+                loadAdmins();
+            } else {
+                showToast('Error processing transaction', 'error');
+            }
+        } catch(e) { showToast('Network error', 'error'); }
+    }
+
     function openAddAdminModal() {
         document.getElementById('modal-title').textContent = 'Add User';
         document.getElementById('edit-admin-id').value = '';
