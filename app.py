@@ -470,6 +470,9 @@ def dashboard():
             servers = Server.query.filter(Server.id.in_(allowed_ids), Server.enabled == True).all() if allowed_ids else []
     else:
         servers = Server.query.filter_by(enabled=True).all()
+    
+    base_cost_day = get_config('cost_per_day', 0)
+    base_cost_gb = get_config('cost_per_gb', 0)
         
     return render_template('dashboard.html', 
                          servers=servers, 
@@ -477,7 +480,9 @@ def dashboard():
                          admin_username=user.username,
                          is_superadmin=(user.role == 'superadmin' or user.is_superadmin),
                          role=user.role,
-                         credit=user.credit)
+                         credit=user.credit,
+                         base_cost_day=base_cost_day,
+                         base_cost_gb=base_cost_gb)
 
 @app.route('/servers')
 @login_required

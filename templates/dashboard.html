@@ -280,39 +280,52 @@
 </div>
 
 <div class="modal-overlay hidden" id="add-client-modal">
-    <div class="modal modal-sm">
+    <div class="modal modal-md">
         <div class="modal-header">
-            <h2>Add Client</h2>
+            <h2>Purchase New Service</h2>
             <button class="modal-close" onclick="closeAddClientModal()">&times;</button>
         </div>
         <div class="modal-body">
+            
+            <div class="tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color);">
+                <button class="tab-btn active" onclick="switchAddMode('package')" id="btn-mode-package" style="padding: 10px; border-bottom: 2px solid var(--primary); color: white; background: none; cursor: pointer;">📦 Buy Package</button>
+                <button class="tab-btn" onclick="switchAddMode('custom')" id="btn-mode-custom" style="padding: 10px; color: var(--text-secondary); background: none; border-bottom: 2px solid transparent; cursor: pointer;">⚙️ Custom Plan</button>
+            </div>
+
             <div class="form-group">
-                <label>Select Server</label>
-                <select id="add-client-server-select" class="form-select" onchange="onServerSelected()">
-                    <option value="">-- Select Server --</option>
-                </select>
+                <label>Username / Email</label>
+                <input type="text" id="add-client-email" class="form-input" placeholder="user1">
             </div>
             
             <div class="form-group">
-                <label>Select Inbound</label>
-                <select id="add-client-inbound-select" class="form-select">
-                    <option value="">-- Select Inbound --</option>
-                </select>
+                <label>Server & Inbound</label>
+                <select id="add-client-server-select" class="form-select" onchange="onServerSelected()" style="margin-bottom: 5px;"></select>
+                <select id="add-client-inbound-select" class="form-select"></select>
             </div>
-            
-            <div class="form-group">
-                <label>Email</label>
-                <input type="email" id="add-client-email" placeholder="user@example.com" class="form-input">
+
+            <div id="section-package">
+                <div class="form-group">
+                    <label>Select Package</label>
+                    <div id="packages-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-height: 200px; overflow-y: auto;">
+                        <div style="padding: 20px; text-align: center; color: var(--text-secondary);">Loading packages...</div>
+                    </div>
+                </div>
             </div>
-            
-            <div class="form-group">
-                <label>Days (0 = Unlimited)</label>
-                <input type="number" id="add-client-days" value="30" min="0" max="365" class="form-input">
-            </div>
-            
-            <div class="form-group">
-                <label>Volume (GB) (0 = Unlimited)</label>
-                <input type="number" id="add-client-volume" value="0" min="0" max="10000" class="form-input">
+
+            <div id="section-custom" class="hidden">
+                <div style="display: flex; gap: 10px;">
+                    <div class="form-group" style="flex:1">
+                        <label>Duration (Days)</label>
+                        <input type="number" id="custom-days" class="form-input" value="30" oninput="calculateCustomPrice()">
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Volume (GB)</label>
+                        <input type="number" id="custom-volume" class="form-input" value="10" oninput="calculateCustomPrice()">
+                    </div>
+                </div>
+                <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 15px;">
+                    Calculated Cost: <strong id="custom-price-display" style="color: #fbbf24;">0</strong> Toman
+                </div>
             </div>
             
             <div class="form-group checkbox-group">
@@ -321,11 +334,16 @@
                     <span>Start after first use</span>
                 </label>
             </div>
-            
-            <div class="form-actions">
-                <button class="btn btn-secondary" onclick="closeAddClientModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitAddClient()">Add Client</button>
+
+            <div class="form-footer" style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                <div style="font-size: 0.9rem;">
+                    Wallet: <span style="color: #4ade80;">{{ credit if credit else 0 }} T</span>
+                </div>
+                <button class="btn btn-primary" onclick="submitAddClient()">
+                    Pay & Create
+                </button>
             </div>
+
         </div>
     </div>
 </div>
@@ -366,6 +384,10 @@
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
+    let currentMode = 'package';
+    let selectedPackageId = null;
+    const BASE_COST_DAY = {{ base_cost_day|default(0) }};
+    const BASE_COST_GB = {{ base_cost_gb|default(0) }};
 
     document.addEventListener('DOMContentLoaded', function() {
         showLoading();
@@ -854,10 +876,69 @@
         }
         
         document.getElementById('add-client-email').value = '';
-        document.getElementById('add-client-days').value = 30;
-        document.getElementById('add-client-volume').value = 0;
+        document.getElementById('custom-days').value = 30;
+        document.getElementById('custom-volume').value = 10;
         document.getElementById('add-client-start-after-first-use').checked = false;
+        currentMode = 'package';
+        switchAddMode('package');
         document.getElementById('add-client-modal').classList.remove('hidden');
+    }
+
+    function switchAddMode(mode) {
+        currentMode = mode;
+        document.getElementById('section-package').classList.toggle('hidden', mode !== 'package');
+        document.getElementById('section-custom').classList.toggle('hidden', mode !== 'custom');
+        
+        // Update Tab Styles
+        document.getElementById('btn-mode-package').style.borderBottom = mode === 'package' ? '2px solid var(--primary)' : '2px solid transparent';
+        document.getElementById('btn-mode-package').style.color = mode === 'package' ? 'white' : 'var(--text-secondary)';
+        
+        document.getElementById('btn-mode-custom').style.borderBottom = mode === 'custom' ? '2px solid var(--primary)' : '2px solid transparent';
+        document.getElementById('btn-mode-custom').style.color = mode === 'custom' ? 'white' : 'var(--text-secondary)';
+        
+        if (mode === 'package') loadPackages();
+        if (mode === 'custom') calculateCustomPrice();
+    }
+
+    async function loadPackages() {
+        const container = document.getElementById('packages-list');
+        try {
+            const res = await fetch('/api/packages');
+            const pkgs = await res.json();
+            
+            if (pkgs.length === 0) {
+                container.innerHTML = '<div style="grid-column: span 2; text-align: center; padding: 10px;">No packages defined</div>';
+                return;
+            }
+
+            container.innerHTML = pkgs.map(p => `
+                <div class="pkg-card" onclick="selectPackage(this, ${p.id})" 
+                     style="border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; cursor: pointer; transition: 0.2s; background: var(--bg-dark);">
+                    <div style="font-weight: bold; font-size: 0.9rem;">${p.name}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 5px 0;">${p.days} Days / ${p.volume} GB</div>
+                    <div style="color: #4ade80; font-weight: bold; font-size: 0.85rem;">${p.price.toLocaleString()} T</div>
+                </div>
+            `).join('');
+        } catch (e) { 
+            container.innerHTML = '<div style="grid-column: span 2; color: #ef4444; text-align: center;">Error loading packages</div>'; 
+        }
+    }
+
+    function selectPackage(el, id) {
+        document.querySelectorAll('.pkg-card').forEach(d => {
+            d.style.borderColor = 'var(--border-color)';
+            d.style.backgroundColor = 'var(--bg-dark)';
+        });
+        el.style.borderColor = 'var(--primary)';
+        el.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
+        selectedPackageId = id;
+    }
+
+    function calculateCustomPrice() {
+        const days = parseInt(document.getElementById('custom-days').value) || 0;
+        const vol = parseInt(document.getElementById('custom-volume').value) || 0;
+        const total = (days * BASE_COST_DAY) + (vol * BASE_COST_GB);
+        document.getElementById('custom-price-display').innerText = total.toLocaleString();
     }
 
     function onServerSelected() {
@@ -892,43 +973,54 @@
     }
 
     async function submitAddClient() {
-        const serverId = document.getElementById('add-client-server-select').value;
-        const inboundSelect = document.getElementById('add-client-inbound-select');
-        const selectedValue = inboundSelect.value;
         const email = document.getElementById('add-client-email').value.trim();
-        const days = parseInt(document.getElementById('add-client-days').value);
-        const volume = parseInt(document.getElementById('add-client-volume').value);
+        const inboundSelect = document.getElementById('add-client-inbound-select');
         const startAfterFirstUse = document.getElementById('add-client-start-after-first-use').checked;
+        
+        if (!inboundSelect.value) return showToast('Select an inbound', 'error');
+        if (!email) return showToast('Enter username', 'error');
 
-        if (!serverId || !selectedValue || !email) {
-            showToast('Please select server, inbound and enter email', 'error');
-            return;
+        const inboundData = JSON.parse(inboundSelect.value);
+        
+        const payload = {
+            email: email,
+            mode: currentMode,
+            start_after_first_use: startAfterFirstUse
+        };
+
+        if (currentMode === 'package') {
+            if (!selectedPackageId) return showToast('Please select a package', 'error');
+            payload.package_id = selectedPackageId;
+        } else {
+            payload.days = document.getElementById('custom-days').value;
+            payload.volume = document.getElementById('custom-volume').value;
         }
 
+        const btn = document.querySelector('#add-client-modal .btn-primary');
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = 'Processing...';
+
         try {
-            const { server_id, inbound_id } = JSON.parse(selectedValue);
-            
-            const response = await fetch(`/api/client/${server_id}/${inbound_id}/add`, {
+            const response = await fetch(`/api/client/${inboundData.server_id}/${inboundData.inbound_id}/add`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    email: email,
-                    days: days, 
-                    volume: volume,
-                    start_after_first_use: startAfterFirstUse
-                })
+                body: JSON.stringify(payload)
             });
             
             const data = await response.json();
             if (data.success) {
-                showToast('Client added successfully');
+                showToast('Client created successfully');
                 closeAddClientModal();
                 refreshData();
             } else {
-                showToast(data.error || 'Error adding client', 'error');
+                showToast(data.error || 'Error creating client', 'error');
             }
         } catch (error) {
-            showToast('Error: ' + error.message, 'error');
+            showToast('Connection error', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalText;
         }
     }
 
