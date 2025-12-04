@@ -1,0 +1,214 @@
+خب، ما تقریباً تمام کارهای سخت را انجام دادیم.
+۱. دیتابیس را برای پشتیبانی از ریسلر و اعتبار آپدیت کردیم.
+۲. منطق بکند را برای فیلتر کردن و محدودسازی نوشتیم.
+۳. صفحات ادمین، داشبورد و سرورها را اصلاح کردیم.
+
+الان **گام پنجم و نهایی** (Polishing) باقی مانده است: **اصلاح منوی کناری (`base.html`)**.
+
+در حال حاضر، منوی کناری (Sidebar) پایین صفحه همیشه می‌نویسد "Admin" یا "Super Admin". ما می‌خواهیم اگر کاربر **Reseller** بود، کلمه "Reseller" را بنویسد و همچنین **اعتبار باقی‌مانده** او را در تمام صفحات (نه فقط داشبورد) نمایش دهد.
+
+-----
+
+### ۵. ویرایش فایل `templates/base.html`
+
+این کد را جایگزین فایل فعلی کنید.
+**تغییرات:**
+
+  * نمایش نقش واقعی کاربر (Reseller/Admin/SuperAdmin) در پایین منو.
+  * نمایش **موجودی (Credit)** در منوی کناری (فقط برای ریسلرها).
+  * مخفی کردن منوی "Servers" برای ریسلرها (چون نیازی ندارند و فقط شلوغ می‌شود، مگر اینکه بخواهید ببینند). *در این کد من آن را برای ریسلرها باز گذاشتم اما فقط خواندنی است.*
+
+<!-- end list -->
+
+```html
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Eve Manager{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="ltr">
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <span>Eve</span>
+                </div>
+                <button class="sidebar-toggle" onclick="toggleSidebar()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="{{ url_for('dashboard') }}" class="nav-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    <span>Dashboard</span>
+                </a>
+                
+                <a href="{{ url_for('servers_page') }}" class="nav-item {% if request.endpoint == 'servers_page' %}active{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="2" width="20" height="8"></rect>
+                        <rect x="2" y="14" width="20" height="8"></rect>
+                        <line x1="6" y1="6" x2="6" y2="6"></line>
+                        <line x1="6" y1="18" x2="6" y2="18"></line>
+                    </svg>
+                    <span>Servers</span>
+                </a>
+                
+                {% if is_superadmin %}
+                <a href="{{ url_for('sub_manager_page') }}" class="nav-item {% if request.endpoint == 'sub_manager_page' %}active{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    <span>Sub Manager</span>
+                </a>
+                {% endif %}
+                
+                {% if is_superadmin %}
+                <a href="{{ url_for('admins_page') }}" class="nav-item {% if request.endpoint == 'admins_page' %}active{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                    <span>Users</span>
+                </a>
+                {% endif %}
+            </nav>
+            
+            <div class="sidebar-footer">
+                {% if role == 'reseller' %}
+                <div style="margin-bottom: 15px; padding: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 8px; border: 1px solid rgba(34, 197, 94, 0.2); display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-size: 0.8rem; color: #94a3b8;">Credit:</span>
+                    <span style="font-weight: bold; color: #4ade80;">{{ credit }}</span>
+                </div>
+                {% endif %}
+
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                    </div>
+                    <div class="user-details">
+                        <span class="user-name">{{ admin_username }}</span>
+                        <span class="user-role" style="text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px;">{{ role }}</span>
+                    </div>
+                </div>
+                <a href="{{ url_for('logout') }}" class="logout-btn" title="Logout">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                </a>
+            </div>
+        </aside>
+        
+        <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+        
+        <main class="main-content">
+            <header class="top-header">
+                <button class="mobile-menu-btn" onclick="toggleSidebar()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
+                <div class="header-actions">
+                    {% block header_actions %}{% endblock %}
+                </div>
+            </header>
+            
+            <div class="content-area">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+    
+    <div class="loading-overlay hidden" id="loading">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+    </div>
+    
+    <div class="toast hidden" id="toast"></div>
+    
+    <script>
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('sidebar-overlay').classList.toggle('show');
+            document.body.classList.toggle('sidebar-open');
+        }
+        
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+        
+        function showLoading() {
+            document.getElementById('loading').classList.remove('hidden');
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').classList.add('hidden');
+        }
+    </script>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>
+```
+
+-----
+
+### 🎉 تبریک\! پروژه تمام شد.
+
+سیستم **Reseller** شما با تمام ویژگی‌های درخواستی آماده است:
+
+1.  **Super Admin:** دسترسی کامل (ساخت سرور، ساخت ادمین/ریسلر، اتصال کلاینت‌ها).
+2.  **Admin:** دسترسی مدیریتی (دیدن همه کلاینت‌ها، تمدید و ...) اما بدون دسترسی به حذف/اضافه سرور و ادمین‌ها.
+3.  **Reseller:** دسترسی محدود (فقط کلاینت‌های خودش، دیدن اعتبار، ساخت کلاینت جدید با کسر اعتبار).
+
+#### ⚠️ چک‌لیست نهایی برای اجرا (حتما انجام دهید):
+
+1.  در پنل سمت چپ (Shell)، دیتابیس قدیمی را پاک کنید:
+    ```bash
+    rm instance/servers.db
+    # یا
+    rm servers.db
+    ```
+2.  برنامه را یک بار **Stop** و **Run** کنید تا دیتابیس جدید ساخته شود.
+3.  با یوزر `admin` (رمز پیش‌فرض `admin`) لاگین کنید.
+4.  رمز خود را عوض کنید.
+5.  در بخش **Servers**، سرور X-UI خود را اضافه کنید.
+6.  در بخش **Users** (که قبلاً Admins بود)، یک کاربر جدید بسازید:
+      * **Role:** `Reseller`
+      * **Credit:** `50` (مثلاً)
+      * **Allowed Servers:** `*`
+7.  به داشبورد بروید. کلاینت‌های موجود را می‌بینید.
+8.  یک کلاینت را انتخاب کنید و روی دکمه زرد **Assign** کلیک کنید و آن را به ریسلر جدید بدهید.
+9.  حالا از اکانت خود خارج شوید و با اکانت ریسلر وارد شوید.
+10. فقط همان کلاینت را باید ببینید و اعتبارتان `50` خواهد بود.
+11. یک کلاینت جدید بسازید؛ باید اعتبارتان `49` شود.
+
+پروژه شما حالا یک سیستم مدیریت و فروش کامل است\! 🚀
