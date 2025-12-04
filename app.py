@@ -15,6 +15,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from urllib.parse import urlparse, quote
+from jdatetime import datetime as jdatetime_class
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
@@ -70,7 +71,7 @@ class Admin(db.Model):
             'role': self.role,
             'is_superadmin': self.is_superadmin,
             'credit': self.credit,
-            'allowed_servers': json.loads(self.allowed_servers) if self.allowed_servers else [],
+            'allowed_servers': parse_allowed_servers(self.allowed_servers),
             'enabled': self.enabled,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
@@ -167,12 +168,22 @@ class Transaction(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def to_dict(self):
+        admin_info = None
+        if hasattr(self, 'admin') and self.admin:
+            admin_info = {
+                'id': self.admin.id,
+                'username': self.admin.username,
+                'role': self.admin.role
+            }
         return {
             'id': self.id,
+            'admin_id': self.admin_id,
             'amount': self.amount,
             'type': self.type,
             'description': self.description,
-            'date': self.created_at.isoformat() if self.created_at else None
+            'date': self.created_at.isoformat() if self.created_at else None,
+            'date_jalali': format_jalali(self.created_at),
+            'admin': admin_info
         }
 
 class ClientOwnership(db.Model):
@@ -388,6 +399,39 @@ def log_transaction(user_id, amount, type, desc):
     trans = Transaction(admin_id=user_id, amount=amount, type=type, description=desc)
     db.session.add(trans)
 
+@app.context_processor
+def inject_wallet_credit():
+    wallet_credit = 0
+    admin_id = session.get('admin_id')
+    if admin_id:
+        user = db.session.get(Admin, admin_id)
+        if user:
+            wallet_credit = user.credit or 0
+    return {"wallet_credit": wallet_credit}
+
+def format_jalali(dt):
+    if not dt:
+        return None
+    try:
+        jalali_date = jdatetime_class.fromgregorian(datetime=dt)
+        return jalali_date.strftime('%Y/%m/%d %H:%M')
+    except Exception:
+        return dt.isoformat() if dt else None
+
+def parse_allowed_servers(raw_value):
+    if not raw_value:
+        return []
+    if isinstance(raw_value, list):
+        return raw_value
+    normalized = raw_value.strip()
+    if normalized == '*':
+        return '*'
+    try:
+        parsed = json.loads(normalized)
+        return parsed if isinstance(parsed, list) else parsed
+    except Exception:
+        return []
+
 def format_bytes(size):
     if size is None or size == 0: return "0 B"
     power = 2**10
@@ -407,7 +451,6 @@ def format_remaining_days(timestamp):
     try:
         expiry_date = datetime.fromtimestamp(timestamp/1000)
         now = datetime.now()
-        from jdatetime import datetime as jdatetime_class
         jalali_date = jdatetime_class.fromgregorian(datetime=expiry_date)
         
         if expiry_date < now:
@@ -420,6 +463,25 @@ def format_remaining_days(timestamp):
         else: return {"text": f"{days} days left", "days": days, "type": "normal"}
     except:
         return {"text": "Invalid Date", "days": 0, "type": "error"}
+
+
+def get_accessible_servers(user, include_disabled=False):
+    if not user:
+        return []
+    query = Server.query
+    if not include_disabled:
+        query = query.filter_by(enabled=True)
+    if user.role == 'reseller':
+        if user.allowed_servers == '*':
+            return query.all()
+        try:
+            allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers else []
+        except Exception:
+            allowed_ids = []
+        if not allowed_ids:
+            return []
+        return query.filter(Server.id.in_(allowed_ids)).all()
+    return query.all()
 
 def get_xui_session(server):
     session_obj = requests.Session()
@@ -540,15 +602,24 @@ def process_inbounds(inbounds, server, user):
                         client_down = stat.get('down', 0)
                         break
 
+                total_bytes = client.get('totalGB', 0) or 0
+                remaining_bytes = max(total_bytes - (client_up + client_down), 0) if total_bytes > 0 else None
+                total_formatted = format_bytes(total_bytes) if total_bytes > 0 else "Unlimited"
+                remaining_formatted = format_bytes(remaining_bytes) if remaining_bytes is not None else "Unlimited"
+
+                expiry_info = format_remaining_days(client.get('expiryTime', 0))
+
                 client_data = {
                     "email": email,
                     "id": client.get('id', ''),
                     "subId": sub_id,
                     "enable": client.get('enable', True),
-                    "totalGB": client.get('totalGB', 0),
-                    "totalGB_formatted": format_bytes(client.get('totalGB', 0)) if client.get('totalGB', 0) > 0 else "Unlimited",
-                    "expiryTime": format_remaining_days(client.get('expiryTime', 0))['text'],
-                    "expiryType": format_remaining_days(client.get('expiryTime', 0))['type'],
+                    "totalGB": total_bytes,
+                    "totalGB_formatted": total_formatted,
+                    "remaining_bytes": remaining_bytes if remaining_bytes is not None else -1,
+                    "remaining_formatted": remaining_formatted,
+                    "expiryTime": expiry_info['text'],
+                    "expiryType": expiry_info['type'],
                     "up": format_bytes(client_up),
                     "down": format_bytes(client_down),
                     "sub_url": sub_url,
@@ -721,6 +792,71 @@ def api_refresh():
     total_stats["total_traffic"] = format_bytes(total_stats["upload_raw"] + total_stats["download_raw"])
     
     return jsonify({"success": True, "inbounds": all_inbounds, "stats": total_stats, "servers": server_results, "server_count": len(servers)})
+
+
+@app.route('/api/clients/search')
+@login_required
+def global_client_search():
+    user = db.session.get(Admin, session['admin_id'])
+    query = (request.args.get('email') or '').strip()
+    if not query:
+        return jsonify({"success": False, "error": "Query parameter 'email' is required"}), 400
+
+    try:
+        limit = int(request.args.get('limit', 50))
+    except ValueError:
+        limit = 50
+    limit = max(1, min(limit, 200))
+
+    search_term = query.lower()
+    servers = get_accessible_servers(user)
+    if not servers:
+        return jsonify({"success": True, "results": [], "errors": ["No accessible servers"]})
+
+    matches = []
+    errors = []
+    for server in servers:
+        session_obj, error = get_xui_session(server)
+        if error:
+            errors.append({"server_id": server.id, "server_name": server.name, "error": error})
+            continue
+
+        inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
+        if fetch_error:
+            errors.append({"server_id": server.id, "server_name": server.name, "error": fetch_error})
+            continue
+
+        processed_inbounds, _ = process_inbounds(inbounds or [], server, user)
+        for inbound in processed_inbounds:
+            inbound_clients = inbound.get('clients', [])
+            for client in inbound_clients:
+                client_email = client.get('email', '')
+                if not client_email:
+                    continue
+                if search_term not in client_email.lower():
+                    continue
+                matches.append({
+                    "server_id": server.id,
+                    "server_name": server.name,
+                    "panel_type": server.panel_type,
+                    "inbound_id": inbound.get('id'),
+                    "inbound": {
+                        "id": inbound.get('id'),
+                        "remark": inbound.get('remark', ''),
+                        "port": inbound.get('port', ''),
+                        "protocol": inbound.get('protocol', ''),
+                        "enable": inbound.get('enable', False)
+                    },
+                    "client": client
+                })
+                if len(matches) >= limit:
+                    break
+            if len(matches) >= limit:
+                break
+        if len(matches) >= limit:
+            break
+
+    return jsonify({"success": True, "results": matches, "errors": errors})
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/toggle', methods=['POST'])
 @login_required
@@ -1314,6 +1450,32 @@ def create_package():
     db.session.add(package)
     db.session.commit()
     return jsonify({"success": True, "id": package.id})
+
+@app.route('/admin/packages/<int:package_id>', methods=['PUT'])
+@superadmin_required
+def update_package(package_id):
+    package = Package.query.get_or_404(package_id)
+    data = request.json or {}
+    if 'name' in data:
+        package.name = data['name']
+    if 'days' in data:
+        package.days = int(data['days'])
+    if 'volume' in data:
+        package.volume = int(data['volume'])
+    if 'price' in data:
+        package.price = int(data['price'])
+    if 'enabled' in data:
+        package.enabled = bool(data['enabled'])
+    db.session.commit()
+    return jsonify({"success": True})
+
+@app.route('/admin/packages/<int:package_id>', methods=['DELETE'])
+@superadmin_required
+def delete_package(package_id):
+    package = Package.query.get_or_404(package_id)
+    db.session.delete(package)
+    db.session.commit()
+    return jsonify({"success": True})
 
 @app.route('/admin/config', methods=['POST'])
 @superadmin_required

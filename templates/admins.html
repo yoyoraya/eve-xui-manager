@@ -159,17 +159,23 @@
                         <span class="badge ${admin.role}">${admin.role.toUpperCase()}</span>
                         ${admin.enabled ? '<span class="badge active">Enabled</span>' : '<span class="badge inactive">Disabled</span>'}
                     </div>
-                    ${admin.role === 'reseller' ? `
-                        <div style="margin-top: 8px; font-size: 0.8rem; color: #4ade80;">
-                            💰 Credit: <strong>${admin.credit.toLocaleString()} T</strong>
+                    <div class="admin-credit-badge" title="Wallet balance">
+                        <svg class="wallet-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="7" width="20" height="14" rx="4" ry="4"></rect>
+                            <path d="M16 7V5a3 3 0 0 0-3-3H5a3 3 0 0 0-3 3v2"></path>
+                            <line x1="18" y1="12" x2="18" y2="12"></line>
+                        </svg>
+                        <div class="admin-credit-amount">
+                            <span>${admin.credit.toLocaleString()}</span>
+                            <small>T</small>
                         </div>
-                    ` : ''}
+                    </div>
                     <p class="admin-meta" style="margin-top: 5px;">
                         Last Login: ${formatJalaliDate(admin.last_login)}
                     </p>
                 </div>
                 <div class="admin-actions">
-                    <button class="action-btn" onclick="openChargeModal(${admin.id}, '${admin.username}')" title="Charge Wallet" style="color: #4ade80;">
+                    <button class="action-btn wallet-action" onclick="openChargeModal(${admin.id}, '${admin.username}')" title="Charge Wallet">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                     </button>
 

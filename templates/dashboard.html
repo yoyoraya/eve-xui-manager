@@ -593,12 +593,6 @@
                                                         <rect x="3" y="14" width="7" height="7"></rect>
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn" onclick="copyClientLink('${encodeURIComponent(client.link || '')}')" title="Copy Link">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                                    </svg>
-                                                </button>
                                                 <button class="action-btn renew" onclick="openRenewModal(${client.server_id}, ${client.inbound_id}, '${client.email}')" title="Renew">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <circle cx="12" cy="12" r="10"></circle>
@@ -618,6 +612,13 @@
                                                         <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
                                                     </svg>
                                                 </button>
+                                                ${IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${client.server_id}, '${client.email}', '${client.inbound_id}')" title="Assign Owner">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                                        <circle cx="10" cy="7" r="4"></circle>
+                                                        <path d="M22 11h-2.5a2.5 2.5 0 0 0 0 5H22"></path>
+                                                    </svg>
+                                                </button>` : ''}
                                             </div>
                                         </td>
                                     </tr>
@@ -747,21 +748,6 @@
         
         try {
             await navigator.clipboard.writeText(currentLink);
-            showToast('Link copied');
-        } catch (error) {
-            showToast('Copy failed', 'error');
-        }
-    }
-
-    async function copyClientLink(encodedLink) {
-        const link = decodeURIComponent(encodedLink);
-        if (!link) {
-            showToast('Link not found', 'error');
-            return;
-        }
-        
-        try {
-            await navigator.clipboard.writeText(link);
             showToast('Link copied');
         } catch (error) {
             showToast('Copy failed', 'error');
@@ -1321,8 +1307,8 @@
                                         </td>
                                         <td class="traffic-cell">
                                             <div class="traffic-combined-cell">
-                                                <span class="up">${client.upload}</span>
-                                                <span class="down">${client.download}</span>
+                                                <span class="up">${client.up}</span>
+                                                <span class="down">${client.down}</span>
                                             </div>
                                         </td>
                                         <td class="volume-cell">
@@ -1333,6 +1319,14 @@
                                         </td>
                                         <td class="action-cell">
                                             <div class="action-buttons">
+                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}')" title="QR Code">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                        <rect x="3" y="3" width="7" height="7"></rect>
+                                                        <rect x="14" y="3" width="7" height="7"></rect>
+                                                        <rect x="14" y="14" width="7" height="7"></rect>
+                                                        <rect x="3" y="14" width="7" height="7"></rect>
+                                                    </svg>
+                                                </button>
                                                 <button class="action-btn renew" onclick="openRenewModal(${inbound.server_id}, '${inbound.id}', '${client.email}')" title="Renew">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <circle cx="12" cy="12" r="10"></circle>

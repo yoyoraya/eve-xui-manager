@@ -14,6 +14,9 @@
             <thead>
                 <tr>
                     <th style="padding: 15px; text-align: left;">Date</th>
+                    {% if is_superadmin %}
+                    <th style="padding: 15px; text-align: left;">User</th>
+                    {% endif %}
                     <th style="padding: 15px; text-align: left;">Type</th>
                     <th style="padding: 15px; text-align: left;">Amount</th>
                     <th style="padding: 15px; text-align: left;">Description</th>
@@ -29,6 +32,8 @@
 
 {% block scripts %}
 <script>
+    const isSuperadmin = {{ 'true' if is_superadmin else 'false' }};
+
     document.addEventListener('DOMContentLoaded', async () => {
         try {
             const res = await fetch('/api/transactions');
@@ -44,15 +49,20 @@
                 const isPositive = t.amount > 0;
                 const color = isPositive ? '#4ade80' : '#ef4444';
                 const sign = isPositive ? '+' : '';
-                const date = new Date(t.date).toLocaleString();
+                const date = t.date_jalali || new Date(t.date).toLocaleString();
                 
                 let typeBadgeClass = 'badge';
                 if (t.type === 'deposit') typeBadgeClass += ' active';
                 else if (t.type === 'purchase') typeBadgeClass += ' inactive';
+                const userCell = isSuperadmin ? `
+                        <td style="padding: 15px; color: var(--text-secondary);">
+                            ${t.admin ? `<div style=\"font-weight:600; color:var(--text-primary);\">${t.admin.username}</div><div style=\"font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-secondary);\">${t.admin.role}</div>` : '-'}
+                        </td>` : '';
                 
                 return `
                     <tr style="border-bottom: 1px solid var(--border-color);">
                         <td style="padding: 15px; color: var(--text-primary);">${date}</td>
+                        ${userCell}
                         <td style="padding: 15px;">
                             <span class="${typeBadgeClass}" style="text-transform: uppercase; font-size: 0.7rem;">${t.type}</span>
                         </td>

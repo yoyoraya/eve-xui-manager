@@ -25,7 +25,7 @@
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Inter', 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg-dark);
     color: var(--text-primary);
     min-height: 100vh;
@@ -262,6 +262,40 @@ body.sidebar-open {
     gap: 16px;
 }
 
+.wallet-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(74, 222, 128, 0.35);
+    background: rgba(34, 197, 94, 0.12);
+    color: #4ade80;
+    font-weight: 600;
+    font-size: 0.85rem;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.25);
+    white-space: nowrap;
+}
+
+.wallet-icon {
+    width: 16px;
+    height: 16px;
+    color: #86efac;
+    flex-shrink: 0;
+}
+
+.wallet-amount {
+    color: #4ade80;
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.wallet-currency {
+    font-size: 0.75rem;
+    color: #86efac;
+    font-weight: 600;
+}
+
 .header-controls {
     display: flex;
     align-items: center;
@@ -399,6 +433,71 @@ input:checked + .slider:before {
     white-space: nowrap;
 }
 
+.btn-block {
+    width: 100%;
+    justify-content: center;
+}
+
+.btn-icon {
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    gap: 6px;
+}
+
+.btn-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--border-color);
+}
+
+.action-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: transparent;
+    color: rgba(226, 232, 240, 0.85);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.action-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.action-icon:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.action-icon.primary {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.action-icon.primary:hover {
+    background: var(--primary);
+    color: #fff;
+}
+
+.action-icon.danger {
+    border-color: rgba(239, 68, 68, 0.45);
+    color: rgba(248, 113, 113, 0.9);
+}
+
+.action-icon.danger:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
 .btn-primary {
     background: var(--primary);
     color: white;
@@ -457,6 +556,50 @@ input:checked + .slider:before {
 .stat-card:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-lg);
+}
+
+.package-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-dark);
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    gap: 16px;
+}
+
+.package-info strong {
+    font-size: 1.05rem;
+    color: var(--text-primary);
+}
+
+.package-info span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.package-meta {
+    text-align: right;
+    min-width: 180px;
+}
+
+.package-price {
+    color: #4ade80;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.package-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    margin-top: 8px;
 }
 
 .stat-icon {
@@ -831,6 +974,12 @@ input:checked + .slider:before {
 .action-btn.success:hover { background: var(--success); }
 .action-btn.warning:hover { background: var(--warning); }
 .action-btn.renew:hover { background: #8b5cf6; }
+.action-btn.wallet-action:hover,
+.action-btn.wallet-action:focus-visible,
+.action-btn.wallet-action:active {
+    background: #4ade80;
+    color: #ffffff;
+}
 
 .empty-state {
     text-align: center;
@@ -882,6 +1031,10 @@ input:checked + .slider:before {
     box-shadow: var(--shadow-lg);
     display: flex;
     flex-direction: column;
+     color: #4ade80;
+}
+
+.admin-credit-amount small {
     margin: 20px;
 }
 
@@ -1197,6 +1350,44 @@ input:checked + .slider:before {
 .admin-badges .badge.inactive {
     background: rgba(239, 68, 68, 0.2);
     color: var(--danger);
+}
+
+.admin-credit-badge {
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(74, 222, 128, 0.25);
+    background: rgba(34, 197, 94, 0.1);
+    width: 100%;
+    max-width: 100%;
+    color: #4ade80;
+}
+
+.admin-credit-badge .wallet-icon {
+    color: #86efac;
+}
+
+.admin-credit-amount {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+    color: #4ade80;
+}
+
+.admin-credit-amount span {
+    color: #4ade80;
+}
+
+.admin-credit-amount small {
+    font-size: 0.75rem;
+    color: #86efac;
+    text-transform: uppercase;
 }
 
 .admin-meta {
