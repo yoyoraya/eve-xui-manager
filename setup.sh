@@ -1,154 +1,323 @@
 #!/bin/bash
 
-# Eve - Xui Manager Quick Installer
-# Author: Yoyoraya
-# License: MIT
+#############################################################
+# Eve X-UI Manager | Quick Install Script
+# Supports Ubuntu 20.04 / 22.04 / 24.04
+#############################################################
 
-# Colors
+set -euo pipefail
+
+# ------------------------- Styling -------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${BLUE}==================================================${NC}"
-echo -e "${BLUE}       Eve - Xui Manager | Quick Installer        ${NC}"
-echo -e "${BLUE}==================================================${NC}"
+print_header() {
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}========================================${NC}"
+}
 
-# 1. Check Root
-if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}❌ Please run as root (sudo -i)${NC}"
-  exit 1
-fi
+print_success() { echo -e "${GREEN}✓ $1${NC}"; }
+print_error() { echo -e "${RED}✗ $1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
 
-# 2. Get Domain or IP
-echo -e "${YELLOW}👉 Enter your Domain or IP Address (e.g., panel.example.com or 1.2.3.4):${NC}"
-read -p "Domain/IP: " USER_DOMAIN
-if [ -z "$USER_DOMAIN" ]; then
-    echo -e "${RED}❌ Domain/IP is required!${NC}"
-    exit 1
-fi
-
-# 3. System Update & Dependencies
-echo -e "${GREEN}📦 Updating system and installing dependencies...${NC}"
-apt-get update -y
-apt-get install -y python3 python3-venv python3-pip python3-dev git postgresql postgresql-contrib nginx curl libpq-dev build-essential
-
-# 4. Setup Database Credentials (Random Generation)
-DB_NAME="eve_db"
-DB_USER="eve_user"
-DB_PASS=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9')
-APP_SECRET=$(openssl rand -hex 32)
-ADMIN_PASS="admin123" # Default, user should change it
-
-echo -e "${GREEN}🗄️  Configuring PostgreSQL...${NC}"
-# Create DB user and database if not exists
-sudo -u postgres psql -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';"
-sudo -u postgres psql -c "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
-
-# 5. Clone & Setup Project
-INSTALL_DIR="/opt/eve-xui-manager"
+# ------------------------- Config --------------------------
+APP_NAME="Eve X-UI Manager"
+SERVICE_NAME="eve-manager"
+APP_USER="evemgr"
+APP_DIR="/opt/eve-xui-manager"
 REPO_URL="https://github.com/yoyoraya/eve-xui-manager.git"
+PYTHON_VERSION="3.11"
+APP_PORT="5000"
+ENV_FILE="$APP_DIR/.env"
+LOG_DIR="/var/log/$SERVICE_NAME"
+DOMAIN="${1:-}"   # optional arg1
+ENVIRONMENT="${2:-production}"
 
-if [ -d "$INSTALL_DIR" ]; then
-    echo -e "${YELLOW}⚠️  Directory $INSTALL_DIR exists. Updating...${NC}"
-    cd $INSTALL_DIR
-    git pull
-else
-    echo -e "${GREEN}⬇️  Cloning repository...${NC}"
-    git clone $REPO_URL $INSTALL_DIR
-    cd $INSTALL_DIR
-fi
+DB_NAME="eve_manager_db"
+DB_USER="eve_manager"
+DB_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)"
+SESSION_SECRET="$(tr -dc 'A-Fa-f0-9' < /dev/urandom | head -c 64)"
+ADMIN_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)"
 
-# Permissions
-chown -R root:root $INSTALL_DIR
-chmod -R 755 $INSTALL_DIR
+# ----------------------- Prerequisites ----------------------
+require_root() {
+    if [ "${EUID}" -ne 0 ]; then
+        print_error "Run this installer as root or with sudo"
+        exit 1
+    fi
+}
 
-# 6. Setup Python Environment
-echo -e "${GREEN}🐍 Setting up Python environment...${NC}"
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-fi
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install gunicorn psycopg2-binary
+ask_domain() {
+    if [ -z "$DOMAIN" ]; then
+        read -rp "Enter your domain or server IP (e.g. panel.example.com): " DOMAIN
+    fi
+    if [ -z "$DOMAIN" ]; then
+        print_error "Domain/IP is required"
+        exit 1
+    fi
+}
 
-# 7. Create .env File
-echo -e "${GREEN}🔒 Creating secure configuration...${NC}"
-cat > .env <<EOF
-DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost/${DB_NAME}
-SESSION_SECRET=${APP_SECRET}
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [[ "$ID" != "ubuntu" ]]; then
+            print_warning "Script optimized for Ubuntu, detected $PRETTY_NAME"
+        else
+            print_success "Detected $PRETTY_NAME"
+        fi
+    else
+        print_error "Cannot detect operating system"
+        exit 1
+    fi
+}
+
+ensure_python_pkg() {
+    if command -v "python${PYTHON_VERSION}" >/dev/null 2>&1; then
+        return
+    fi
+    print_warning "python${PYTHON_VERSION} not found, installing..."
+    apt-get install -y -qq software-properties-common
+    add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 || true
+    apt-get update -qq
+    apt-get install -y -qq "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"
+}
+
+# -------------------- Installation Steps -------------------
+update_system() {
+    print_header "Step 1: Update system"
+    apt-get update -qq
+    apt-get upgrade -y -qq
+    print_success "Packages updated"
+}
+
+install_dependencies() {
+    print_header "Step 2: Install dependencies"
+    apt-get install -y -qq \
+        python3-pip \
+        git \
+        curl \
+        wget \
+        nginx \
+        postgresql postgresql-contrib \
+        libpq-dev \
+        build-essential \
+        supervisor \
+        ufw \
+        openssl \
+        software-properties-common
+    print_success "Dependencies installed"
+}
+
+create_app_user() {
+    print_header "Step 3: Create service account"
+    if id "$APP_USER" >/dev/null 2>&1; then
+        print_warning "User $APP_USER already exists"
+    else
+        useradd --system --shell /bin/bash --home "$APP_DIR" "$APP_USER"
+        print_success "Created user $APP_USER"
+    fi
+}
+
+prepare_directories() {
+    print_header "Step 4: Prepare directories"
+    mkdir -p "$APP_DIR" "$LOG_DIR"
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$LOG_DIR"
+    chmod 750 "$APP_DIR"
+    print_success "Directories ready"
+}
+
+setup_database() {
+    print_header "Step 5: Configure PostgreSQL"
+    systemctl enable postgresql >/dev/null 2>&1 || true
+    systemctl start postgresql || true
+
+    sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
+        sudo -u postgres psql -c "CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASS}';"
+
+    sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+        sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
+
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >/dev/null
+    print_success "Database ready"
+    print_warning "DB user: ${DB_USER} | DB name: ${DB_NAME}"
+}
+
+clone_or_update_repo() {
+    print_header "Step 6: Fetch application"
+    if [ -d "$APP_DIR/.git" ]; then
+        print_warning "Repository exists, pulling latest changes"
+        sudo -u "$APP_USER" git -C "$APP_DIR" fetch --all
+        sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/main
+    else
+        sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
+    fi
+    print_success "Source code synced"
+}
+
+setup_python_env() {
+    print_header "Step 7: Python virtual environment"
+    PY_BIN="python${PYTHON_VERSION}"
+    if [ ! -x "$(command -v $PY_BIN)" ]; then
+        PY_BIN="python3"
+    fi
+    sudo -u "$APP_USER" "$PY_BIN" -m venv "$APP_DIR/venv"
+    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install --upgrade pip setuptools wheel >/dev/null"
+
+    sudo -u "$APP_USER" bash -c "cd $APP_DIR && source venv/bin/activate && if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install .; fi >/dev/null"
+
+    # Ensure gunicorn and psycopg2-binary even if pyproject changes
+    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install gunicorn psycopg2-binary >/dev/null"
+    print_success "Virtual environment configured"
+}
+
+create_env_file() {
+    print_header "Step 8: Environment variables"
+    if [ -f "$ENV_FILE" ]; then
+        print_warning "Existing .env detected, keeping current values"
+        return
+    fi
+    cat > "$ENV_FILE" <<EOF
+FLASK_ENV=${ENVIRONMENT}
+DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}
+SESSION_SECRET=${SESSION_SECRET}
 INITIAL_ADMIN_PASSWORD=${ADMIN_PASS}
+API_PORT=${APP_PORT}
 EOF
+    chown "$APP_USER:$APP_USER" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    print_success ".env created at $ENV_FILE"
+    print_warning "Default admin password: ${ADMIN_PASS} (change after login)"
+}
 
-# 8. Initialize Database Tables
-echo -e "${GREEN}🛠️  Initializing database tables...${NC}"
-python3 << EOF
+initialize_database() {
+    print_header "Step 9: Database migration"
+    sudo -u "$APP_USER" bash -c "cd $APP_DIR && source venv/bin/activate && set -a && source .env && python - <<'PY'
 from app import app, db
-try:
-    with app.app_context():
-        db.create_all()
-        print("Database tables created successfully.")
-except Exception as e:
-    print(f"Error: {e}")
-EOF
+with app.app_context():
+    db.create_all()
+    print('✓ Tables are up to date and default data seeded')
+PY"
+}
 
-# 9. Setup Systemd Service
-echo -e "${GREEN}⚙️  Creating system service...${NC}"
-cat > /etc/systemd/system/eve-manager.service <<EOF
+create_systemd_service() {
+    print_header "Step 10: Systemd service"
+    cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
-Description=Eve Xui Manager Service
+Description=Eve X-UI Manager
 After=network.target postgresql.service
+Wants=postgresql.service
 
 [Service]
-User=root
-WorkingDirectory=${INSTALL_DIR}
-Environment="PATH=${INSTALL_DIR}/venv/bin"
-EnvironmentFile=${INSTALL_DIR}/.env
-ExecStart=${INSTALL_DIR}/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:5000 app:app
+User=${APP_USER}
+Group=${APP_USER}
+WorkingDirectory=${APP_DIR}
+EnvironmentFile=${ENV_FILE}
+Environment="PATH=${APP_DIR}/venv/bin"
+ExecStart=${APP_DIR}/venv/bin/gunicorn --workers 4 --bind 127.0.0.1:${APP_PORT} --timeout 120 app:app
 Restart=always
+RestartSec=5
+StandardOutput=append:${LOG_DIR}/gunicorn.log
+StandardError=append:${LOG_DIR}/gunicorn-error.log
 
 [Install]
 WantedBy=multi-user.target
 EOF
+    touch "${LOG_DIR}/gunicorn.log" "${LOG_DIR}/gunicorn-error.log"
+    chown "$APP_USER:$APP_USER" "${LOG_DIR}"/*
+    systemctl daemon-reload
+    systemctl enable ${SERVICE_NAME}
+    systemctl restart ${SERVICE_NAME}
+    print_success "systemd service active"
+}
 
-systemctl daemon-reload
-systemctl enable eve-manager
-systemctl restart eve-manager
+configure_nginx() {
+    print_header "Step 11: Nginx reverse proxy"
+    cat > /etc/nginx/sites-available/${SERVICE_NAME} <<EOF
+upstream eve_xui_manager {
+    server 127.0.0.1:${APP_PORT};
+}
 
-# 10. Setup Nginx Reverse Proxy
-echo -e "${GREEN}🌐 Configuring Nginx...${NC}"
-cat > /etc/nginx/sites-available/eve-manager <<EOF
 server {
     listen 80;
-    server_name ${USER_DOMAIN};
+    server_name ${DOMAIN};
+
+    client_max_body_size 20M;
+    proxy_read_timeout 120s;
+
+    location /static/ {
+        alias ${APP_DIR}/static/;
+    }
 
     location / {
-        proxy_pass http://127.0.0.1:5000;
+        proxy_pass http://eve_xui_manager;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    location /static/ {
-        alias ${INSTALL_DIR}/static/;
-    }
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/eve-manager /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl restart nginx
+    ln -sf /etc/nginx/sites-available/${SERVICE_NAME} /etc/nginx/sites-enabled/${SERVICE_NAME}
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t && systemctl restart nginx
+    print_success "Nginx configured for ${DOMAIN}"
+}
 
-# 11. Final Output
-echo -e "${BLUE}==================================================${NC}"
-echo -e "${GREEN}✅ Installation Completed Successfully!${NC}"
-echo -e "${BLUE}==================================================${NC}"
-echo -e "🔗 URL:      http://${USER_DOMAIN}"
-echo -e "👤 Username: admin"
-echo -e "🔑 Password: ${ADMIN_PASS}"
-echo -e "${YELLOW}⚠️  IMPORTANT: Change the default password immediately after login!${NC}"
-echo -e "${BLUE}==================================================${NC}"
+configure_firewall() {
+    print_header "Step 12: Firewall rules"
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow 80/tcp >/dev/null 2>&1 || true
+        ufw allow 443/tcp >/dev/null 2>&1 || true
+        ufw allow 22/tcp >/dev/null 2>&1 || true
+        print_success "UFW rules applied (ensure ufw is enabled if desired)"
+    else
+        print_warning "UFW not installed, skipping firewall config"
+    fi
+}
+
+print_summary() {
+    print_header "Installation Complete"
+    echo -e "${GREEN}Dashboard URL:${NC} http://${DOMAIN}"
+    echo -e "${GREEN}Admin Username:${NC} admin"
+    echo -e "${GREEN}Admin Password:${NC} ${ADMIN_PASS}"
+    echo -e "${YELLOW}Change the admin password after first login!${NC}"
+    echo ""
+    echo "Service commands:"
+    echo "  systemctl restart ${SERVICE_NAME}"
+    echo "  journalctl -u ${SERVICE_NAME} -f"
+    echo "Logs: ${LOG_DIR}/gunicorn.log"
+}
+
+# -------------------------- Main ---------------------------
+main() {
+    clear
+    print_header "Eve X-UI Manager | Quick Installer"
+    require_root
+    ask_domain
+    detect_os
+    update_system
+    install_dependencies
+    ensure_python_pkg
+    create_app_user
+    prepare_directories
+    setup_database
+    clone_or_update_repo
+    setup_python_env
+    create_env_file
+    initialize_database
+    create_systemd_service
+    configure_nginx
+    configure_firewall
+    print_summary
+}
+
+main "$@"
