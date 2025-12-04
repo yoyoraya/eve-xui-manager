@@ -508,7 +508,7 @@ def generate_client_link(client, inbound, server_host):
     
     return None
 
-def process_inbounds(inbounds, server):
+def process_inbounds(inbounds, server, user=None):
     processed = []
     total_upload = 0
     total_download = 0
@@ -516,6 +516,12 @@ def process_inbounds(inbounds, server):
     active_clients = 0
     inactive_clients = 0
     active_inbounds = 0
+    
+    # Get owned client emails if user is reseller
+    owned_emails = []
+    if user and user.role == 'reseller':
+        ownerships = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server.id).all()
+        owned_emails = [o.client_email for o in ownerships]
     
     for inbound in inbounds:
         try:
@@ -526,6 +532,11 @@ def process_inbounds(inbounds, server):
             
             processed_clients = []
             for client in clients:
+                email = client.get('email', '')
+                
+                # FILTERING: If reseller, skip clients they don't own
+                if user and user.role == 'reseller' and email not in owned_emails:
+                    continue
                 link = generate_client_link(client, inbound, server.host)
                 
                 # Generate subscription links with proper port handling
@@ -733,13 +744,25 @@ def logout():
 @app.route('/')
 @login_required
 def dashboard():
-    servers = Server.query.filter_by(enabled=True).all()
+    user = Admin.query.get(session['admin_id'])
+    
+    # Permission: Which servers can this user see?
+    if user.role == 'reseller':
+        allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers else []
+        if allowed_ids == '*':
+            servers = Server.query.filter_by(enabled=True).all()
+        else:
+            servers = Server.query.filter(Server.id.in_(allowed_ids), Server.enabled == True).all() if allowed_ids else []
+    else:
+        servers = Server.query.filter_by(enabled=True).all()
+        
     return render_template('dashboard.html', 
                          servers=servers, 
                          server_count=len(servers),
-                         admin_username=session.get('admin_username'),
-                         is_superadmin=session.get('is_superadmin', False),
-                         role=session.get('role', 'admin'))
+                         admin_username=user.username,
+                         is_superadmin=(user.role == 'superadmin'),
+                         role=user.role,
+                         credit=user.credit)
 
 @app.route('/servers')
 @login_required
@@ -834,6 +857,38 @@ def delete_admin(admin_id):
     db.session.delete(admin)
     db.session.commit()
     return jsonify({"success": True})
+
+@app.route('/api/assign-client', methods=['POST'])
+@superadmin_required
+def assign_client():
+    data = request.json
+    server_id = data.get('server_id')
+    email = data.get('email')
+    reseller_id = data.get('reseller_id')
+    inbound_id = data.get('inbound_id', 0)
+    
+    if not server_id or not email or not reseller_id:
+        return jsonify({"success": False, "error": "Missing fields: server_id, email, reseller_id"})
+    
+    # Check if assignment already exists
+    exists = ClientOwnership.query.filter_by(server_id=server_id, client_email=email).first()
+    if exists:
+        exists.reseller_id = reseller_id
+    else:
+        new_own = ClientOwnership(
+            reseller_id=reseller_id,
+            server_id=server_id,
+            client_email=email,
+            inbound_id=inbound_id
+        )
+        db.session.add(new_own)
+    
+    try:
+        db.session.commit()
+        return jsonify({"success": True, "message": "Client assigned to reseller"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/servers', methods=['GET'])
 @login_required
@@ -939,7 +994,17 @@ def test_server(server_id):
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
-    servers = Server.query.filter_by(enabled=True).all()
+    user = Admin.query.get(session['admin_id'])
+    
+    # Filter servers for reseller
+    if user.role == 'reseller':
+        allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers else []
+        if allowed_ids == '*':
+            servers = Server.query.filter_by(enabled=True).all()
+        else:
+            servers = Server.query.filter(Server.id.in_(allowed_ids), Server.enabled == True).all() if allowed_ids else []
+    else:
+        servers = Server.query.filter_by(enabled=True).all()
     
     all_inbounds = []
     total_stats = {
@@ -982,7 +1047,7 @@ def api_refresh():
             })
             continue
         
-        processed_inbounds, stats = process_inbounds(inbounds, server)
+        processed_inbounds, stats = process_inbounds(inbounds, server, user)
         all_inbounds.extend(processed_inbounds)
         
         total_stats["total_inbounds"] += stats["total_inbounds"]

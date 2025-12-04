@@ -147,18 +147,30 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 - `GET /logout` - Logout
 
 ### Pages
-- `GET /` - Dashboard
+- `GET /` - Dashboard (role-aware, shows filtered servers and clients)
 - `GET /servers` - Server management
-- `GET /admins` - Admin management
+- `GET /admins` - Admin management (superadmin only)
 
-### API
-- `GET /api/admins` - List admins
-- `POST /api/admins` - Add admin
-- `PUT /api/admins/<id>` - Update admin
-- `DELETE /api/admins/<id>` - Delete admin
-- `GET/POST/PUT/DELETE /api/servers` - Server CRUD
-- `POST /api/servers/<id>/test` - Test connection
-- `GET /api/refresh` - Refresh all data
+### Admin Management API
+- `GET /api/admins` - List all admins (superadmin only)
+- `POST /api/admins` - Add admin (superadmin only) - supports role, credit, allowed_servers
+- `PUT /api/admins/<id>` - Update admin (superadmin only) - can update role, credit, allowed_servers
+- `DELETE /api/admins/<id>` - Delete admin (superadmin only)
+
+### Server Management API
+- `GET /api/servers` - List servers (all users)
+- `POST /api/servers` - Add server (all users)
+- `PUT /api/servers/<id>` - Update server (all users)
+- `DELETE /api/servers/<id>` - Delete server (all users)
+- `POST /api/servers/<id>/test` - Test server connection
+
+### Reseller Client Assignment API (NEW)
+- `POST /api/assign-client` - Assign existing client to reseller (superadmin only)
+  - **Parameters**: `server_id`, `email`, `reseller_id`, `inbound_id` (optional)
+  - Assigns an X-UI client to a reseller for tracking and management
+
+### Data & Client Management API
+- `GET /api/refresh` - Refresh all data (role-aware filtering applied)
 - `POST /api/client/<server_id>/<inbound_id>/<email>/toggle` - Toggle client
 - `POST /api/client/<server_id>/<inbound_id>/<email>/reset` - Reset traffic
 - `POST /api/client/<server_id>/<inbound_id>/<email>/renew` - Renew client
@@ -184,7 +196,22 @@ A professional web-based monitoring dashboard for multiple X-UI VPN panels with 
 
 ## Recent Changes (December 2025)
 
-- **December 01 (Latest)**: Subscription Page with User-Agent Detection
+- **December 04 (Latest)**: Reseller System Phase 2 - Filtering & Client Assignment
+  - Smart filtering: Resellers only see clients they own via `ClientOwnership` table
+  - Server access control: Resellers only see allowed servers (via `allowed_servers` JSON)
+  - Dashboard displays reseller credit balance
+  - New API endpoint `/api/assign-client` (superadmin only) to assign existing clients to resellers
+  - `process_inbounds()` accepts optional `user` parameter for role-based filtering
+  - `api_refresh()` now filters servers and passes user context for filtering
+  - Base foundation ready for credit deduction and client creation workflow
+
+- **December 04**: Reseller System Phase 1 - Database Schema
+  - Updated `Admin` model with 3 new fields: `role`, `credit`, `allowed_servers`
+  - New `ClientOwnership` table to track client ownership by reseller
+  - Backward compatible with existing admins (legacy `is_superadmin` flag preserved)
+  - PostgreSQL migration: added columns and new table
+
+- **December 01 (Previous)**: Subscription Page with User-Agent Detection
   - New route `/s/<server_id>/<sub_id>` for subscription sharing
   - Beautiful HTML page for browsers showing client data, usage stats, expiry info
   - Base64 encoded configs for VPN apps (v2ray, xray, Streisand, NekoBox)
@@ -252,10 +279,33 @@ curl -fsSL https://raw.githubusercontent.com/yoyoraya/eve-xui-manager/main/INSTA
 
 For detailed instructions, see **`INSTALL.md`** in the repository root.
 
+## Reseller System Architecture
+
+### Role System
+- **superadmin**: Full access to all servers and all clients. Can manage admins and resellers.
+- **admin**: Can manage servers and see all clients (no credit system).
+- **reseller**: Limited access. Only sees assigned servers and owns clients via `ClientOwnership` table. Has credit limit.
+
+### Access Control Flow
+1. **Dashboard**: Filters servers based on `allowed_servers` JSON
+   - `"*"` = access all servers
+   - `[1, 2, 3]` = access only servers with those IDs
+2. **API Refresh**: Filters inbounds/clients based on `ClientOwnership` entries
+   - Resellers: Only see clients where `ClientOwnership.reseller_id = their_id`
+   - Admins/SuperAdmins: See all clients
+3. **Client Assignment**: Superadmin assigns existing X-UI clients to resellers via `/api/assign-client`
+
+### Next Steps for Complete Implementation
+1. **Credit Deduction**: Modify `add_client()` to deduct from `reseller.credit` on client creation
+2. **Credit Top-up UI**: Create superadmin page to view/modify reseller credits
+3. **Client Creation Restrictions**: Prevent resellers from creating clients on non-allowed servers
+4. **Usage Tracking**: Track client usage and generate billing reports per reseller
+
 ## User Preferences
 - Dark theme
 - English-only interface (LTR)
 - Clean, modern design
 - Professional authentication
 - Enterprise security
+- Reseller system for multi-level management
 
