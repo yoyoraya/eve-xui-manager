@@ -91,3 +91,33 @@ The system features a professional login page, responsive sidebar navigation, a 
 ✅ Session management active
 
 **Production Status: READY TO DEPLOY** 🚀
+
+---
+
+## PHASE 1 - BILLING & ACCOUNTING SYSTEM ✅
+
+**December 04, 2025 - Infrastructure Complete**
+
+### Database Models Added:
+- **Package**: Predefined packages (days, volume, price)
+- **SystemConfig**: Base pricing configuration (cost_per_gb, cost_per_day)
+- **Transaction**: Complete transaction ledger for wallet tracking
+- **Admin.transactions**: Relationship to track all user transactions
+
+### API Endpoints Added:
+1. **GET /api/packages** - List enabled packages (for user selection)
+2. **POST /admin/packages** - Create new package (superadmin only)
+3. **POST /admin/config** - Update system pricing configuration (superadmin only)
+4. **POST /admin/charge** - Manually add credit to user (superadmin only)
+5. **GET /api/transactions** - Get transaction history (role-filtered)
+
+### Default Configuration Seeded:
+- `cost_per_gb`: 2000 تومان
+- `cost_per_day`: 500 تومان
+
+### System Status:
+🟢 Phase 1 complete - All 4 models created, 5 APIs implemented
+🔒 Role-based access control on all new endpoints
+📊 Transaction ledger ready for financial tracking
+
+**Next Phase**: Add billing logic to add_client endpoint

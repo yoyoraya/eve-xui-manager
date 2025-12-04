@@ -1,0 +1,63 @@
+بسیار عالی. برای اینکه هوش مصنوعی Replit گیج نشود (یا نترسد\!)، تغییرات فاز ۱ (زیرساخت دیتابیس) را به **دو مرحله کوچک‌تر** تقسیم می‌کنیم.
+
+این دستورات را به ترتیب و جداگانه برایش بفرستید:
+
+### 🟢 مرحله ۱ از فاز ۱: اضافه کردن مدل‌های دیتابیس
+
+این متن را به Replit بدهید تا فقط کلاس‌های دیتابیس را در `app.py` آپدیت کند:
+
+```text
+I need to update the database models in `app.py` to support a billing system. Please apply these specific changes:
+
+1. Update the `Admin` class:
+   - Add a new column: `credit = db.Column(db.Integer, default=0)`
+   - Add a relationship: `transactions = db.relationship('Transaction', backref='admin', lazy=True)`
+
+2. Add a new model `class Package(db.Model)`:
+   - Columns: id (Integer, PK), name (String), days (Integer), volume (Integer), price (Integer), enabled (Boolean, default=True).
+   - Add a `to_dict` method.
+
+3. Add a new model `class SystemConfig(db.Model)`:
+   - Columns: key (String, PK), value (String).
+
+4. Add a new model `class Transaction(db.Model)`:
+   - Columns: id (Integer, PK), admin_id (ForeignKey to admins.id), amount (Integer), type (String), description (String), created_at (DateTime).
+   - Add a `to_dict` method.
+
+5. Update the `with app.app_context():` block:
+   - Seed default SystemConfig values if they don't exist: key='cost_per_gb' value='2000', key='cost_per_day' value='500'.
+```
+
+-----
+
+### 🟢 مرحله ۲ از فاز ۱: اضافه کردن روت‌های مدیریتی ساده
+
+بعد از اینکه مرحله قبل تمام شد، این دستور را بدهید تا APIهای مدیریت این جدول‌ها را اضافه کند:
+
+```text
+Now, please add these administration routes to `app.py` to manage the new models:
+
+1. `GET /api/packages`: Return all enabled packages as JSON.
+2. `POST /admin/packages` (use @superadmin_required): Create a new package from JSON data.
+3. `POST /admin/config` (use @superadmin_required): Update SystemConfig values from JSON data.
+4. `POST /admin/charge` (use @superadmin_required):
+   - Take `admin_id`, `amount`, and `description`.
+   - Update the Admin's `credit` (add the amount).
+   - Create a new `Transaction` record (type='deposit').
+   - Commit changes.
+5. `GET /api/transactions` (use @login_required):
+   - If user is reseller: return only their transactions.
+   - If user is superadmin: return all transactions (allow filtering by `user_id` query param).
+```
+
+-----
+
+### ⚠️ کار بسیار مهم بعد از انجام این دو مرحله:
+
+چون ساختار دیتابیس عوض شده، حتماً باید دیتابیس قدیمی را پاک کنید تا دیتابیس جدید با ستون‌های جدید ساخته شود.
+در پنل Shell دستور زیر را بزنید:
+`rm instance/servers.db` (یا `rm servers.db`)
+
+سپس دکمه **Stop** و **Run** را بزنید. اگر برنامه بدون ارور بالا آمد، یعنی فاز ۱ با موفقیت انجام شده است.
+
+بعد از اینکه این کار تمام شد، بگو تا متن‌های **فاز ۲** (لاجیک خرید) را آماده کنم.

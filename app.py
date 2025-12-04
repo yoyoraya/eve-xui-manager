@@ -55,6 +55,8 @@ class Admin(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
     
+    transactions = db.relationship('Transaction', backref='admin', lazy=True)
+    
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
     
@@ -131,6 +133,48 @@ class SubAppConfig(db.Model):
             'tutorial_link': self.tutorial_link
         }
 
+class Package(db.Model):
+    __tablename__ = 'packages'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    days = db.Column(db.Integer, nullable=False)
+    volume = db.Column(db.Integer, nullable=False)
+    price = db.Column(db.Integer, nullable=False)
+    enabled = db.Column(db.Boolean, default=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'days': self.days,
+            'volume': self.volume,
+            'price': self.price,
+            'enabled': self.enabled
+        }
+
+class SystemConfig(db.Model):
+    __tablename__ = 'system_configs'
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.String(200))
+
+class Transaction(db.Model):
+    __tablename__ = 'transactions'
+    id = db.Column(db.Integer, primary_key=True)
+    admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=False)
+    amount = db.Column(db.Integer, nullable=False)
+    type = db.Column(db.String(20))
+    description = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'amount': self.amount,
+            'type': self.type,
+            'description': self.description,
+            'date': self.created_at.isoformat() if self.created_at else None
+        }
+
 class ClientOwnership(db.Model):
     __tablename__ = 'client_ownerships'
     id = db.Column(db.Integer, primary_key=True)
@@ -166,6 +210,12 @@ with app.app_context():
                 SubAppConfig(app_code='streisand', name='Streisand (iOS)', title_fa='راهنمای Streisand', description_fa='پیشنهاد برای آیفون.', title_en='Streisand Guide', description_en='Recommended for iOS.', store_link='https://apps.apple.com/us/app/streisand/id6450534064')
             ]
             db.session.add_all(apps_list)
+        
+        if not SystemConfig.query.filter_by(key='cost_per_gb').first():
+            db.session.add(SystemConfig(key='cost_per_gb', value='2000'))
+        if not SystemConfig.query.filter_by(key='cost_per_day').first():
+            db.session.add(SystemConfig(key='cost_per_day', value='500'))
+        
         db.session.commit()
 
 # --- HELPERS ---
@@ -700,6 +750,77 @@ def client_qrcode():
         return jsonify({"success": True, "qrcode": f"data:image/png;base64,{qr_base64}"})
     except:
         return jsonify({"success": False}), 400
+
+@app.route('/api/packages', methods=['GET'])
+@login_required
+def get_packages():
+    packages = Package.query.filter_by(enabled=True).all()
+    return jsonify([p.to_dict() for p in packages])
+
+@app.route('/admin/packages', methods=['POST'])
+@superadmin_required
+def create_package():
+    data = request.json
+    package = Package(
+        name=data.get('name'),
+        days=int(data.get('days')),
+        volume=int(data.get('volume')),
+        price=int(data.get('price')),
+        enabled=data.get('enabled', True)
+    )
+    db.session.add(package)
+    db.session.commit()
+    return jsonify({"success": True, "id": package.id})
+
+@app.route('/admin/config', methods=['POST'])
+@superadmin_required
+def update_config():
+    data = request.json
+    for key, value in data.items():
+        config = SystemConfig.query.get(key)
+        if config:
+            config.value = str(value)
+        else:
+            db.session.add(SystemConfig(key=key, value=str(value)))
+    db.session.commit()
+    return jsonify({"success": True})
+
+@app.route('/admin/charge', methods=['POST'])
+@superadmin_required
+def charge_admin():
+    data = request.json
+    admin_id = int(data.get('admin_id'))
+    amount = int(data.get('amount'))
+    description = data.get('description', 'Manual charge')
+    
+    admin = Admin.query.get_or_404(admin_id)
+    admin.credit += amount
+    
+    transaction = Transaction(
+        admin_id=admin_id,
+        amount=amount,
+        type='deposit',
+        description=description
+    )
+    db.session.add(transaction)
+    db.session.commit()
+    return jsonify({"success": True, "new_credit": admin.credit})
+
+@app.route('/api/transactions', methods=['GET'])
+@login_required
+def get_transactions():
+    user = Admin.query.get(session['admin_id'])
+    
+    if user.role == 'reseller':
+        transactions = Transaction.query.filter_by(admin_id=user.id).all()
+    else:
+        user_id = request.args.get('user_id')
+        if user_id:
+            transactions = Transaction.query.filter_by(admin_id=int(user_id)).all()
+        else:
+            transactions = Transaction.query.all()
+    
+    return jsonify([t.to_dict() for t in transactions])
 
 @app.route('/sub-manager')
 @superadmin_required
