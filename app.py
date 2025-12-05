@@ -423,14 +423,56 @@ def parse_allowed_servers(raw_value):
         return []
     if isinstance(raw_value, list):
         return raw_value
-    normalized = raw_value.strip()
+    normalized = str(raw_value).strip()
     if normalized == '*':
         return '*'
+    if normalized.startswith('"') and normalized.endswith('"'):
+        inner = normalized.strip('"')
+        if inner == '*':
+            return '*'
     try:
         parsed = json.loads(normalized)
+        if isinstance(parsed, str) and parsed.strip() == '*':
+            return '*'
         return parsed if isinstance(parsed, list) else parsed
     except Exception:
         return []
+
+def serialize_allowed_servers(value):
+    if value == '*' or (isinstance(value, str) and value.strip() == '*'):
+        return '*'
+    if isinstance(value, list):
+        cleaned = []
+        for item in value:
+            try:
+                cleaned.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return json.dumps(cleaned)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return serialize_allowed_servers(parsed)
+            if isinstance(parsed, str) and parsed.strip() == '*':
+                return '*'
+        except Exception:
+            pass
+    return json.dumps([])
+
+def resolve_allowed_servers(raw_value):
+    parsed = parse_allowed_servers(raw_value)
+    if parsed == '*':
+        return '*'
+    if isinstance(parsed, list):
+        cleaned = []
+        for item in parsed:
+            try:
+                cleaned.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return cleaned
+    return []
 
 def format_bytes(size):
     if size is None or size == 0: return "0 B"
@@ -472,12 +514,9 @@ def get_accessible_servers(user, include_disabled=False):
     if not include_disabled:
         query = query.filter_by(enabled=True)
     if user.role == 'reseller':
-        if user.allowed_servers == '*':
+        allowed_ids = resolve_allowed_servers(user.allowed_servers)
+        if allowed_ids == '*':
             return query.all()
-        try:
-            allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers else []
-        except Exception:
-            allowed_ids = []
         if not allowed_ids:
             return []
         return query.filter(Server.id.in_(allowed_ids)).all()
@@ -704,15 +743,7 @@ def logout():
 @login_required
 def dashboard():
     user = db.session.get(Admin, session['admin_id'])
-    
-    if user.role == 'reseller':
-        allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
-        if user.allowed_servers == '*':
-            servers = Server.query.filter_by(enabled=True).all()
-        else:
-            servers = Server.query.filter(Server.id.in_(allowed_ids), Server.enabled == True).all() if allowed_ids else []
-    else:
-        servers = Server.query.filter_by(enabled=True).all()
+    servers = get_accessible_servers(user)
     
     base_cost_day = get_config('cost_per_day', 0)
     base_cost_gb = get_config('cost_per_gb', 0)
@@ -749,15 +780,7 @@ def admins_page():
 @login_required
 def api_refresh():
     user = db.session.get(Admin, session['admin_id'])
-    
-    if user.role == 'reseller':
-        allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
-        if user.allowed_servers == '*':
-            servers = Server.query.filter_by(enabled=True).all()
-        else:
-            servers = Server.query.filter(Server.id.in_(allowed_ids), Server.enabled == True).all() if allowed_ids else []
-    else:
-        servers = Server.query.filter_by(enabled=True).all()
+    servers = get_accessible_servers(user)
     
     all_inbounds = []
     total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
@@ -880,6 +903,8 @@ def toggle_client(server_id, inbound_id):
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
         if not ownership:
             return jsonify({"success": False, "error": "Access denied"}), 403
+        if price > user.credit:
+            return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
     
     session_obj, error = get_xui_session(server)
     if error: return jsonify({"success": False, "error": error}), 400
@@ -929,7 +954,14 @@ def toggle_client(server_id, inbound_id):
                         continue
                 except ValueError:
                     pass
-                return jsonify({"success": True})
+                if user.role == 'reseller' and price > 0:
+                    user.credit -= price
+                    log_transaction(user.id, -price, 'renew', description or f"Renew client {email}")
+                    db.session.commit()
+                response = {"success": True}
+                if user.role == 'reseller':
+                    response["remaining_credit"] = user.credit
+                return jsonify(response)
 
             errors.append(f"{template}: {resp.status_code}")
             if resp.status_code != 404:
@@ -951,16 +983,30 @@ def reset_client_traffic(server_id, inbound_id):
     
     try:
         data = request.get_json() or {}
-        email = data.get('email')
-        if not email:
-            return jsonify({"success": False, "error": "Email required"}), 400
     except:
         return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    email = data.get('email')
+    if not email:
+        return jsonify({"success": False, "error": "Email required"}), 400
+    try:
+        volume_gb = int(data.get('volume_gb', 0) or 0)
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "error": "Invalid volume value"}), 400
+    if volume_gb < 0:
+        volume_gb = 0
     
+    cost_per_gb = get_config('cost_per_gb', 0)
+    charge_amount = volume_gb * cost_per_gb if volume_gb > 0 else 0
+
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
         if not ownership:
             return jsonify({"success": False, "error": "Access denied"}), 403
+        if cost_per_gb > 0 and volume_gb <= 0:
+            return jsonify({"success": False, "error": "Billable volume required"}), 400
+        if charge_amount > user.credit:
+            return jsonify({"success": False, "error": f"Insufficient credit. Required: {charge_amount}, Available: {user.credit}"}), 402
     
     session_obj, error = get_xui_session(server)
     if error: return jsonify({"success": False, "error": error}), 400
@@ -997,7 +1043,14 @@ def reset_client_traffic(server_id, inbound_id):
                         continue
                 except ValueError:
                     pass
-                return jsonify({"success": True})
+                if user.role == 'reseller' and charge_amount > 0:
+                    user.credit -= charge_amount
+                    log_transaction(user.id, -charge_amount, 'reset_traffic', f"Reset traffic {volume_gb}GB - {email}")
+                    db.session.commit()
+                response = {"success": True}
+                if user.role == 'reseller':
+                    response["remaining_credit"] = user.credit
+                return jsonify(response)
 
             errors.append(f"{template}: {resp.status_code}")
             if resp.status_code != 404:
@@ -1021,13 +1074,43 @@ def renew_client(server_id, inbound_id, email):
     
     try:
         data = request.get_json() or {}
-        days = int(data.get('days', 0))
-        volume = int(data.get('volume', 0))
-        start_after_first_use = data.get('start_after_first_use', False)
-        
-        if days <= 0:
-            return jsonify({"success": False, "error": "Days must be positive"}), 400
     except:
+        return jsonify({"success": False, "error": "Invalid data"}), 400
+
+    start_after_first_use = bool(data.get('start_after_first_use', False))
+    mode = (data.get('mode') or 'custom').lower()
+    if mode not in ('package', 'custom'):
+        mode = 'custom'
+
+    price = 0
+    days_to_add = 0
+    volume_gb_to_add = 0
+    description = ""
+
+    try:
+        if mode == 'package':
+            pkg_id = data.get('package_id')
+            package = db.session.get(Package, pkg_id) if pkg_id else None
+            if not package or not getattr(package, 'enabled', True):
+                return jsonify({"success": False, "error": "Invalid package selected"}), 400
+            days_to_add = int(package.days or 0)
+            volume_gb_to_add = int(package.volume or 0)
+            price = int(package.price or 0)
+            description = f"Renew Package: {package.name} - {email}"
+            if days_to_add <= 0:
+                return jsonify({"success": False, "error": "Package is misconfigured"}), 400
+        else:
+            days_to_add = int(data.get('days', 0))
+            volume_gb_to_add = int(data.get('volume', 0))
+            if volume_gb_to_add < 0:
+                volume_gb_to_add = 0
+            if days_to_add <= 0:
+                return jsonify({"success": False, "error": "Days must be positive"}), 400
+            cost_per_day = get_config('cost_per_day', 0)
+            cost_per_gb = get_config('cost_per_gb', 0)
+            price = (days_to_add * cost_per_day) + (volume_gb_to_add * cost_per_gb)
+            description = f"Renew Custom: {days_to_add} Days, {volume_gb_to_add} GB - {email}"
+    except (ValueError, TypeError):
         return jsonify({"success": False, "error": "Invalid data"}), 400
     
     if user.role == 'reseller':
@@ -1049,19 +1132,19 @@ def renew_client(server_id, inbound_id, email):
         
         # Calculate new expiry
         if start_after_first_use:
-            new_expiry = -1 * (days * 86400000)
+            new_expiry = -1 * (days_to_add * 86400000)
         else:
             current_expiry = target_client.get('expiryTime', 0)
             if current_expiry > 0:
                 current_date = datetime.fromtimestamp(current_expiry / 1000)
-                new_date = current_date + timedelta(days=days)
+                new_date = current_date + timedelta(days=days_to_add)
             else:
-                new_date = datetime.now() + timedelta(days=days)
+                new_date = datetime.now() + timedelta(days=days_to_add)
             new_expiry = int(new_date.timestamp() * 1000)
         
         # Update volume
         current_volume = target_client.get('totalGB', 0)
-        new_volume = current_volume + (volume * 1024 * 1024 * 1024) if volume > 0 else current_volume
+        new_volume = current_volume + (volume_gb_to_add * 1024 * 1024 * 1024) if volume_gb_to_add > 0 else current_volume
         
         # Update client
         target_client['expiryTime'] = new_expiry
@@ -1132,7 +1215,7 @@ def add_admin():
         role=data.get('role', 'reseller'),
         is_superadmin=(data.get('role') == 'superadmin'),
         credit=int(data.get('credit', 0)),
-        allowed_servers=json.dumps(data.get('allowed_servers', [])),
+        allowed_servers=serialize_allowed_servers(data.get('allowed_servers', [])),
         enabled=data.get('enabled', True)
     )
     new_admin.set_password(data['password'])
@@ -1150,7 +1233,7 @@ def update_admin(admin_id):
         admin.role = data['role']
         admin.is_superadmin = (data['role'] == 'superadmin')
     if 'credit' in data: admin.credit = int(data['credit'])
-    if 'allowed_servers' in data: admin.allowed_servers = json.dumps(data['allowed_servers'])
+    if 'allowed_servers' in data: admin.allowed_servers = serialize_allowed_servers(data['allowed_servers'])
     if 'enabled' in data: admin.enabled = data['enabled']
     db.session.commit()
     return jsonify({"success": True})
@@ -1170,11 +1253,7 @@ def delete_admin(admin_id):
 def get_servers():
     user = db.session.get(Admin, session['admin_id'])
     if user.role == 'reseller':
-        allowed_ids = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
-        if user.allowed_servers == '*':
-            servers = Server.query.filter_by(enabled=True).all()
-        else:
-            servers = Server.query.filter(Server.id.in_(allowed_ids), Server.enabled == True).all() if allowed_ids else []
+        servers = get_accessible_servers(user)
     else:
         servers = Server.query.all()
     return jsonify([s.to_dict() for s in servers])
@@ -1344,8 +1423,8 @@ def add_client(server_id, inbound_id):
         description = f"Custom Plan: {days} Days, {volume_gb} GB - {email}"
 
     if user.role == 'reseller':
-        allowed = json.loads(user.allowed_servers) if user.allowed_servers and user.allowed_servers != '*' else []
-        if user.allowed_servers != '*' and server_id not in allowed:
+        allowed = resolve_allowed_servers(user.allowed_servers)
+        if allowed != '*' and server_id not in allowed:
             return jsonify({"success": False, "error": "Access to this server is denied"}), 403
         
         if user.credit < price:

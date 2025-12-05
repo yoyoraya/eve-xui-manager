@@ -1270,6 +1270,29 @@ input:checked + .slider:before {
     color: var(--primary);
 }
 
+.reset-summary {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin: -10px 0 15px 0;
+}
+
+.reset-cost-box {
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    background: rgba(34, 197, 94, 0.1);
+    color: #4ade80;
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.reset-cost-box strong {
+    font-size: 1.1rem;
+    margin-right: 6px;
+}
+
 .admins-section {
     padding: 0;
 }
@@ -1284,11 +1307,15 @@ input:checked + .slider:before {
     background: var(--bg-card);
     border-radius: 12px;
     padding: 20px;
+    border: 1px solid var(--border-color);
+    transition: all 0.2s;
+    position: relative;
+}
+
+.admin-card-main {
     display: flex;
     align-items: flex-start;
     gap: 16px;
-    border: 1px solid var(--border-color);
-    transition: all 0.2s;
 }
 
 .admin-card:hover {
@@ -1313,6 +1340,7 @@ input:checked + .slider:before {
 
 .admin-info {
     flex: 1;
+    padding-right: 60px;
 }
 
 .admin-info h3 {
@@ -1361,9 +1389,11 @@ input:checked + .slider:before {
     border-radius: 10px;
     border: 1px solid rgba(74, 222, 128, 0.25);
     background: rgba(34, 197, 94, 0.1);
-    width: 100%;
+    width: auto;
     max-width: 100%;
     color: #4ade80;
+    white-space: nowrap;
+    align-self: flex-start;
 }
 
 .admin-credit-badge .wallet-icon {
@@ -1371,9 +1401,6 @@ input:checked + .slider:before {
 }
 
 .admin-credit-amount {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
     font-weight: 600;
     font-size: 0.95rem;
     font-variant-numeric: tabular-nums;
@@ -1382,6 +1409,7 @@ input:checked + .slider:before {
 
 .admin-credit-amount span {
     color: #4ade80;
+    white-space: nowrap;
 }
 
 .admin-credit-amount small {
@@ -1398,6 +1426,29 @@ input:checked + .slider:before {
 .admin-actions {
     display: flex;
     gap: 6px;
+    position: absolute;
+    top: 16px;
+    right: 16px;
+}
+
+@media (max-width: 640px) {
+    .admin-card {
+        padding: 16px;
+    }
+
+    .admin-card-main {
+        flex-direction: column;
+    }
+
+    .admin-info {
+        padding-right: 0;
+    }
+
+    .admin-actions {
+        position: static;
+        justify-content: flex-end;
+        margin-top: 12px;
+    }
 }
 
 .servers-section {

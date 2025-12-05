@@ -5,12 +5,6 @@
 
 {% block header_actions %}
 <div class="header-controls">
-    {% if role == 'reseller' %}
-    <div class="credit-badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; padding: 8px 15px; border-radius: 12px; font-weight: bold; border: 1px solid rgba(34, 197, 94, 0.3);">
-        💰 Credit: {{ credit }}
-    </div>
-    {% endif %}
-
     <label class="toggle-switch" title="Auto Refresh">
         <input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh()">
         <span class="slider"></span>
@@ -242,7 +236,7 @@
 </div>
 
 <div class="modal-overlay hidden" id="renew-modal">
-    <div class="modal modal-sm">
+    <div class="modal modal-md">
         <div class="modal-header">
             <h2>Renew Client</h2>
             <button class="modal-close" onclick="closeRenewModal()">&times;</button>
@@ -253,15 +247,33 @@
             <input type="hidden" id="renew-email">
             
             <p class="renew-info">Renew Client: <strong id="renew-client-email"></strong></p>
-            
+
             <div class="form-group">
-                <label>Days</label>
-                <input type="number" id="renew-days" value="30" min="1" max="365" class="form-input">
+                <label>Packages (Optional)</label>
+                <div id="renew-packages-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-height: 200px; overflow-y: auto;">
+                    <div style="padding: 20px; text-align: center; color: var(--text-secondary);">Loading packages...</div>
+                </div>
+                <small style="color: var(--text-secondary); display: block; margin-top: 6px;">Click again to unselect a package. No selection = custom pricing.</small>
             </div>
-            
-            <div class="form-group">
-                <label>Volume (GB) (0 = Unlimited)</label>
-                <input type="number" id="renew-volume" value="0" min="0" max="10000" class="form-input">
+
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <div class="form-group" style="flex:1">
+                    <label>Duration (Days)</label>
+                    <input type="number" id="renew-custom-days" class="form-input" value="30" min="1" max="365" oninput="calculateRenewCustomPrice()">
+                </div>
+                <div class="form-group" style="flex:1">
+                    <label>Volume (GB)</label>
+                    <input type="number" id="renew-custom-volume" class="form-input" value="10" min="0" max="10000" oninput="calculateRenewCustomPrice()">
+                </div>
+            </div>
+
+            <div class="reset-cost-box" style="margin: 10px 0 15px;">
+                <span>Renewal Cost</span>
+                <div>
+                    <strong id="renew-price-display">0</strong>
+                    <span class="wallet-currency">T</span>
+                </div>
+                <small style="color: var(--text-secondary); display: block; margin-top: 6px;">Packages override the custom price. Without a package the amount is based on days & volume.</small>
             </div>
             
             <div class="form-group checkbox-group">
@@ -273,11 +285,47 @@
             
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeRenewModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitRenewal()">Renew</button>
+                <button class="btn btn-primary" onclick="submitRenewal()">Confirm</button>
             </div>
         </div>
     </div>
 </div>
+
+        <div class="modal-overlay hidden" id="reset-modal">
+            <div class="modal modal-sm">
+                <div class="modal-header">
+                    <h2>Reset Traffic</h2>
+                    <button class="modal-close" onclick="closeResetModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="reset-server-id">
+                    <input type="hidden" id="reset-inbound-id">
+                    <input type="hidden" id="reset-email">
+
+                    <p class="renew-info">User: <strong id="reset-client-email"></strong></p>
+                    <p class="reset-summary">Current plan volume: <strong id="reset-current-volume"></strong></p>
+
+                    <div class="form-group">
+                        <label>Billable Volume (GB)</label>
+                        <input type="number" id="reset-volume" class="form-input" min="1" max="10000" value="50" oninput="updateResetCost()">
+                        <small style="color: var(--text-secondary);">Adjust to charge the correct amount for this reset.</small>
+                    </div>
+
+                    <div class="reset-cost-box">
+                        <span>Wallet Deduction</span>
+                        <div>
+                            <strong id="reset-cost">0</strong>
+                            <span class="wallet-currency">T</span>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-secondary" onclick="closeResetModal()">Cancel</button>
+                        <button class="btn btn-primary" onclick="submitResetTraffic()">Confirm Reset</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
 <div class="modal-overlay hidden" id="add-client-modal">
     <div class="modal modal-md">
@@ -286,12 +334,6 @@
             <button class="modal-close" onclick="closeAddClientModal()">&times;</button>
         </div>
         <div class="modal-body">
-            
-            <div class="tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border-color);">
-                <button class="tab-btn active" onclick="switchAddMode('package')" id="btn-mode-package" style="padding: 10px; border-bottom: 2px solid var(--primary); color: white; background: none; cursor: pointer;">📦 Buy Package</button>
-                <button class="tab-btn" onclick="switchAddMode('custom')" id="btn-mode-custom" style="padding: 10px; color: var(--text-secondary); background: none; border-bottom: 2px solid transparent; cursor: pointer;">⚙️ Custom Plan</button>
-            </div>
-
             <div class="form-group">
                 <label>Username / Email</label>
                 <input type="text" id="add-client-email" class="form-input" placeholder="user1">
@@ -303,29 +345,35 @@
                 <select id="add-client-inbound-select" class="form-select"></select>
             </div>
 
-            <div id="section-package">
-                <div class="form-group">
-                    <label>Select Package</label>
-                    <div id="packages-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-height: 200px; overflow-y: auto;">
-                        <div style="padding: 20px; text-align: center; color: var(--text-secondary);">Loading packages...</div>
-                    </div>
+            <div class="form-group">
+                <label>Packages (Optional)</label>
+                <div id="packages-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-height: 200px; overflow-y: auto;">
+                    <div style="padding: 20px; text-align: center; color: var(--text-secondary);">Loading packages...</div>
                 </div>
+                <small style="color: var(--text-secondary); display: block; margin-top: 6px;">Click a package to use its pricing. Click again to remove selection.</small>
             </div>
 
-            <div id="section-custom" class="hidden">
-                <div style="display: flex; gap: 10px;">
-                    <div class="form-group" style="flex:1">
-                        <label>Duration (Days)</label>
-                        <input type="number" id="custom-days" class="form-input" value="30" oninput="calculateCustomPrice()">
-                    </div>
-                    <div class="form-group" style="flex:1">
-                        <label>Volume (GB)</label>
-                        <input type="number" id="custom-volume" class="form-input" value="10" oninput="calculateCustomPrice()">
-                    </div>
+            <div style="display: flex; gap: 10px;">
+                <div class="form-group" style="flex:1">
+                    <label>Duration (Days)</label>
+                    <input type="number" id="custom-days" class="form-input" value="30" min="1" max="365" oninput="calculateCustomPrice()">
                 </div>
-                <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 15px;">
-                    Calculated Cost: <strong id="custom-price-display" style="color: #fbbf24;">0</strong> Toman
+                <div class="form-group" style="flex:1">
+                    <label>Volume (GB)</label>
+                    <input type="number" id="custom-volume" class="form-input" value="10" min="0" max="10000" oninput="calculateCustomPrice()">
                 </div>
+            </div>
+            <div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 15px;">
+                Custom Cost Preview: <strong id="custom-price-display" style="color: #fbbf24;">0</strong> T
+            </div>
+
+            <div class="reset-cost-box" style="margin-bottom: 15px;">
+                <span>Payable Amount</span>
+                <div>
+                    <strong id="add-price-display">0</strong>
+                    <span class="wallet-currency">T</span>
+                </div>
+                <small style="color: var(--text-secondary); display: block; margin-top: 6px;">Package price takes priority. Otherwise, days × cost/day + GB × cost/GB.</small>
             </div>
             
             <div class="form-group checkbox-group">
@@ -384,8 +432,8 @@
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
-    let currentMode = 'package';
     let selectedPackageId = null;
+    let selectedRenewPackageId = null;
     const BASE_COST_DAY = {{ base_cost_day|default(0) }};
     const BASE_COST_GB = {{ base_cost_gb|default(0) }};
 
@@ -606,7 +654,7 @@
                                                             : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'}
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn warning" onclick="resetClientTraffic(${client.server_id}, ${client.inbound_id}, '${client.email}')" title="Reset Traffic">
+                                                <button class="action-btn warning" onclick="openResetModal(${client.server_id}, ${client.inbound_id}, '${client.email}', ${client.totalGB || 0})" title="Reset Traffic">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <polyline points="1 4 1 10 7 10"></polyline>
                                                         <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
@@ -642,6 +690,17 @@
         btn.innerHTML = isHidden 
             ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg> Hide Clients (${count})`
             : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${count})`;
+    }
+
+    function bytesToGB(bytes) {
+        if (!bytes || bytes <= 0) return 0;
+        return Math.max(1, Math.round(bytes / (1024 * 1024 * 1024)));
+    }
+
+    function formatVolumeLabel(bytes) {
+        if (!bytes || bytes <= 0) return 'Unlimited / Not Set';
+        const gb = bytes / (1024 * 1024 * 1024);
+        return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
     }
 
     async function showQrCode(encodedLink, email, subUrl, jsonUrl, dashSubUrl) {
@@ -774,19 +833,59 @@
         }
     }
 
-    async function resetClientTraffic(serverId, inboundId, email) {
-        if (!confirm('Are you sure you want to reset traffic?')) return;
-        
+    function openResetModal(serverId, inboundId, email, totalBytes = 0) {
+        document.getElementById('reset-server-id').value = serverId;
+        document.getElementById('reset-inbound-id').value = inboundId;
+        document.getElementById('reset-email').value = email;
+        document.getElementById('reset-client-email').textContent = email;
+        document.getElementById('reset-current-volume').textContent = formatVolumeLabel(totalBytes);
+        const defaultGb = bytesToGB(totalBytes) || 50;
+        const volInput = document.getElementById('reset-volume');
+        volInput.value = defaultGb;
+        updateResetCost();
+        document.getElementById('reset-modal').classList.remove('hidden');
+    }
+
+    function closeResetModal() {
+        document.getElementById('reset-modal').classList.add('hidden');
+    }
+
+    function updateResetCost() {
+        const volInput = document.getElementById('reset-volume');
+        if (!volInput) return;
+        let volume = parseInt(volInput.value) || 0;
+        if (volume < 0) volume = 0;
+        volInput.value = volume;
+        const cost = volume * BASE_COST_GB;
+        const costLabel = document.getElementById('reset-cost');
+        if (costLabel) costLabel.textContent = Number(cost).toLocaleString();
+    }
+
+    async function submitResetTraffic() {
+        const serverId = document.getElementById('reset-server-id').value;
+        const inboundId = document.getElementById('reset-inbound-id').value;
+        const email = document.getElementById('reset-email').value;
+        const volume = parseInt(document.getElementById('reset-volume').value) || 0;
+
+        if (USER_ROLE === 'reseller' && BASE_COST_GB > 0 && volume <= 0) {
+            showToast('Please enter billable volume (GB)', 'error');
+            return;
+        }
+
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/reset`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: email })
+                body: JSON.stringify({ email: email, volume_gb: volume })
             });
             
             const data = await response.json();
             if (data.success) {
                 showToast('Traffic reset');
+                closeResetModal();
+                if (typeof data.remaining_credit !== 'undefined') {
+                    updateWalletDisplay(data.remaining_credit);
+                }
                 refreshData();
             } else {
                 showToast(data.error || 'Error', 'error');
@@ -801,9 +900,12 @@
         document.getElementById('renew-inbound-id').value = inboundId;
         document.getElementById('renew-email').value = email;
         document.getElementById('renew-client-email').textContent = email;
-        document.getElementById('renew-days').value = 30;
-        document.getElementById('renew-volume').value = 0;
         document.getElementById('renew-start-after-first-use').checked = false;
+        document.getElementById('renew-custom-days').value = 30;
+        document.getElementById('renew-custom-volume').value = 10;
+        selectedRenewPackageId = null;
+        loadRenewPackages();
+        calculateRenewCustomPrice();
         document.getElementById('renew-modal').classList.remove('hidden');
     }
 
@@ -815,36 +917,55 @@
         const serverId = document.getElementById('renew-server-id').value;
         const inboundId = document.getElementById('renew-inbound-id').value;
         const email = document.getElementById('renew-email').value;
-        const days = parseInt(document.getElementById('renew-days').value);
-        const volume = parseInt(document.getElementById('renew-volume').value);
         const startAfterFirstUse = document.getElementById('renew-start-after-first-use').checked;
 
-        if (!days || (volume === '' && volume !== 0)) {
-            showToast('Please fill all fields', 'error');
-            return;
+        const usePackage = Boolean(selectedRenewPackageId);
+        const payload = {
+            mode: usePackage ? 'package' : 'custom',
+            start_after_first_use: startAfterFirstUse
+        };
+
+        if (usePackage) {
+            payload.package_id = selectedRenewPackageId;
+        } else {
+            const customDays = parseInt(document.getElementById('renew-custom-days').value) || 0;
+            const customVolume = parseInt(document.getElementById('renew-custom-volume').value) || 0;
+            if (customDays <= 0) {
+                showToast('Days must be greater than 0', 'error');
+                return;
+            }
+            payload.days = customDays;
+            payload.volume = customVolume;
         }
+
+        const btn = document.querySelector('#renew-modal .btn-primary');
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = 'Processing...';
 
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/${email}/renew`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    days: days, 
-                    volume: volume,
-                    start_after_first_use: startAfterFirstUse
-                })
+                body: JSON.stringify(payload)
             });
             
             const data = await response.json();
             if (data.success) {
                 showToast('Client renewed');
                 closeRenewModal();
+                if (typeof data.remaining_credit !== 'undefined') {
+                    updateWalletDisplay(data.remaining_credit);
+                }
                 refreshData();
             } else {
                 showToast(data.error || 'Error renewing', 'error');
             }
         } catch (error) {
             showToast('Error: ' + error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalText;
         }
     }
 
@@ -867,66 +988,195 @@
         document.getElementById('custom-days').value = 30;
         document.getElementById('custom-volume').value = 10;
         document.getElementById('add-client-start-after-first-use').checked = false;
-        currentMode = 'package';
-        switchAddMode('package');
+        selectedPackageId = null;
+        loadPackages();
+        calculateCustomPrice();
+        updateAddPriceDisplay();
         document.getElementById('add-client-modal').classList.remove('hidden');
-    }
-
-    function switchAddMode(mode) {
-        currentMode = mode;
-        document.getElementById('section-package').classList.toggle('hidden', mode !== 'package');
-        document.getElementById('section-custom').classList.toggle('hidden', mode !== 'custom');
-        
-        // Update Tab Styles
-        document.getElementById('btn-mode-package').style.borderBottom = mode === 'package' ? '2px solid var(--primary)' : '2px solid transparent';
-        document.getElementById('btn-mode-package').style.color = mode === 'package' ? 'white' : 'var(--text-secondary)';
-        
-        document.getElementById('btn-mode-custom').style.borderBottom = mode === 'custom' ? '2px solid var(--primary)' : '2px solid transparent';
-        document.getElementById('btn-mode-custom').style.color = mode === 'custom' ? 'white' : 'var(--text-secondary)';
-        
-        if (mode === 'package') loadPackages();
-        if (mode === 'custom') calculateCustomPrice();
     }
 
     async function loadPackages() {
         const container = document.getElementById('packages-list');
+        if (!container) return;
+        container.innerHTML = '<div style="grid-column: span 2; text-align: center; padding: 10px;">Loading packages...</div>';
         try {
             const res = await fetch('/api/packages');
             const pkgs = await res.json();
             
-            if (pkgs.length === 0) {
+            if (!Array.isArray(pkgs) || pkgs.length === 0) {
                 container.innerHTML = '<div style="grid-column: span 2; text-align: center; padding: 10px;">No packages defined</div>';
+                selectedPackageId = null;
+                updateAddPriceDisplay();
                 return;
             }
 
             container.innerHTML = pkgs.map(p => `
-                <div class="pkg-card" onclick="selectPackage(this, ${p.id})" 
+                <div class="pkg-card" data-package-id="${p.id}" data-package-price="${p.price}" onclick="selectPackage(this, ${p.id}, ${p.price})" 
                      style="border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; cursor: pointer; transition: 0.2s; background: var(--bg-dark);">
                     <div style="font-weight: bold; font-size: 0.9rem;">${p.name}</div>
                     <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 5px 0;">${p.days} Days / ${p.volume} GB</div>
                     <div style="color: #4ade80; font-weight: bold; font-size: 0.85rem;">${p.price.toLocaleString()} T</div>
                 </div>
             `).join('');
+
+            if (selectedPackageId) {
+                const active = container.querySelector(`[data-package-id="${selectedPackageId}"]`);
+                if (active) {
+                    active.style.borderColor = 'var(--primary)';
+                    active.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
+                }
+            }
+            updateAddPriceDisplay();
         } catch (e) { 
-            container.innerHTML = '<div style="grid-column: span 2; color: #ef4444; text-align: center;">Error loading packages</div>'; 
+            container.innerHTML = '<div style="grid-column: span 2; color: #ef4444; text-align: center;">Error loading packages</div>';
+            selectedPackageId = null;
+            updateAddPriceDisplay();
         }
     }
 
-    function selectPackage(el, id) {
-        document.querySelectorAll('.pkg-card').forEach(d => {
+    function selectPackage(el, id, price) {
+        const alreadySelected = selectedPackageId === id;
+        document.querySelectorAll('#packages-list .pkg-card').forEach(d => {
             d.style.borderColor = 'var(--border-color)';
             d.style.backgroundColor = 'var(--bg-dark)';
         });
+
+        if (alreadySelected) {
+            selectedPackageId = null;
+            updateAddPriceDisplay();
+            return;
+        }
+
+        selectedPackageId = id;
         el.style.borderColor = 'var(--primary)';
         el.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
-        selectedPackageId = id;
+        updateAddPriceDisplay(price);
+    }
+
+    function updateRenewPriceDisplay(amount) {
+        const target = document.getElementById('renew-price-display');
+        if (!target) return;
+        const normalized = Number(amount) || 0;
+        target.textContent = normalized.toLocaleString();
+    }
+
+    async function loadRenewPackages() {
+        const container = document.getElementById('renew-packages-list');
+        if (!container) return;
+        container.innerHTML = '<div style="grid-column: span 2; text-align: center; padding: 10px;">Loading packages...</div>';
+        try {
+            const res = await fetch('/api/packages');
+            const pkgs = await res.json();
+            if (!Array.isArray(pkgs) || pkgs.length === 0) {
+                container.innerHTML = '<div style="grid-column: span 2; text-align: center; padding: 15px; color: var(--text-secondary);">No packages defined.</div>';
+                selectedRenewPackageId = null;
+                refreshRenewPriceDisplay();
+                return;
+            }
+
+            container.innerHTML = pkgs.map(p => `
+                <div class="pkg-card" data-package-id="${p.id}" data-package-price="${p.price}" onclick="selectRenewPackage(this, ${p.id}, ${p.price})"
+                     style="border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; cursor: pointer; transition: 0.2s; background: var(--bg-dark);">
+                    <div style="font-weight: bold; font-size: 0.9rem;">${p.name}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 5px 0;">${p.days} Days / ${p.volume} GB</div>
+                    <div style="color: #4ade80; font-weight: bold; font-size: 0.85rem;">${p.price.toLocaleString()} T</div>
+                </div>
+            `).join('');
+
+            if (selectedRenewPackageId) {
+                const active = container.querySelector(`[data-package-id="${selectedRenewPackageId}"]`);
+                if (active) {
+                    active.style.borderColor = 'var(--primary)';
+                    active.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
+                }
+            }
+            refreshRenewPriceDisplay();
+        } catch (e) {
+            container.innerHTML = '<div style="grid-column: span 2; color: #ef4444; text-align: center;">Error loading packages</div>';
+            selectedRenewPackageId = null;
+            refreshRenewPriceDisplay();
+        }
+    }
+
+    function selectRenewPackage(el, id, price) {
+        const alreadySelected = selectedRenewPackageId === id;
+        document.querySelectorAll('#renew-packages-list .pkg-card').forEach(card => {
+            card.style.borderColor = 'var(--border-color)';
+            card.style.backgroundColor = 'var(--bg-dark)';
+        });
+
+        if (alreadySelected) {
+            selectedRenewPackageId = null;
+            refreshRenewPriceDisplay();
+            return;
+        }
+
+        selectedRenewPackageId = id;
+        el.style.borderColor = 'var(--primary)';
+        el.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
+        refreshRenewPriceDisplay(price);
+    }
+
+    function computeRenewCustomPrice() {
+        let days = parseInt(document.getElementById('renew-custom-days').value) || 0;
+        let vol = parseInt(document.getElementById('renew-custom-volume').value) || 0;
+        if (days < 0) days = 0;
+        if (vol < 0) vol = 0;
+        return (days * BASE_COST_DAY) + (vol * BASE_COST_GB);
+    }
+
+    function calculateRenewCustomPrice() {
+        const total = computeRenewCustomPrice();
+        refreshRenewPriceDisplay(total);
+    }
+
+    function refreshRenewPriceDisplay(prefetchedAmount) {
+        if (selectedRenewPackageId) {
+            const price = getPackagePrice('#renew-packages-list', selectedRenewPackageId);
+            updateRenewPriceDisplay(price);
+        } else if (typeof prefetchedAmount === 'number') {
+            updateRenewPriceDisplay(prefetchedAmount);
+        } else {
+            updateRenewPriceDisplay(computeRenewCustomPrice());
+        }
+    }
+
+    function computeAddCustomPrice() {
+        let days = parseInt(document.getElementById('custom-days').value) || 0;
+        let vol = parseInt(document.getElementById('custom-volume').value) || 0;
+        if (days < 0) days = 0;
+        if (vol < 0) vol = 0;
+        return (days * BASE_COST_DAY) + (vol * BASE_COST_GB);
     }
 
     function calculateCustomPrice() {
-        const days = parseInt(document.getElementById('custom-days').value) || 0;
-        const vol = parseInt(document.getElementById('custom-volume').value) || 0;
-        const total = (days * BASE_COST_DAY) + (vol * BASE_COST_GB);
-        document.getElementById('custom-price-display').innerText = total.toLocaleString();
+        const total = computeAddCustomPrice();
+        const preview = document.getElementById('custom-price-display');
+        if (preview) preview.innerText = total.toLocaleString();
+        if (!selectedPackageId) {
+            updateAddPriceDisplay(total);
+        }
+    }
+
+    function getPackagePrice(containerSelector, packageId) {
+        const el = document.querySelector(`${containerSelector} .pkg-card[data-package-id="${packageId}"]`);
+        if (!el) return 0;
+        const priceAttr = el.getAttribute('data-package-price');
+        return Number(priceAttr || 0);
+    }
+
+    function updateAddPriceDisplay(prefetchedAmount) {
+        const display = document.getElementById('add-price-display');
+        if (!display) return;
+        let total;
+        if (selectedPackageId) {
+            total = getPackagePrice('#packages-list', selectedPackageId);
+        } else if (typeof prefetchedAmount === 'number') {
+            total = prefetchedAmount;
+        } else {
+            total = computeAddCustomPrice();
+        }
+        display.textContent = (Number(total) || 0).toLocaleString();
     }
 
     function onServerSelected() {
@@ -970,18 +1220,21 @@
 
         const inboundData = JSON.parse(inboundSelect.value);
         
+        const usePackage = Boolean(selectedPackageId);
         const payload = {
             email: email,
-            mode: currentMode,
+            mode: usePackage ? 'package' : 'custom',
             start_after_first_use: startAfterFirstUse
         };
 
-        if (currentMode === 'package') {
-            if (!selectedPackageId) return showToast('Please select a package', 'error');
+        if (usePackage) {
             payload.package_id = selectedPackageId;
         } else {
-            payload.days = document.getElementById('custom-days').value;
-            payload.volume = document.getElementById('custom-volume').value;
+            const customDays = parseInt(document.getElementById('custom-days').value) || 0;
+            const customVolume = parseInt(document.getElementById('custom-volume').value) || 0;
+            if (customDays <= 0) return showToast('Duration must be greater than 0', 'error');
+            payload.days = customDays;
+            payload.volume = customVolume;
         }
 
         const btn = document.querySelector('#add-client-modal .btn-primary');
@@ -1340,7 +1593,7 @@
                                                             : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'}
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn warning" onclick="resetClientTraffic(${inbound.server_id}, '${inbound.id}', '${client.email}')" title="Reset Traffic">
+                                                <button class="action-btn warning" onclick="openResetModal(${inbound.server_id}, '${inbound.id}', '${client.email}', ${client.totalGB || 0})" title="Reset Traffic">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <polyline points="1 4 1 10 7 10"></polyline>
                                                         <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>

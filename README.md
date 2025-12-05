@@ -2,8 +2,9 @@
 
 A professional web-based monitoring dashboard for multiple X-UI VPN panels with enterprise security features, secure authentication, and comprehensive statistics. Supports unlimited X-UI servers (Sanaei 3X-UI or Alireza X-UI).
 
-## 🚀 Installation (One-Command)
 un the following command on your Ubuntu/Debian server:
+## 🚀 Installation (One-Command)
+Run the following command on your Ubuntu/Debian server:
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/yoyoraya/eve-xui-manager/main/setup.sh)
 ```
@@ -11,30 +12,37 @@ bash <(curl -Ls https://raw.githubusercontent.com/yoyoraya/eve-xui-manager/main/
 
 ### 🔐 Enterprise Security
 - **Rate Limiting**: 5 login attempts per minute (brute-force protection)
-- **Secure Cookies**: HTTPONLY and SAMESITE flags enabled
-- **Password Hashing**: PBKDF2 encryption with salt
-- **Failed Login Logging**: All attempts logged with IP addresses
-- **Environment-Based Configuration**: Secure credential management
+- **Secure Cookies**: HTTPONLY + SAMESITE flags on every session
+- **Password Hashing**: PBKDF2 with per-user salt
+- **Failed Login Logging**: Every attempt is stored with IP metadata
+- **Environment-Driven Secrets**: No credentials inside the repo
 
-### 📊 Dashboard & Monitoring
-- **Multi-Server Support**: Add unlimited X-UI panels
-- **Auto-Detection**: Automatically detects Sanaei 3X-UI or Alireza X-UI panel types
-- **Real-Time Statistics**: Server count, inbounds, clients, traffic overview
-- **Responsive Design**: Mobile-friendly interface with hamburger menu
-- **Auto-Refresh**: Configurable dashboard refresh intervals
+### 📊 Unified Operations Dashboard
+- **Unlimited Servers**: Attach any number of Sanaei 3X-UI or Alireza X-UI panels
+- **Auto Detection**: Panel type, subscription/json paths, and protocols are detected automatically
+- **Actionable Tables**: Toggle clients, expand QR codes, assign owners, and inspect traffic from one grid
+- **Global Search & Auto Refresh**: Find a client in milliseconds and keep stats synced on a timer
+- **Health Visibility**: Inline error toasts for unreachable panels + per-server failure notes
 
-### 👥 Client Management
-- **Enable/Disable Clients**: Toggle client status
-- **Reset Traffic**: Clear client data usage
-- **Renew Clients**: Extend subscription with optional "Start after first use"
-- **3-Type QR Codes**: Subscription, JSON, and Direct connection links
-- **Subscription Links**: Customizable paths and ports per server
+### 💼 Wallet & Billing Automation
+- **Prepaid Wallets**: Live wallet pill shows the reseller balance everywhere in the UI
+- **Package Marketplace**: Define bundles (days/GB/price) and let resellers buy or renew with one click
+- **Custom Tariffs**: When no package is selected, pricing automatically uses configurable cost-per-day and cost-per-GB baselines
+- **Paid Renew/Reset Flow**: Modal confirmation displays the deduction before charging the wallet; reset traffic now consumes billable GB
+- **Transaction Ledger**: Dedicated `/transactions` page + `/api/transactions` endpoint for auditing every wallet movement
 
-### 📱 Responsive UI
-- **3-Column QR Grid** → 2-Column tablet → 1-Column mobile
-- **Sidebar Navigation**: Collapsible on mobile
-- **Touch-Friendly**: Optimized buttons and spacing
-- **Dark Theme**: Professional dark mode interface
+### 👥 Client Lifecycle & Reseller Controls
+- **Purchase New Service**: Modern modal covers package purchase or fully custom plans, including "start after first use"
+- **Renew Clients**: Same experience as purchase—optionally reuse packages or enter free-form day/volume values
+- **Reset Traffic**: Costs are enforced server-side, and ownership rules ensure resellers cannot touch foreign clients
+- **Ownership & Allowed Servers**: Assign clients to resellers and restrict which servers each reseller can see or charge
+- **Link Delivery**: Generate subscription, JSON, direct, and dashboard QR codes optimized for mobile scanning
+
+### 📱 Responsive Experience
+- **Touch-Ready Modals**: All dialogs (purchase, renew, reset, assign) respect mobile breakpoints
+- **Adaptive Grids**: QR and action grids collapse gracefully from desktop to phones
+- **Collapsible Sidebar**: Smooth hamburger interaction for tablets/phones
+- **Unified Dark Theme**: Consistent colors, glassmorphism cards, and status pills across pages
 
 ## Installation
 
@@ -116,19 +124,34 @@ Each X-UI server can be configured with:
 ### Pages
 - `GET /` - Dashboard
 - `GET /servers` - Server management
-- `GET /admins` - Admin management
+- `GET /admins` - Admin management (superadmin only)
+- `GET /packages` - Configure packages/base tariffs (superadmin)
+- `GET /transactions` - Wallet ledger for every admin/reseller
+- `GET /sub-manager` - Curate downstream subscription app configs (superadmin)
 
 ### Client Operations
-- `POST /api/client/<server_id>/<inbound_id>/<email>/toggle` - Enable/disable client
-- `POST /api/client/<server_id>/<inbound_id>/<email>/reset` - Reset traffic
-- `POST /api/client/<server_id>/<inbound_id>/<email>/renew` - Renew client
-- `GET /api/client/qrcode` - Generate QR code
+- `POST /api/client/<server_id>/<inbound_id>/add` - Create a client (package or custom pricing)
+- `POST /api/client/<server_id>/<inbound_id>/toggle` - Enable/disable client (email passed in JSON)
+- `POST /api/client/<server_id>/<inbound_id>/reset` - Paid traffic reset with wallet deduction
+- `POST /api/client/<server_id>/<inbound_id>/<email>/renew` - Renew client (package/custom)
+- `GET /api/client/qrcode` - Generate QR codes for links
+- `GET /api/clients/search` - Global search by email/username
+- `POST /api/assign-client` - Assign ownership to a reseller (superadmin)
 
 ### Server Management
 - `GET/POST /api/servers` - List/create servers
 - `PUT /api/servers/<id>` - Update server
 - `DELETE /api/servers/<id>` - Delete server
 - `POST /api/servers/<id>/test` - Test connection
+
+### Packages & Pricing
+- `GET /api/packages` - Public list used by purchase/renew modals
+- `POST /admin/packages` - Create package (superadmin)
+- `PUT /admin/packages/<id>` - Update package (superadmin)
+
+### Wallet & Transactions
+- `GET /api/transactions` - List wallet transactions (optionally filter by `user_id`)
+- `GET /api/sub-apps` - Fetch Sub-app configuration cards for the Sub Manager page
 
 ### Admin Management
 - `GET /api/admins` - List admins
@@ -140,53 +163,30 @@ Each X-UI server can be configured with:
 
 ```
 .
-├── app.py                    # Main Flask application
-├── templates/
-│   ├── base.html            # Base template with sidebar
-│   ├── login.html           # Login page
-│   ├── dashboard.html       # Main dashboard
-│   ├── servers.html         # Server management
-│   └── admins.html          # Admin management
+├── app.py                  # Primary Flask app (routes, billing logic, APIs)
+├── main.py                 # Lightweight entry/helper (used by some deployments)
+├── setup.sh                # 1-line installer for Ubuntu/Debian
+├── pyproject.toml / uv.lock# Python deps + exact locking
+├── templates/              # Jinja2 views
+│   ├── base.html           # Layout + sidebar + wallet pill
+│   ├── dashboard.html      # Main dashboard, modals, JS helpers
+│   ├── login.html          # Auth screen
+│   ├── admins.html         # Admin/reseller management (superadmin)
+│   ├── servers.html        # Server CRUD UI
+│   ├── packages.html       # Configure packages & base tariffs
+│   ├── transactions.html   # Wallet ledger table
+│   ├── sub_manager.html    # Downstream subscription-app manager
+│   ├── subscription.html   # Public subscription landing page
+│   └── error.html          # Friendly error surface
 ├── static/
-│   └── style.css            # Comprehensive stylesheet
-├── pyproject.toml           # Python dependencies
-├── README.md                # This file
-└── replit.md                # Technical documentation
+│   └── style.css           # Unified dark theme + responsive styles
+├── instance/               # SQLite DB / config when running locally
+├── attached_assets/        # Design specs, screenshots, pasted assets
+├── README.md               # You are here
+├── INSTALL.md / RELEASE_NOTES.md / CHANGELOG.md
+└── replit.md               # Cloud-dev specific notes
 ```
 
-## Database Schema
-
-### Admins Table
-- `id` - Primary key
-- `username` - Unique username
-- `password_hash` - PBKDF2 hashed password
-- `is_superadmin` - Can manage other admins
-- `enabled` - Account active status
-- `created_at` - Creation timestamp
-- `last_login` - Last login time
-
-### Servers Table
-- `id` - Primary key
-- `name` - Server display name
-- `host` - X-UI panel URL
-- `username` - Login username
-- `password` - Login password
-- `enabled` - Is server active
-- `panel_type` - auto/sanaei/alireza
-- `sub_path` - Subscription path (default: /sub/)
-- `json_path` - JSON path (default: /json/)
-- `sub_port` - Optional subscription port
-- `created_at` - Creation timestamp
-
-## Security Considerations
-
-- All passwords are hashed with PBKDF2 algorithm
-- Rate limiting prevents brute-force attacks
-- Session cookies are secure and HTTP-only
-- CSRF protection with SameSite cookies
-- Failed login attempts are logged for audit trails
-- Environment variables protect sensitive credentials
-- No secrets in version control
 
 ## Browser Support
 

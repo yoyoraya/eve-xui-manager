@@ -76,13 +76,6 @@
             </nav>
             
             <div class="sidebar-footer">
-                {% if role == 'reseller' %}
-                <div style="margin-bottom: 15px; padding: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 8px; border: 1px solid rgba(34, 197, 94, 0.2); display: flex; align-items: center; justify-content: space-between;">
-                    <span style="font-size: 0.8rem; color: #94a3b8;">Credit:</span>
-                    <span style="font-weight: bold; color: #4ade80;">{{ "{:,}".format(wallet_credit or 0) }}</span>
-                </div>
-                {% endif %}
-
                 <div class="user-info">
                     <div class="user-avatar">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -165,6 +158,14 @@
         
         function hideLoading() {
             document.getElementById('loading').classList.add('hidden');
+        }
+
+        function updateWalletDisplay(newAmount) {
+            if (newAmount === undefined || newAmount === null) return;
+            const pillValue = document.querySelector('.wallet-pill .wallet-amount');
+            if (!pillValue) return;
+            const normalized = Number(newAmount) || 0;
+            pillValue.textContent = normalized.toLocaleString();
         }
     </script>
     
