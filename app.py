@@ -1720,6 +1720,109 @@ def get_transactions():
 
     return jsonify(payload)
 
+@app.route('/s/<int:server_id>/<sub_id>')
+def client_subscription(server_id, sub_id):
+    server = db.session.get(Server, server_id)
+    if not server:
+        return "Subscription not found", 404
+
+    session_obj, login_error = get_xui_session(server)
+    if login_error or not session_obj:
+        app.logger.warning(f"Dash sub auth failed for server {server_id}: {login_error}")
+        return "Unable to load subscription", 502
+
+    inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
+    if fetch_error or not inbounds:
+        app.logger.warning(f"Dash sub fetch failed for server {server_id}: {fetch_error}")
+        return "Unable to load subscription", 502
+
+    normalized_sub_id = str(sub_id).strip()
+    target_client = None
+    target_inbound = None
+
+    for inbound in inbounds:
+        try:
+            settings = json.loads(inbound.get('settings', '{}'))
+        except Exception:
+            continue
+        for client in settings.get('clients', []):
+            client_sub_id = str(client.get('subId') or '').strip()
+            client_uuid = str(client.get('id') or '').strip()
+            if normalized_sub_id and (normalized_sub_id == client_sub_id or (not client_sub_id and normalized_sub_id == client_uuid)):
+                target_client = client
+                target_inbound = inbound
+                break
+        if target_client:
+            break
+
+    if not target_client or not target_inbound:
+        return "Subscription not found", 404
+
+    client_email = target_client.get('email') or f"user-{normalized_sub_id}"
+    client_stats = target_inbound.get('clientStats') or []
+    up = down = 0
+    for stat in client_stats:
+        if stat.get('email') == target_client.get('email'):
+            up = stat.get('up', 0) or 0
+            down = stat.get('down', 0) or 0
+            break
+
+    total_used = (up or 0) + (down or 0)
+    try:
+        total_limit = int(target_client.get('totalGB') or 0)
+    except (TypeError, ValueError):
+        total_limit = 0
+    remaining = max(total_limit - total_used, 0) if total_limit > 0 else None
+    percentage_used = round((total_used / total_limit) * 100, 2) if total_limit else 0
+
+    expiry_info = format_remaining_days(target_client.get('expiryTime', 0))
+
+    host_value = server.host
+    if host_value and not host_value.startswith(('http://', 'https://')):
+        host_value = f"http://{host_value}"
+    parsed_host = urlparse(host_value or '')
+    hostname = parsed_host.hostname or parsed_host.path or ''
+    scheme = parsed_host.scheme or 'http'
+    final_port = server.sub_port if server.sub_port else parsed_host.port
+    port_str = f":{final_port}" if final_port else ''
+    sub_path = (server.sub_path or '/sub/').strip('/')
+    base_sub = f"{scheme}://{hostname}{port_str}"
+    sub_url = f"{base_sub}/{sub_path}/{normalized_sub_id}" if sub_path else f"{base_sub}/{normalized_sub_id}"
+
+    configs = []
+    direct_link = generate_client_link(target_client, target_inbound, server.host)
+    if direct_link:
+        configs.append(direct_link)
+
+    subscription_entries = [entry for entry in configs if entry]
+    if not subscription_entries:
+        subscription_entries.append(sub_url)
+    subscription_blob = '\n'.join(subscription_entries)
+    encoded_blob = base64.b64encode((subscription_blob or '').encode('utf-8')).decode('utf-8') if subscription_blob else ''
+
+    user_agent = (request.headers.get('User-Agent') or '').lower()
+    agent_tokens = ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobox', 'clash', 'sing-box']
+    wants_b64 = request.args.get('format', '').lower() == 'b64'
+    if encoded_blob and (wants_b64 or any(token in user_agent for token in agent_tokens)):
+        return encoded_blob, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+    client_payload = {
+        "email": client_email,
+        "is_active": target_client.get('enable', True),
+        "total_used": format_bytes(total_used),
+        "total_limit": format_bytes(total_limit) if total_limit > 0 else "Unlimited",
+        "percentage_used": percentage_used,
+        "expiry": expiry_info['text'],
+        "remaining": format_bytes(remaining) if remaining is not None else None,
+        "subscription_url": f"{request.base_url}?format=b64",
+        "configs": configs,
+    }
+
+    apps = SubAppConfig.query.filter_by(is_enabled=True).all()
+    apps_payload = [app.to_dict() for app in apps]
+
+    return render_template('subscription.html', client=client_payload, apps=apps_payload)
+
 @app.route('/sub-manager')
 @superadmin_required
 def sub_manager_page():

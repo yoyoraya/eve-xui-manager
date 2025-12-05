@@ -1846,26 +1846,28 @@ select optgroup {
 
 @media (max-width: 480px) {
     .stats-grid {
-        grid-template-columns: 1fr;
-        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
     }
     
     .stat-card {
         padding: 12px;
-        flex-direction: row;
+        flex-direction: column;
         align-items: center;
-        text-align: left;
-        gap: 12px;
+        justify-content: center;
+        text-align: center;
+        gap: 6px;
+        min-height: 110px;
     }
     
     .stat-icon {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
         flex-shrink: 0;
     }
     
     .stat-value {
-        font-size: 1rem;
+        font-size: 0.95rem;
     }
     
     .stat-label {
