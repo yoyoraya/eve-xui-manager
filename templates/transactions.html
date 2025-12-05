@@ -3,10 +3,171 @@
 {% block page_title %}Financial Report{% endblock %}
 
 {% block content %}
+<style>
+    .filters-card {
+        background: rgba(13, 17, 23, 0.85);
+        border: 1px solid var(--border-color);
+        border-radius: 18px;
+        padding: 20px;
+        margin-bottom: 24px;
+        box-shadow: 0 20px 45px rgba(0,0,0,0.35);
+    }
+    .filters-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+    .filters-header h3 {
+        margin: 0;
+    }
+    .filters-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+    .filter-field label {
+        display: block;
+        font-size: 0.8rem;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+    }
+    .filter-field input,
+    .filter-field select {
+        width: 100%;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px;
+        padding: 10px 12px;
+        color: var(--text-primary);
+        font-size: 0.95rem;
+    }
+    .filter-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    .filter-actions button {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 20px;
+        cursor: pointer;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+    }
+    .btn-apply {
+        background: linear-gradient(120deg, #22d3ee, #6366f1);
+        color: #fff;
+    }
+    .btn-reset {
+        background: rgba(255,255,255,0.05);
+        color: var(--text-secondary);
+    }
+    .range-chips {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .range-chips button {
+        border: 1px solid rgba(255,255,255,0.1);
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        padding: 6px 14px;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: color 0.2s ease, border-color 0.2s ease;
+    }
+    .range-chips button:hover {
+        border-color: #22d3ee;
+        color: #22d3ee;
+    }
+    .muted-note {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        margin-top: -4px;
+    }
+    @media (max-width: 600px) {
+        .filters-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .filter-actions {
+            justify-content: stretch;
+        }
+        .filter-actions button {
+            width: 100%;
+            text-align: center;
+        }
+    }
+</style>
+
+<div class="filters-card">
+    <div class="filters-header">
+        <div>
+            <h3>Smart Filters</h3>
+            <p class="muted-note">Enter Jalali dates such as 1403/01/01 for precise reporting.</p>
+        </div>
+        <div class="range-chips">
+            <button type="button" data-range="today">Today</button>
+            <button type="button" data-range="7d">Last 7 Days</button>
+            <button type="button" data-range="30d">Last 30 Days</button>
+            <button type="button" data-range="clear">Clear Dates</button>
+        </div>
+    </div>
+    <form id="transaction-filters">
+        <div class="filters-grid">
+            <div class="filter-field" style="grid-column: span 2;">
+                <label>Search</label>
+                <input type="text" id="transaction-search" placeholder="Email, description, or type">
+            </div>
+            <div class="filter-field">
+                <label>Start Date (Jalali)</label>
+                <input type="text" id="start-date" dir="ltr" placeholder="1403/01/01">
+            </div>
+            <div class="filter-field">
+                <label>End Date (Jalali)</label>
+                <input type="text" id="end-date" dir="ltr" placeholder="1403/01/30">
+            </div>
+            <div class="filter-field">
+                <label>Server</label>
+                <select id="server-filter" class="form-select filter-select">
+                    <option value="">All servers</option>
+                    {% for server in servers %}
+                    <option value="{{ server.id }}">{{ server.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if is_superadmin %}
+            <div class="filter-field">
+                <label>User</label>
+                <select id="user-filter" class="form-select filter-select">
+                    <option value="">All users</option>
+                    {% for admin in admin_options %}
+                    <option value="{{ admin.id }}">{{ admin.username }} ({{ admin.role }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+        </div>
+        <div class="filter-actions">
+            <button type="button" class="btn-reset" id="reset-filters">Reset</button>
+            <button type="submit" class="btn-apply">Apply Filters</button>
+        </div>
+    </form>
+</div>
+
 <div class="server-card">
     <div class="server-header">
         <div class="server-title">
             <h3>Transaction History</h3>
+            <p class="muted-note" id="transactions-count">Loading...</p>
         </div>
     </div>
     <div style="overflow-x: auto;">
@@ -17,13 +178,14 @@
                     {% if is_superadmin %}
                     <th style="padding: 15px; text-align: left;">User</th>
                     {% endif %}
+                    <th style="padding: 15px; text-align: left;">Server</th>
                     <th style="padding: 15px; text-align: left;">Type</th>
                     <th style="padding: 15px; text-align: left;">Amount</th>
                     <th style="padding: 15px; text-align: left;">Description</th>
                 </tr>
             </thead>
             <tbody id="trans-list">
-                <tr><td colspan="4" style="text-align: center; padding: 20px;">Loading...</td></tr>
+                <tr><td colspan="6" style="text-align: center; padding: 20px;">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -33,50 +195,198 @@
 {% block scripts %}
 <script>
     const isSuperadmin = {{ 'true' if is_superadmin else 'false' }};
+    const columnSpan = isSuperadmin ? 6 : 5;
 
-    document.addEventListener('DOMContentLoaded', async () => {
-        try {
-            const res = await fetch('/api/transactions');
-            const data = await res.json();
-            const tbody = document.getElementById('trans-list');
-            
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="padding: 20px; text-align: center; color: var(--text-secondary);">No transactions found.</td></tr>';
-                return;
-            }
+    const tbody = document.getElementById('trans-list');
+    const filtersForm = document.getElementById('transaction-filters');
+    const searchInput = document.getElementById('transaction-search');
+    const startInput = document.getElementById('start-date');
+    const endInput = document.getElementById('end-date');
+    const serverSelect = document.getElementById('server-filter');
+    const userSelect = document.getElementById('user-filter');
+    const resetButton = document.getElementById('reset-filters');
+    const countLabel = document.getElementById('transactions-count');
+    const rangeButtons = document.querySelectorAll('[data-range]');
 
-            tbody.innerHTML = data.map(t => {
-                const isPositive = t.amount > 0;
-                const color = isPositive ? '#4ade80' : '#ef4444';
-                const sign = isPositive ? '+' : '';
-                const date = t.date_jalali || new Date(t.date).toLocaleString();
-                
-                let typeBadgeClass = 'badge';
-                if (t.type === 'deposit') typeBadgeClass += ' active';
-                else if (t.type === 'purchase') typeBadgeClass += ' inactive';
-                const userCell = isSuperadmin ? `
-                        <td style="padding: 15px; color: var(--text-secondary);">
-                            ${t.admin ? `<div style=\"font-weight:600; color:var(--text-primary);\">${t.admin.username}</div><div style=\"font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-secondary);\">${t.admin.role}</div>` : '-'}
-                        </td>` : '';
-                
-                return `
-                    <tr style="border-bottom: 1px solid var(--border-color);">
-                        <td style="padding: 15px; color: var(--text-primary);">${date}</td>
-                        ${userCell}
-                        <td style="padding: 15px;">
-                            <span class="${typeBadgeClass}" style="text-transform: uppercase; font-size: 0.7rem;">${t.type}</span>
-                        </td>
-                        <td style="padding: 15px; color: ${color}; font-weight: bold; direction: ltr;">
-                            ${sign}${t.amount.toLocaleString()} T
-                        </td>
-                        <td style="padding: 15px; color: var(--text-secondary);">${t.description || '-'}</td>
-                    </tr>
-                `;
-            }).join('');
-        } catch (e) {
-            console.error(e);
-            document.getElementById('trans-list').innerHTML = '<tr><td colspan="4" style="text-align: center; color: #ef4444;">Error loading data</td></tr>';
+    let formatter;
+    try {
+        formatter = new Intl.DateTimeFormat('en-u-ca-persian', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch (err) {
+        console.warn('Persian calendar is not supported in this browser', err);
+    }
+
+    const filters = {
+        search: '',
+        start_date: '',
+        end_date: '',
+        server_id: '',
+        user_id: ''
+    };
+
+    const debounce = (fn, delay = 400) => {
+        let timeout;
+        return (...args) => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => fn(...args), delay);
+        };
+    };
+
+    const formatJalali = (dateObj) => {
+        if (!formatter || !(dateObj instanceof Date)) return '';
+        const parts = formatter.formatToParts(dateObj).reduce((acc, part) => {
+            if (part.type !== 'literal') acc[part.type] = part.value;
+            return acc;
+        }, {});
+        if (!parts.year || !parts.month || !parts.day) return '';
+        return `${parts.year}/${parts.month}/${parts.day}`;
+    };
+
+    const updateFiltersFromInputs = () => {
+        filters.search = searchInput.value.trim();
+        filters.start_date = startInput.value.trim();
+        filters.end_date = endInput.value.trim();
+        filters.server_id = serverSelect.value;
+        if (userSelect) {
+            filters.user_id = userSelect.value;
         }
+    };
+
+    const buildQueryString = () => {
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([key, value]) => {
+            if (value) params.append(key, value);
+        });
+        return params.toString();
+    };
+
+    const setLoadingState = (message = 'Loading...') => {
+        countLabel.textContent = 'Loading...';
+        tbody.innerHTML = `<tr><td colspan="${columnSpan}" style="text-align:center; padding:20px; color:var(--text-secondary);">${message}</td></tr>`;
+    };
+
+    const renderRows = (rows) => {
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="${columnSpan}" style="padding:20px; text-align:center; color:var(--text-secondary);">No transactions matched.</td></tr>`;
+            countLabel.textContent = 'No transactions match the filters.';
+            return;
+        }
+        countLabel.textContent = `${rows.length} transactions loaded.`;
+        tbody.innerHTML = rows.map(t => {
+            const isPositive = Number(t.amount || 0) > 0;
+            const color = isPositive ? '#4ade80' : '#ef4444';
+            const sign = isPositive ? '+' : '';
+            const date = t.date_jalali || (t.date ? new Date(t.date).toLocaleString() : '-');
+            const userCell = isSuperadmin ? `
+                <td style="padding: 15px; color: var(--text-secondary);">
+                    ${t.admin ? `<div style=\"font-weight:600; color:var(--text-primary);\">${t.admin.username}</div><div style=\"font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-secondary);\">${t.admin.role}</div>` : '-'}
+                </td>` : '';
+            const serverLabel = t.server ? (t.server.name || `Server #${t.server.id}`) : '-';
+            let badgeClass = 'badge';
+            if (t.type === 'deposit') badgeClass += ' active';
+            else if (t.type === 'purchase') badgeClass += ' inactive';
+            return `
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                    <td style="padding: 15px; color: var(--text-primary);">${date}</td>
+                    ${userCell}
+                    <td style="padding: 15px; color: var(--text-secondary);">${serverLabel}</td>
+                    <td style="padding: 15px;"><span class="${badgeClass}" style="text-transform: uppercase; font-size: 0.7rem;">${t.type || '-'}</span></td>
+                    <td style="padding: 15px; color: ${color}; font-weight: bold; direction: ltr;">
+                        ${sign}${Number(t.amount || 0).toLocaleString()} T
+                    </td>
+                    <td style="padding: 15px; color: var(--text-secondary);">
+                        ${t.description || '-'}
+                        ${t.client_email ? `<div style=\"font-size:0.75rem; color:rgba(255,255,255,0.45);\">${t.client_email}</div>` : ''}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    };
+
+    const loadTransactions = async () => {
+        try {
+            setLoadingState();
+            const query = buildQueryString();
+            const response = await fetch(query ? `/api/transactions?${query}` : '/api/transactions');
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load transactions');
+            }
+            if (!Array.isArray(data)) {
+                throw new Error('Unexpected response format');
+            }
+            renderRows(data);
+        } catch (error) {
+            console.error(error);
+            countLabel.textContent = 'Unable to load transactions';
+            tbody.innerHTML = `<tr><td colspan="${columnSpan}" style="text-align:center; color:#ef4444; padding:20px;">${error.message || 'Unknown error'}</td></tr>`;
+        }
+    };
+
+    const clearFilters = () => {
+        searchInput.value = '';
+        startInput.value = '';
+        endInput.value = '';
+        serverSelect.value = '';
+        if (userSelect) {
+            userSelect.value = '';
+        }
+        updateFiltersFromInputs();
+    };
+
+    rangeButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const range = btn.dataset.range;
+            if (range === 'clear') {
+                startInput.value = '';
+                endInput.value = '';
+            } else {
+                const end = new Date();
+                const start = new Date();
+                if (range === 'today') {
+                    // start already today
+                } else if (range === '7d') {
+                    start.setDate(start.getDate() - 6);
+                } else if (range === '30d') {
+                    start.setDate(start.getDate() - 29);
+                }
+                startInput.value = formatJalali(start);
+                endInput.value = formatJalali(end);
+            }
+            updateFiltersFromInputs();
+            loadTransactions();
+        });
     });
+
+    filtersForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        updateFiltersFromInputs();
+        loadTransactions();
+    });
+
+    resetButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        clearFilters();
+        loadTransactions();
+    });
+
+    serverSelect.addEventListener('change', () => {
+        updateFiltersFromInputs();
+        loadTransactions();
+    });
+
+    if (userSelect) {
+        userSelect.addEventListener('change', () => {
+            updateFiltersFromInputs();
+            loadTransactions();
+        });
+    }
+
+    searchInput.addEventListener('input', debounce(() => {
+        updateFiltersFromInputs();
+        loadTransactions();
+    }, 500));
+
+    updateFiltersFromInputs();
+    loadTransactions();
 </script>
 {% endblock %}

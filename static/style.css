@@ -1144,6 +1144,19 @@ input:checked + .slider:before {
     cursor: pointer;
 }
 
+select,
+.form-select {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+}
+
+select option,
+.form-select option,
+select optgroup {
+    background-color: #0f172a;
+    color: var(--text-primary);
+}
+
 .checkbox-group {
     margin-bottom: 16px;
 }
@@ -1746,7 +1759,7 @@ input:checked + .slider:before {
         gap: 8px;
     }
     
-    .header-controls .btn span {
+    .header-actions .btn .btn-label {
         display: none;
     }
     

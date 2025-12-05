@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import json
 import base64
 import requests
@@ -16,6 +17,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from urllib.parse import urlparse, quote
 from jdatetime import datetime as jdatetime_class
+from sqlalchemy import or_, func
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
@@ -417,6 +419,37 @@ def format_jalali(dt):
         return jalali_date.strftime('%Y/%m/%d %H:%M')
     except Exception:
         return dt.isoformat() if dt else None
+
+EMAIL_IN_DESCRIPTION = re.compile(r'([A-Za-z0-9_.+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9-.]+)$')
+
+def extract_email_from_description(description):
+    if not description:
+        return None
+    match = EMAIL_IN_DESCRIPTION.search(description.strip())
+    if not match:
+        return None
+    email = match.group(1).strip().lower()
+    return email.rstrip('.,;') or None
+
+def parse_jalali_date(date_str, end_of_day=False):
+    if not date_str:
+        return None
+    normalized = date_str.strip()
+    if not normalized:
+        return None
+    patterns = ['%Y/%m/%d %H:%M', '%Y-%m-%d %H:%M', '%Y/%m/%d', '%Y-%m-%d']
+    for pattern in patterns:
+        try:
+            j_date = jdatetime_class.strptime(normalized, pattern)
+            gregorian = j_date.togregorian()
+            if 'H' not in pattern:
+                day = gregorian.date()
+                time_part = datetime.max.time() if end_of_day else datetime.min.time()
+                return datetime.combine(day, time_part)
+            return gregorian
+        except ValueError:
+            continue
+    return None
 
 def parse_allowed_servers(raw_value):
     if not raw_value:
@@ -1580,10 +1613,12 @@ def charge_admin():
     admin = Admin.query.get_or_404(admin_id)
     admin.credit += amount
     
+    transaction_type = 'deposit' if amount >= 0 else 'manual_debit'
+
     transaction = Transaction(
         admin_id=admin_id,
         amount=amount,
-        type='deposit',
+        type=transaction_type,
         description=description
     )
     db.session.add(transaction)
@@ -1594,17 +1629,96 @@ def charge_admin():
 @login_required
 def get_transactions():
     user = db.session.get(Admin, session['admin_id'])
-    
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+
+    query = Transaction.query.join(Admin)
+
     if user.role == 'reseller':
-        transactions = Transaction.query.filter_by(admin_id=user.id).all()
+        query = query.filter(Transaction.admin_id == user.id)
     else:
-        user_id = request.args.get('user_id')
-        if user_id:
-            transactions = Transaction.query.filter_by(admin_id=int(user_id)).all()
-        else:
-            transactions = Transaction.query.all()
-    
-    return jsonify([t.to_dict() for t in transactions])
+        target_user_id = request.args.get('user_id', type=int)
+        if target_user_id:
+            query = query.filter(Transaction.admin_id == target_user_id)
+
+    search_term = (request.args.get('search') or '').strip()
+    if search_term:
+        pattern = f"%{search_term}%"
+        query = query.filter(or_(
+            Transaction.description.ilike(pattern),
+            Transaction.type.ilike(pattern),
+            Admin.username.ilike(pattern)
+        ))
+
+    start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
+    if start_dt:
+        query = query.filter(Transaction.created_at >= start_dt)
+
+    end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
+    if end_dt:
+        query = query.filter(Transaction.created_at <= end_dt)
+
+    limit = request.args.get('limit', type=int)
+    if limit is None:
+        limit = 300
+    limit = max(1, min(limit, 1000))
+
+    query = query.order_by(Transaction.created_at.desc())
+    transactions = query.limit(limit).all()
+
+    server_filter = request.args.get('server_id', type=int)
+    if server_filter:
+        accessible_ids = {s.id for s in get_accessible_servers(user, include_disabled=True)}
+        if user.role == 'reseller' and (not accessible_ids or server_filter not in accessible_ids):
+            return jsonify({"success": False, "error": "Access denied to requested server"}), 403
+
+    transaction_emails = {}
+    email_pairs = set()
+    for tx in transactions:
+        email = extract_email_from_description(tx.description)
+        if not email:
+            continue
+        transaction_emails[tx.id] = email
+        email_pairs.add((tx.admin_id, email))
+
+    ownership_map = {}
+    if email_pairs:
+        reseller_ids = {pair[0] for pair in email_pairs}
+        email_values = {pair[1] for pair in email_pairs}
+        if reseller_ids and email_values:
+            ownerships = ClientOwnership.query.filter(
+                ClientOwnership.reseller_id.in_(list(reseller_ids)),
+                func.lower(ClientOwnership.client_email).in_(list(email_values))
+            ).all()
+            for ownership in ownerships:
+                key = (ownership.reseller_id, (ownership.client_email or '').lower())
+                existing = ownership_map.get(key)
+                current_created = ownership.created_at or datetime.min
+                existing_created = existing.created_at if existing and existing.created_at else datetime.min
+                if not existing or current_created >= existing_created:
+                    ownership_map[key] = ownership
+
+    payload = []
+    for tx in transactions:
+        tx_data = tx.to_dict()
+        email = transaction_emails.get(tx.id)
+        tx_data['client_email'] = email
+        server_meta = None
+        server_id = None
+        if email:
+            ownership = ownership_map.get((tx.admin_id, email))
+            if ownership:
+                server_id = ownership.server_id
+                server_meta = {
+                    'id': ownership.server_id,
+                    'name': ownership.server.name if ownership.server else None
+                }
+        if server_filter and server_id != server_filter:
+            continue
+        tx_data['server'] = server_meta
+        payload.append(tx_data)
+
+    return jsonify(payload)
 
 @app.route('/sub-manager')
 @superadmin_required
@@ -1636,10 +1750,17 @@ def packages_page():
 @app.route('/transactions')
 @login_required
 def transactions_page():
+    user = db.session.get(Admin, session['admin_id'])
+    servers = get_accessible_servers(user, include_disabled=True) if user else []
+    admin_options = []
+    if user and (user.role == 'superadmin' or user.is_superadmin):
+        admin_options = Admin.query.order_by(Admin.username.asc()).all()
     return render_template('transactions.html',
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
-                         role=session.get('role', 'admin'))
+                         role=session.get('role', 'admin'),
+                         servers=servers,
+                         admin_options=admin_options)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
