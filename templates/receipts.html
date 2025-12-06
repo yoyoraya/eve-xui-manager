@@ -14,7 +14,7 @@
             <div class="form-group">
                 <label>Amount *</label>
                 <div class="input-group">
-                    <input type="number" id="receipt-amount" name="amount" class="form-input" min="1" placeholder="e.g. 100000" required>
+                    <input type="text" id="receipt-amount" name="amount" class="form-input" placeholder="e.g. 100,000" required oninput="formatNumberInput(this)">
                     <span class="input-suffix">IRT</span>
                 </div>
             </div>
@@ -613,32 +613,31 @@
 
     async function submitReceipt(event) {
         event.preventDefault();
-        const form = document.getElementById('receipt-form');
-        const fileInput = document.getElementById('receipt-file');
-        if (!fileInput.files.length) {
-            showToast('Please attach the receipt image', 'error');
-            return;
-        }
+        const form = event.target;
         const formData = new FormData(form);
+        
+        // Unformat amount
+        const amountRaw = document.getElementById('receipt-amount').value;
+        formData.set('amount', unformatNumber(amountRaw));
+
         try {
             const resp = await fetch('/api/receipts', {
                 method: 'POST',
                 body: formData
             });
             const data = await resp.json();
-            if (!data.success) {
+            if (data.success) {
+                showToast('Receipt uploaded successfully');
+                form.reset();
+                document.querySelectorAll('.card-option').forEach(el => el.classList.remove('selected'));
+                loadReceipts();
+            } else {
                 showToast(data.error || 'Upload failed', 'error');
-                return;
             }
-            showToast('Receipt submitted');
-            form.reset();
-            loadReceipts();
         } catch (err) {
-            showToast(err.message || 'Upload failed', 'error');
+            showToast('Network error', 'error');
         }
-    }
-
-    async function approveReceipt(id) {
+    }    async function approveReceipt(id) {
         if (!confirm('Approve this receipt?')) return;
         try {
             const resp = await fetch(`/api/receipts/${id}/approve`, { method: 'POST' });

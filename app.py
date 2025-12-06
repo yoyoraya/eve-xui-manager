@@ -8,6 +8,8 @@ import qrcode
 import uuid
 import secrets
 import string
+import shutil
+import glob
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
@@ -20,7 +22,7 @@ from urllib.parse import urlparse, quote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 app = Flask(__name__)
@@ -43,6 +45,9 @@ RECEIPT_ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'heic', 'heif', 'pdf
 RECEIPTS_DIR = os.path.join(app.instance_path, 'receipts')
 os.makedirs(RECEIPTS_DIR, exist_ok=True)
 
+BACKUP_DIR = os.path.join(app.instance_path, 'backups')
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
@@ -63,6 +68,9 @@ class Admin(db.Model):
     credit = db.Column(db.Integer, default=0)
     allowed_servers = db.Column(db.Text, default='[]')
     enabled = db.Column(db.Boolean, default=True)
+    discount_percent = db.Column(db.Integer, default=0)
+    custom_cost_per_day = db.Column(db.Integer, nullable=True)
+    custom_cost_per_gb = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
     
@@ -83,6 +91,9 @@ class Admin(db.Model):
             'credit': self.credit,
             'allowed_servers': parse_allowed_servers(self.allowed_servers),
             'enabled': self.enabled,
+            'discount_percent': self.discount_percent,
+            'custom_cost_per_day': self.custom_cost_per_day,
+            'custom_cost_per_gb': self.custom_cost_per_gb,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
@@ -151,6 +162,7 @@ class Package(db.Model):
     days = db.Column(db.Integer, nullable=False)
     volume = db.Column(db.Integer, nullable=False)
     price = db.Column(db.Integer, nullable=False)
+    reseller_price = db.Column(db.Integer, nullable=True)
     enabled = db.Column(db.Boolean, default=True)
     
     def to_dict(self):
@@ -160,6 +172,7 @@ class Package(db.Model):
             'days': self.days,
             'volume': self.volume,
             'price': self.price,
+            'reseller_price': self.reseller_price,
             'enabled': self.enabled
         }
 
@@ -212,6 +225,25 @@ class BankCard(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+
+class NotificationTemplate(db.Model):
+    __tablename__ = 'notification_templates'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    type = db.Column(db.String(50), default='client_created')
+    is_active = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'content': self.content,
+            'type': self.type,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
 
 class ManualReceipt(db.Model):
     __tablename__ = 'manual_receipts'
@@ -512,6 +544,45 @@ def superadmin_required(f):
             return jsonify({"success": False, "error": "Access Denied: SuperAdmin only"}), 403
         return f(*args, **kwargs)
     return decorated_function
+
+def calculate_reseller_price(user, base_price=None, package=None, cost_type=None):
+    """
+    Calculate price for a reseller based on their settings.
+    """
+    if user.role != 'reseller':
+        if package: return package.price
+        return base_price if base_price is not None else 0
+
+    # 1. Custom Plan Logic (Day/GB rates)
+    if cost_type == 'day':
+        if user.custom_cost_per_day is not None:
+            return user.custom_cost_per_day
+        discount = user.discount_percent or 0
+        return int(base_price * (1 - discount / 100)) if base_price else 0
+        
+    if cost_type == 'gb':
+        if user.custom_cost_per_gb is not None:
+            return user.custom_cost_per_gb
+        discount = user.discount_percent or 0
+        return int(base_price * (1 - discount / 100)) if base_price else 0
+
+    # 2. Package Logic
+    if package:
+        # Priority 1: Reseller Price on Package (Global Reseller Price)
+        # If a specific reseller price is set on the package, use it.
+        # However, if the user has a specific discount, maybe they want discount off the standard price?
+        # Let's assume: Reseller Price is a fixed override.
+        if package.reseller_price is not None and package.reseller_price > 0:
+             # If user has a discount, we might want to apply it to the standard price and compare?
+             # Or just take the reseller price.
+             # Let's stick to: Reseller Price > Discounted Standard Price.
+             return package.reseller_price
+            
+        # Priority 2: Discount on Standard Price
+        discount = user.discount_percent or 0
+        return int(package.price * (1 - discount / 100))
+
+    return base_price if base_price is not None else 0
 
 def get_config(key, default=0):
     conf = db.session.get(SystemConfig, key)
@@ -987,6 +1058,10 @@ def dashboard():
     
     base_cost_day = get_config('cost_per_day', 0)
     base_cost_gb = get_config('cost_per_gb', 0)
+    
+    # Calculate user-specific costs
+    user_cost_day = calculate_reseller_price(user, base_price=base_cost_day, cost_type='day')
+    user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
         
     return render_template('dashboard.html', 
                          servers=servers, 
@@ -995,8 +1070,8 @@ def dashboard():
                          is_superadmin=(user.role == 'superadmin' or user.is_superadmin),
                          role=user.role,
                          credit=user.credit,
-                         base_cost_day=base_cost_day,
-                         base_cost_gb=base_cost_gb)
+                         base_cost_day=user_cost_day,
+                         base_cost_gb=user_cost_gb)
 
 @app.route('/servers')
 @login_required
@@ -1056,6 +1131,14 @@ def api_refresh():
     
     return jsonify({"success": True, "inbounds": all_inbounds, "stats": total_stats, "servers": server_results, "server_count": len(servers)})
 
+
+@app.route('/settings')
+@login_required
+def settings_page():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user.is_superadmin:
+        return redirect(url_for('dashboard'))
+    return render_template('settings.html', current_user=user, is_superadmin=user.is_superadmin, app_version=APP_VERSION)
 
 @app.route('/api/clients/search')
 @login_required
@@ -1236,14 +1319,16 @@ def reset_client_traffic(server_id, inbound_id):
     if volume_gb < 0:
         volume_gb = 0
     
-    cost_per_gb = get_config('cost_per_gb', 0)
-    charge_amount = volume_gb * cost_per_gb if volume_gb > 0 else 0
+    base_cost_gb = get_config('cost_per_gb', 0)
+    user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
+    
+    charge_amount = volume_gb * user_cost_gb if volume_gb > 0 else 0
 
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
         if not ownership:
             return jsonify({"success": False, "error": "Access denied"}), 403
-        if cost_per_gb > 0 and volume_gb <= 0:
+        if user_cost_gb > 0 and volume_gb <= 0:
             return jsonify({"success": False, "error": "Billable volume required"}), 400
         if charge_amount > user.credit:
             return jsonify({"success": False, "error": f"Insufficient credit. Required: {charge_amount}, Available: {user.credit}"}), 402
@@ -1339,7 +1424,7 @@ def renew_client(server_id, inbound_id, email):
                 return jsonify({"success": False, "error": "Invalid package selected"}), 400
             days_to_add = int(package.days or 0)
             volume_gb_to_add = int(package.volume or 0)
-            price = int(package.price or 0)
+            price = calculate_reseller_price(user, package=package)
             description = f"Renew Package: {package.name} - {email}"
             if days_to_add <= 0:
                 return jsonify({"success": False, "error": "Package is misconfigured"}), 400
@@ -1350,9 +1435,14 @@ def renew_client(server_id, inbound_id, email):
                 volume_gb_to_add = 0
             if days_to_add <= 0:
                 return jsonify({"success": False, "error": "Days must be positive"}), 400
-            cost_per_day = get_config('cost_per_day', 0)
-            cost_per_gb = get_config('cost_per_gb', 0)
-            price = (days_to_add * cost_per_day) + (volume_gb_to_add * cost_per_gb)
+            
+            base_cost_day = get_config('cost_per_day', 0)
+            base_cost_gb = get_config('cost_per_gb', 0)
+            
+            user_cost_day = calculate_reseller_price(user, base_price=base_cost_day, cost_type='day')
+            user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
+            
+            price = (days_to_add * user_cost_day) + (volume_gb_to_add * user_cost_gb)
             description = f"Renew Custom: {days_to_add} Days, {volume_gb_to_add} GB - {email}"
     except (ValueError, TypeError):
         return jsonify({"success": False, "error": "Invalid data"}), 400
@@ -1470,7 +1560,10 @@ def add_admin():
         is_superadmin=(data.get('role') == 'superadmin'),
         credit=int(data.get('credit', 0)),
         allowed_servers=serialize_allowed_servers(data.get('allowed_servers', [])),
-        enabled=data.get('enabled', True)
+        enabled=data.get('enabled', True),
+        discount_percent=int(data.get('discount_percent', 0)),
+        custom_cost_per_day=int(data.get('custom_cost_per_day')) if data.get('custom_cost_per_day') is not None else None,
+        custom_cost_per_gb=int(data.get('custom_cost_per_gb')) if data.get('custom_cost_per_gb') is not None else None
     )
     new_admin.set_password(data['password'])
     db.session.add(new_admin)
@@ -1489,6 +1582,11 @@ def update_admin(admin_id):
     if 'credit' in data: admin.credit = int(data['credit'])
     if 'allowed_servers' in data: admin.allowed_servers = serialize_allowed_servers(data['allowed_servers'])
     if 'enabled' in data: admin.enabled = data['enabled']
+    if 'discount_percent' in data: admin.discount_percent = int(data['discount_percent'])
+    if 'custom_cost_per_day' in data: 
+        admin.custom_cost_per_day = int(data['custom_cost_per_day']) if data['custom_cost_per_day'] is not None else None
+    if 'custom_cost_per_gb' in data: 
+        admin.custom_cost_per_gb = int(data['custom_cost_per_gb']) if data['custom_cost_per_gb'] is not None else None
     db.session.commit()
     return jsonify({"success": True})
 
@@ -1662,7 +1760,7 @@ def add_client(server_id, inbound_id):
         package = db.session.get(Package, pkg_id)
         if not package: return jsonify({"success": False, "error": "Invalid Package"}), 400
         
-        price = package.price
+        price = calculate_reseller_price(user, package=package)
         days = package.days
         volume_gb = package.volume
         description = f"Purchase Package: {package.name} - {email}"
@@ -1671,9 +1769,13 @@ def add_client(server_id, inbound_id):
         days = int(data.get('days', 30))
         volume_gb = int(data.get('volume', 0))
         
-        cost_per_day = get_config('cost_per_day', 0)
-        cost_per_gb = get_config('cost_per_gb', 0)
-        price = (days * cost_per_day) + (volume_gb * cost_per_gb)
+        base_cost_day = get_config('cost_per_day', 0)
+        base_cost_gb = get_config('cost_per_gb', 0)
+        
+        user_cost_day = calculate_reseller_price(user, base_price=base_cost_day, cost_type='day')
+        user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
+        
+        price = (days * user_cost_day) + (volume_gb * user_cost_gb)
         description = f"Custom Plan: {days} Days, {volume_gb} GB - {email}"
 
     if user.role == 'reseller':
@@ -1796,8 +1898,17 @@ def add_client(server_id, inbound_id):
 @app.route('/api/packages', methods=['GET'])
 @login_required
 def get_packages():
+    user = db.session.get(Admin, session['admin_id'])
     packages = Package.query.filter_by(enabled=True).all()
-    return jsonify([p.to_dict() for p in packages])
+    
+    result = []
+    for p in packages:
+        p_dict = p.to_dict()
+        # Calculate price for this user
+        p_dict['price'] = calculate_reseller_price(user, package=p)
+        result.append(p_dict)
+        
+    return jsonify(result)
 
 @app.route('/admin/packages', methods=['POST'])
 @superadmin_required
@@ -1808,6 +1919,7 @@ def create_package():
         days=int(data.get('days')),
         volume=int(data.get('volume')),
         price=int(data.get('price')),
+        reseller_price=int(data.get('reseller_price')) if data.get('reseller_price') is not None else None,
         enabled=data.get('enabled', True)
     )
     db.session.add(package)
@@ -1827,6 +1939,8 @@ def update_package(package_id):
         package.volume = int(data['volume'])
     if 'price' in data:
         package.price = int(data['price'])
+    if 'reseller_price' in data:
+        package.reseller_price = int(data['reseller_price']) if data['reseller_price'] is not None else None
     if 'enabled' in data:
         package.enabled = bool(data['enabled'])
     db.session.commit()
@@ -2397,6 +2511,176 @@ def disable_auto_window(window_id):
     window.status = 'disabled'
     db.session.commit()
     return jsonify({'success': True})
+
+@app.route('/api/templates', methods=['GET'])
+@superadmin_required
+def get_templates():
+    templates = NotificationTemplate.query.order_by(NotificationTemplate.created_at.desc()).all()
+    return jsonify({'success': True, 'templates': [t.to_dict() for t in templates]})
+
+@app.route('/api/templates', methods=['POST'])
+@superadmin_required
+def create_template():
+    data = request.get_json()
+    name = data.get('name')
+    content = data.get('content')
+    
+    if not name or not content:
+        return jsonify({'success': False, 'error': 'Name and content are required'}), 400
+        
+    template = NotificationTemplate(name=name, content=content)
+    db.session.add(template)
+    db.session.commit()
+    
+    # If this is the first template, make it active
+    if NotificationTemplate.query.count() == 1:
+        template.is_active = True
+        db.session.commit()
+        
+    return jsonify({'success': True, 'template': template.to_dict()})
+
+@app.route('/api/templates/<int:id>', methods=['PUT'])
+@superadmin_required
+def update_template(id):
+    template = db.session.get(NotificationTemplate, id)
+    if not template:
+        return jsonify({'success': False, 'error': 'Template not found'}), 404
+        
+    data = request.get_json()
+    if 'name' in data:
+        template.name = data['name']
+    if 'content' in data:
+        template.content = data['content']
+        
+    db.session.commit()
+    return jsonify({'success': True, 'template': template.to_dict()})
+
+@app.route('/api/templates/<int:id>', methods=['DELETE'])
+@superadmin_required
+def delete_template(id):
+    template = db.session.get(NotificationTemplate, id)
+    if not template:
+        return jsonify({'success': False, 'error': 'Template not found'}), 404
+        
+    if template.is_active:
+        return jsonify({'success': False, 'error': 'Cannot delete active template'}), 400
+        
+    db.session.delete(template)
+    db.session.commit()
+    return jsonify({'success': True})
+
+@app.route('/api/templates/<int:id>/activate', methods=['POST'])
+@superadmin_required
+def activate_template(id):
+    template = db.session.get(NotificationTemplate, id)
+    if not template:
+        return jsonify({'success': False, 'error': 'Template not found'}), 404
+        
+    # Deactivate all others
+    NotificationTemplate.query.update({NotificationTemplate.is_active: False})
+    template.is_active = True
+    db.session.commit()
+    
+    return jsonify({'success': True})
+
+@app.route('/api/templates/active', methods=['GET'])
+@login_required
+def get_active_template():
+    template = NotificationTemplate.query.filter_by(is_active=True).first()
+    if not template:
+        # Return default if no template exists
+        default_content = """😍 سفارش جدید شما
+
+اطلاعات سرویس
+📡 پروتکل: {protocol}
+🔮 نام سرویس: {service_name}
+🔋حجم سرویس: {volume} گیگ
+⏰ مدت سرویس: {days} روز⁮⁮ ⁮⁮
+
+لینک های اتصال
+ 
+🌐 subscription Direct:
+{sub_link}
+
+🌐 Account Dashboard : 
+{dashboard_link}"""
+        return jsonify({'success': True, 'content': default_content})
+        
+    return jsonify({'success': True, 'content': template.content})
+
+@app.route('/api/backups', methods=['GET'])
+@login_required
+def list_backups():
+    backups = []
+    if os.path.exists(BACKUP_DIR):
+        files = glob.glob(os.path.join(BACKUP_DIR, '*.db'))
+        files.sort(key=os.path.getmtime, reverse=True)
+        for f in files:
+            name = os.path.basename(f)
+            size = os.path.getsize(f)
+            date = datetime.fromtimestamp(os.path.getmtime(f)).strftime('%Y-%m-%d %H:%M:%S')
+            backups.append({'name': name, 'size': size, 'date': date})
+    return jsonify({'success': True, 'backups': backups})
+
+@app.route('/api/backups', methods=['POST'])
+@login_required
+def create_backup():
+    try:
+        db_path = os.path.join(app.instance_path, 'servers.db')
+        if not os.path.exists(db_path):
+             return jsonify({'success': False, 'error': 'Database file not found'})
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'backup_{timestamp}.db'
+        dest = os.path.join(BACKUP_DIR, filename)
+        
+        shutil.copy2(db_path, dest)
+        return jsonify({'success': True, 'message': 'Backup created', 'filename': filename})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/backups/<filename>/download', methods=['GET'])
+@login_required
+def download_backup(filename):
+    filename = secure_filename(filename)
+    path = os.path.join(BACKUP_DIR, filename)
+    if not os.path.exists(path):
+        return jsonify({'success': False, 'error': 'File not found'}), 404
+    return send_file(path, as_attachment=True)
+
+@app.route('/api/backups/<filename>/restore', methods=['POST'])
+@login_required
+def restore_backup(filename):
+    filename = secure_filename(filename)
+    backup_path = os.path.join(BACKUP_DIR, filename)
+    if not os.path.exists(backup_path):
+        return jsonify({'success': False, 'error': 'Backup not found'}), 404
+        
+    try:
+        db_path = os.path.join(app.instance_path, 'servers.db')
+        # Create a safety backup before restore
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safety_backup = os.path.join(BACKUP_DIR, f'pre_restore_{timestamp}.db')
+        if os.path.exists(db_path):
+            shutil.copy2(db_path, safety_backup)
+            
+        shutil.copy2(backup_path, db_path)
+        return jsonify({'success': True, 'message': 'Database restored successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/backups/<filename>', methods=['DELETE'])
+@login_required
+def delete_backup(filename):
+    filename = secure_filename(filename)
+    path = os.path.join(BACKUP_DIR, filename)
+    if not os.path.exists(path):
+        return jsonify({'success': False, 'error': 'File not found'}), 404
+    try:
+        os.remove(path)
+        return jsonify({'success': True, 'message': 'Backup deleted'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/me', methods=['GET'])
 @login_required

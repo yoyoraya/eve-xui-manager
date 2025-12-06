@@ -1,0 +1,664 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Eve Manager{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="settings-layout">
+    <div class="settings-sidebar">
+        <button class="settings-tab active" onclick="switchTab('templates')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            Notification Templates
+        </button>
+        <button class="settings-tab" onclick="switchTab('backups')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Backup & Restore
+        </button>
+        <!-- Add more tabs here later -->
+    </div>
+
+    <div class="settings-content">
+        <div id="tab-templates" class="tab-pane active">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Client Created Notification</h2>
+                        <p class="text-secondary">Customize the message sent to clients when a new account is created.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="openTemplateModal()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Template
+                    </button>
+                </div>
+                <div class="templates-grid" id="templates-container">
+                    <!-- Templates will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-backups" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Database Backup</h2>
+                        <p class="text-secondary">Create and manage backups of your database.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="createBackup()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                        Create Backup
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Filename</th>
+                                <th>Date</th>
+                                <th>Size</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="backups-table-body">
+                            <!-- Backups will be loaded here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="template-modal">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h2 id="template-modal-title">Add Template</h2>
+            <button class="modal-close" onclick="closeTemplateModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-template-id">
+            <div class="form-group">
+                <label>Template Name</label>
+                <input type="text" id="template-name" class="form-input" placeholder="e.g. Persian Default">
+            </div>
+            <div class="form-group">
+                <label>Content</label>
+                <div class="variables-chips">
+                    <span class="var-chip" onclick="insertVar('{protocol}')">{protocol}</span>
+                    <span class="var-chip" onclick="insertVar('{service_name}')">{service_name}</span>
+                    <span class="var-chip" onclick="insertVar('{volume}')">{volume}</span>
+                    <span class="var-chip" onclick="insertVar('{days}')">{days}</span>
+                    <span class="var-chip" onclick="insertVar('{sub_link}')">{sub_link}</span>
+                    <span class="var-chip" onclick="insertVar('{dashboard_link}')">{dashboard_link}</span>
+                </div>
+                <textarea id="template-content" class="form-input" rows="15" style="font-family: 'Vazirmatn', sans-serif; direction: rtl;"></textarea>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeTemplateModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveTemplate()">Save Template</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .settings-layout {
+        display: grid;
+        grid-template-columns: 250px 1fr;
+        gap: 24px;
+        align-items: start;
+    }
+    
+    @media (max-width: 768px) {
+        .settings-layout {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .settings-sidebar {
+        background: var(--bg-card);
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px solid var(--border-color);
+    }
+
+    .settings-tab {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 12px 16px;
+        background: transparent;
+        border: none;
+        color: var(--text-secondary);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: left;
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+    }
+
+    .settings-tab:hover {
+        background: var(--bg-card-hover);
+        color: var(--text-primary);
+    }
+
+    .settings-tab.active {
+        background: rgba(99, 102, 241, 0.15);
+        color: var(--primary);
+        font-weight: 500;
+    }
+
+    .tab-pane {
+        display: none;
+    }
+
+    .tab-pane.active {
+        display: block;
+    }
+
+    /* Header Styles */
+    .panel-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .header-content h2 {
+        margin: 0 0 4px 0;
+        font-size: 1.5rem;
+    }
+
+    .header-content p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+    }
+
+    /* Grid Layout */
+    .templates-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 20px;
+    }
+
+    /* Bank Card Style */
+    .template-card {
+        background: linear-gradient(145deg, var(--bg-card), rgba(30, 41, 59, 0.8));
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 20px;
+        position: relative;
+        transition: all 0.3s ease;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        overflow: hidden;
+    }
+
+    .template-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        border-color: var(--primary);
+    }
+
+    .template-card.active {
+        border-color: var(--success);
+        box-shadow: 0 0 0 1px var(--success), 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Decorative top bar */
+    .template-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 4px;
+        background: var(--border-color);
+        transition: background 0.3s;
+    }
+
+    .template-card.active::before {
+        background: var(--success);
+    }
+
+    .template-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 16px;
+    }
+
+    .template-title {
+        font-weight: 600;
+        font-size: 1.1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .active-badge {
+        background: rgba(34, 197, 94, 0.15);
+        color: var(--success);
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 12px;
+        width: fit-content;
+        display: inline-block;
+    }
+
+    .template-preview {
+        background: rgba(0, 0, 0, 0.2);
+        padding: 12px;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        white-space: pre-wrap;
+        max-height: 120px;
+        overflow: hidden;
+        margin-bottom: 16px;
+        font-family: 'Vazirmatn', sans-serif;
+        direction: rtl;
+        flex-grow: 1;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 8px;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+    }
+
+    .template-card:hover .action-buttons {
+        opacity: 1;
+    }
+
+    .variables-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .var-chip {
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        color: var(--primary);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .var-chip:hover {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+
+    /* Table Styles */
+    .table-responsive {
+        overflow-x: auto;
+    }
+
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+    }
+
+    .table th {
+        text-align: left;
+        padding: 12px 16px;
+        color: var(--text-secondary);
+        font-weight: 500;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .table td {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-primary);
+    }
+
+    .table tr:last-child td {
+        border-bottom: none;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 12px;
+    }
+
+    .action-btn {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-decoration: none;
+    }
+
+    .action-btn:hover {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: white;
+    }
+
+    .action-btn.warning:hover {
+        background: var(--warning);
+        border-color: var(--warning);
+        color: white;
+    }
+
+    .action-btn.danger:hover {
+        background: var(--danger);
+        border-color: var(--danger);
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', loadTemplates);
+
+    function switchTab(tabName) {
+        document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        
+        event.currentTarget.classList.add('active');
+        document.getElementById(`tab-${tabName}`).classList.add('active');
+
+        if (tabName === 'backups') {
+            loadBackups();
+        }
+    }
+
+    async function loadBackups() {
+        try {
+            const res = await fetch('/api/backups');
+            const data = await res.json();
+            renderBackups(data.backups);
+        } catch (e) {
+            showToast('Error loading backups', 'error');
+        }
+    }
+
+    function renderBackups(backups) {
+        const tbody = document.getElementById('backups-table-body');
+        if (backups.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-secondary">No backups found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = backups.map(b => `
+            <tr>
+                <td>${b.name}</td>
+                <td>${b.date}</td>
+                <td>${formatBytes(b.size)}</td>
+                <td>
+                    <div class="action-buttons">
+                        <a href="/api/backups/${b.name}/download" class="action-btn" title="Download">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        </a>
+                        <button class="action-btn warning" onclick="restoreBackup('${b.name}')" title="Restore">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+                        </button>
+                        <button class="action-btn danger" onclick="deleteBackup('${b.name}')" title="Delete">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    async function createBackup() {
+        try {
+            const btn = event.currentTarget;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = 'Creating...';
+            btn.disabled = true;
+
+            const res = await fetch('/api/backups', { method: 'POST' });
+            const data = await res.json();
+            
+            if (data.success) {
+                showToast('Backup created successfully');
+                loadBackups();
+            } else {
+                showToast(data.error || 'Error creating backup', 'error');
+            }
+            
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function restoreBackup(filename) {
+        if (!confirm('Are you sure you want to restore this backup? Current data will be overwritten!')) return;
+        
+        try {
+            const res = await fetch(`/api/backups/${filename}/restore`, { method: 'POST' });
+            const data = await res.json();
+            
+            if (data.success) {
+                showToast('Database restored successfully');
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                showToast(data.error || 'Error restoring backup', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function deleteBackup(filename) {
+        if (!confirm('Delete this backup?')) return;
+        
+        try {
+            const res = await fetch(`/api/backups/${filename}`, { method: 'DELETE' });
+            const data = await res.json();
+            
+            if (data.success) {
+                showToast('Backup deleted');
+                loadBackups();
+            } else {
+                showToast(data.error || 'Error deleting backup', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    function formatBytes(bytes, decimals = 2) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    async function loadTemplates() {
+        try {
+            const res = await fetch('/api/templates');
+            const data = await res.json();
+            renderTemplates(data.templates);
+        } catch (e) {
+            showToast('Error loading templates', 'error');
+        }
+    }
+
+    function renderTemplates(templates) {
+        const container = document.getElementById('templates-container');
+        if (templates.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No templates found. Create one!</p></div>';
+            return;
+        }
+
+        container.innerHTML = templates.map(t => `
+            <div class="template-card ${t.is_active ? 'active' : ''}">
+                <div class="template-header">
+                    <div class="template-title">
+                        ${t.name}
+                        ${t.is_active ? '<span class="active-badge">Active</span>' : ''}
+                    </div>
+                    <div class="action-buttons">
+                        ${!t.is_active ? `
+                        <button class="action-btn success" onclick="activateTemplate(${t.id})" title="Set Active">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </button>` : ''}
+                        <button class="action-btn" onclick="editTemplate(${t.id})" title="Edit">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        </button>
+                        <button class="action-btn danger" onclick="deleteTemplate(${t.id})" title="Delete" ${t.is_active ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="template-preview">${escapeHtml(t.content)}</div>
+            </div>
+        `).join('');
+    }
+
+    let templatesCache = []; // To store loaded templates for editing
+
+    // Override fetch to cache templates
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+        const response = await originalFetch(...args);
+        const clone = response.clone();
+        if (args[0] === '/api/templates' && args[1] === undefined) {
+            try {
+                const data = await clone.json();
+                templatesCache = data.templates;
+            } catch(e) {}
+        }
+        return response;
+    };
+
+    function openTemplateModal() {
+        document.getElementById('template-modal-title').textContent = 'Add Template';
+        document.getElementById('edit-template-id').value = '';
+        document.getElementById('template-name').value = '';
+        document.getElementById('template-content').value = '';
+        document.getElementById('template-modal').classList.remove('hidden');
+    }
+
+    function editTemplate(id) {
+        const t = templatesCache.find(x => x.id === id);
+        if (!t) return;
+        
+        document.getElementById('template-modal-title').textContent = 'Edit Template';
+        document.getElementById('edit-template-id').value = t.id;
+        document.getElementById('template-name').value = t.name;
+        document.getElementById('template-content').value = t.content;
+        document.getElementById('template-modal').classList.remove('hidden');
+    }
+
+    function closeTemplateModal() {
+        document.getElementById('template-modal').classList.add('hidden');
+    }
+
+    function insertVar(variable) {
+        const textarea = document.getElementById('template-content');
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const text = textarea.value;
+        const before = text.substring(0, start);
+        const after = text.substring(end, text.length);
+        textarea.value = before + variable + after;
+        textarea.selectionStart = textarea.selectionEnd = start + variable.length;
+        textarea.focus();
+    }
+
+    async function saveTemplate() {
+        const id = document.getElementById('edit-template-id').value;
+        const name = document.getElementById('template-name').value;
+        const content = document.getElementById('template-content').value;
+
+        if (!name || !content) {
+            showToast('Name and content are required', 'error');
+            return;
+        }
+
+        try {
+            const url = id ? `/api/templates/${id}` : '/api/templates';
+            const method = id ? 'PUT' : 'POST';
+            
+            const res = await fetch(url, {
+                method: method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name, content })
+            });
+            
+            const data = await res.json();
+            if (data.success) {
+                showToast('Template saved');
+                closeTemplateModal();
+                loadTemplates();
+            } else {
+                showToast(data.error || 'Error saving template', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function activateTemplate(id) {
+        try {
+            const res = await fetch(`/api/templates/${id}/activate`, { method: 'POST' });
+            if (res.ok) {
+                showToast('Template activated');
+                loadTemplates();
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function deleteTemplate(id) {
+        if (!confirm('Delete this template?')) return;
+        try {
+            const res = await fetch(`/api/templates/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Template deleted');
+                loadTemplates();
+            } else {
+                showToast(data.error || 'Error deleting', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+</script>
+{% endblock %}

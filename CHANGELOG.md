@@ -2,6 +2,18 @@
 
 All notable changes to Eve - Xui Manager are documented in this file.
 
+## [1.2.1] - 2025-12-06
+
+### ✨ New Features
+- **Settings Page**: Introduced a dedicated settings area for managing application configurations.
+- **Notification Templates**: Added a system to create and manage dynamic text templates for client creation notifications.
+- **Backup & Restore**: Implemented full database backup and restore functionality with download/delete options.
+
+### 🎨 UI/UX Improvements
+- **Card Design**: Updated template management to use a modern card-based layout.
+- **Number Formatting**: Applied global thousands separators for better readability of prices and volumes.
+- **Visual Polish**: Improved button styles, spacing, and hover effects in the Settings and Backup sections.
+
 ## [1.2.0] - 2025-12-06
 
 ### ✨ New Features

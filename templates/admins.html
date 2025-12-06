@@ -28,14 +28,16 @@
         <div class="modal-body">
             <input type="hidden" id="edit-admin-id">
             
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="admin-username" placeholder="Username">
-            </div>
-            
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="admin-password" placeholder="Leave empty to keep current">
+            <div style="display: flex; gap: 10px;">
+                <div class="form-group" style="flex: 1;">
+                    <label>Username</label>
+                    <input type="text" id="admin-username" placeholder="Username">
+                </div>
+                
+                <div class="form-group" style="flex: 1;">
+                    <label>Password</label>
+                    <input type="password" id="admin-password" placeholder="Leave empty to keep current">
+                </div>
             </div>
 
             <div class="form-group">
@@ -50,7 +52,7 @@
             <div id="reseller-fields">
                 <div class="form-group">
                     <label>Credit (Amount)</label>
-                    <input type="number" id="admin-credit" placeholder="0" value="0">
+                    <input type="text" id="admin-credit" placeholder="0" value="0" oninput="formatNumberInput(this)">
                     <small style="color: var(--text-secondary);">Initial credit for new user</small>
                 </div>
                 
@@ -59,11 +61,29 @@
                     <input type="text" id="admin-allowed-servers" placeholder="e.g. 1, 2 or *" value="*">
                     <small style="color: var(--text-secondary); font-size: 0.7rem;">Use * for all servers</small>
                 </div>
+
+                <div class="form-group">
+                    <label>Discount Percentage (%)</label>
+                    <input type="number" id="admin-discount" placeholder="0" min="0" max="100">
+                    <small style="color: var(--text-secondary);">Applies to standard prices</small>
+                </div>
+
+                <div style="display: flex; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Custom Cost/Day</label>
+                        <input type="text" id="admin-cost-day" placeholder="Default" oninput="formatNumberInput(this)">
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>Custom Cost/GB</label>
+                        <input type="text" id="admin-cost-gb" placeholder="Default" oninput="formatNumberInput(this)">
+                    </div>
+                </div>
             </div>
 
             <div class="form-group checkbox-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="admin-enabled" checked>
+                    <span class="checkmark"></span>
                     <span>Enabled</span>
                 </label>
             </div>
@@ -237,6 +257,9 @@
         document.getElementById('admin-role').value = 'reseller';
         document.getElementById('admin-credit').value = '0';
         document.getElementById('admin-allowed-servers').value = '*';
+        document.getElementById('admin-discount').value = '0';
+        document.getElementById('admin-cost-day').value = '';
+        document.getElementById('admin-cost-gb').value = '';
         document.getElementById('admin-enabled').checked = true;
         
         toggleResellerFields();
@@ -252,7 +275,7 @@
         document.getElementById('admin-username').value = admin.username;
         document.getElementById('admin-password').value = '';
         document.getElementById('admin-role').value = admin.role || 'admin';
-        document.getElementById('admin-credit').value = admin.credit || 0;
+        document.getElementById('admin-credit').value = (admin.credit || 0).toLocaleString();
         
         let servers = admin.allowed_servers;
         if (Array.isArray(servers)) {
@@ -260,6 +283,10 @@
         }
         document.getElementById('admin-allowed-servers').value = servers || '*';
         
+        document.getElementById('admin-discount').value = admin.discount_percent || 0;
+        document.getElementById('admin-cost-day').value = admin.custom_cost_per_day ? admin.custom_cost_per_day.toLocaleString() : '';
+        document.getElementById('admin-cost-gb').value = admin.custom_cost_per_gb ? admin.custom_cost_per_gb.toLocaleString() : '';
+
         document.getElementById('admin-enabled').checked = admin.enabled;
         
         toggleResellerFields();
@@ -282,13 +309,20 @@
             allowedServers = allowedServersRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
         }
 
+        const creditRaw = document.getElementById('admin-credit').value.replace(/,/g, '');
+        const costDayRaw = document.getElementById('admin-cost-day').value.replace(/,/g, '');
+        const costGbRaw = document.getElementById('admin-cost-gb').value.replace(/,/g, '');
+
         const data = {
             username: document.getElementById('admin-username').value,
             password: document.getElementById('admin-password').value,
             role: role,
-            credit: parseInt(document.getElementById('admin-credit').value) || 0,
+            credit: parseInt(creditRaw) || 0,
             allowed_servers: allowedServers,
-            enabled: document.getElementById('admin-enabled').checked
+            enabled: document.getElementById('admin-enabled').checked,
+            discount_percent: parseInt(document.getElementById('admin-discount').value) || 0,
+            custom_cost_per_day: costDayRaw ? parseInt(costDayRaw) : null,
+            custom_cost_per_gb: costGbRaw ? parseInt(costGbRaw) : null
         };
         
         if (!data.username) {

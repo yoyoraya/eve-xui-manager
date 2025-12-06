@@ -1183,6 +1183,7 @@
         let vol = parseInt(document.getElementById('renew-custom-volume').value) || 0;
         if (days < 0) days = 0;
         if (vol < 0) vol = 0;
+        // BASE_COST_DAY and BASE_COST_GB are now user-specific (calculated in backend)
         return (days * BASE_COST_DAY) + (vol * BASE_COST_GB);
     }
 
@@ -1209,6 +1210,7 @@
         let vol = parseInt(document.getElementById('custom-volume').value) || 0;
         if (days < 0) days = 0;
         if (vol < 0) vol = 0;
+        // BASE_COST_DAY and BASE_COST_GB are now user-specific (calculated in backend)
         return (days * BASE_COST_DAY) + (vol * BASE_COST_GB);
     }
 
@@ -1346,21 +1348,45 @@
         const modal = document.getElementById('new-client-modal');
         const detailsText = document.getElementById('new-client-details');
         
-        const text = `😍 سفارش جدید شما
+        // Fetch active template
+        let templateContent = '';
+        try {
+            const res = await fetch('/api/templates/active');
+            const data = await res.json();
+            if (data.success) {
+                templateContent = data.content;
+            }
+        } catch (e) {
+            console.error('Failed to load template', e);
+        }
+
+        // Fallback if fetch fails or returns empty
+        if (!templateContent) {
+            templateContent = `😍 سفارش جدید شما
 
 اطلاعات سرویس
-📡 پروتکل: ${client.protocol}
-🔮 نام سرویس: ${client.email}
-🔋حجم سرویس: ${client.volume} گیگ
-⏰ مدت سرویس: ${client.days} روز⁮⁮ ⁮⁮
+📡 پروتکل: {protocol}
+🔮 نام سرویس: {service_name}
+🔋حجم سرویس: {volume} گیگ
+⏰ مدت سرویس: {days} روز⁮⁮ ⁮⁮
 
 لینک های اتصال
  
 🌐 subscription Direct:
-${client.sub_link}
+{sub_link}
 
 🌐 Account Dashboard : 
-${client.dashboard_link}`;
+{dashboard_link}`;
+        }
+
+        // Replace variables
+        const text = templateContent
+            .replace(/{protocol}/g, client.protocol || 'vless')
+            .replace(/{service_name}/g, client.email)
+            .replace(/{volume}/g, client.volume)
+            .replace(/{days}/g, client.days)
+            .replace(/{sub_link}/g, client.sub_link || '')
+            .replace(/{dashboard_link}/g, client.dashboard_link || '');
 
         detailsText.value = text;
         
