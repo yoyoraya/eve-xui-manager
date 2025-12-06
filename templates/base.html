@@ -6,6 +6,7 @@
     <title>{% block title %}Eve Manager{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 <body class="ltr">
     <div class="app-layout">
@@ -15,7 +16,13 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                     </svg>
-                    <span>Eve</span>
+                    <div style="display: flex; flex-direction: column; line-height: 1;">
+                        <span>Eve</span>
+                        <span style="font-size: 0.65rem; color: var(--text-secondary); font-weight: 400; margin-top: 2px;">v{{ app_version }}</span>
+                    </div>
+                    <a id="update-badge" href="#" target="_blank" style="display: none; margin-left: 8px; background: rgba(249, 115, 22, 0.2); color: #fb923c; font-size: 0.6rem; padding: 2px 6px; border-radius: 4px; text-decoration: none; border: 1px solid rgba(251, 146, 60, 0.3);">
+                        🚀 New Release
+                    </a>
                 </div>
                 <button class="sidebar-toggle" onclick="toggleSidebar()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -41,6 +48,11 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                     <span>Transactions</span>
                 </a>
+
+                <a href="{{ url_for('receipts_page') }}" class="nav-item {% if request.endpoint == 'receipts_page' %}active{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V3a1 1 0 0 1 1-1h10l5 5v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="12" y2="17"></line></svg>
+                    <span>Receipts</span>
+                </a>
                 
                 {% if is_superadmin %}
                 <a href="{{ url_for('servers_page') }}" class="nav-item {% if request.endpoint == 'servers_page' %}active{% endif %}">
@@ -56,6 +68,11 @@
                 <a href="{{ url_for('packages_page') }}" class="nav-item {% if request.endpoint == 'packages_page' %}active{% endif %}">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
                     <span>Packages</span>
+                </a>
+
+                <a href="{{ url_for('bank_cards_page') }}" class="nav-item {% if request.endpoint == 'bank_cards_page' %}active{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="3"></rect><line x1="8" y1="15" x2="8" y2="15"></line><line x1="16" y1="15" x2="16" y2="15"></line><line x1="7" y1="8" x2="17" y2="8"></line></svg>
+                    <span>Bank Cards</span>
                 </a>
                 
                 <a href="{{ url_for('sub_manager_page') }}" class="nav-item {% if request.endpoint == 'sub_manager_page' %}active{% endif %}">
@@ -167,8 +184,24 @@
             const normalized = Number(newAmount) || 0;
             pillValue.textContent = normalized.toLocaleString();
         }
+
+        // Check for updates
+        document.addEventListener('DOMContentLoaded', () => {
+            fetch('/api/check-update')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success && data.update_available) {
+                        const badge = document.getElementById('update-badge');
+                        if (badge) {
+                            badge.style.display = 'inline-block';
+                            badge.href = data.release_url;
+                            badge.title = `New version ${data.latest_version} available!`;
+                        }
+                    }
+                })
+                .catch(err => console.error('Update check failed', err));
+        });
     </script>
-    
     {% block scripts %}{% endblock %}
 </body>
 </html>

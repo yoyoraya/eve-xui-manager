@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+
+{% block title %}Bank Cards{% endblock %}
+{% block page_title %}Bank Cards{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-success" onclick="openCardModal()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+    </svg>
+    <span class="btn-label">Add Card</span>
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="panel-grid">
+    <div class="panel-card">
+        <div class="panel-card-header">
+            <div>
+                <h2>Registered Cards</h2>
+                <p class="panel-subtitle">Manage deposit destinations for manual receipts.</p>
+            </div>
+        </div>
+        <div id="cards-empty" class="empty-state" style="display:none;">
+            <h3>No cards yet</h3>
+            <p>Create at least one card so resellers know where to send funds.</p>
+        </div>
+        <div class="card-grid" id="cards-list"></div>
+    </div>
+</div>
+
+<div class="modal-overlay hidden" id="card-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2 id="card-modal-title">Add Card</h2>
+            <button class="modal-close" onclick="closeCardModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="card-form" onsubmit="submitCardForm(event)">
+                <input type="hidden" id="card-id">
+                <div class="form-group">
+                    <label>Label *</label>
+                    <input type="text" id="card-label" class="form-input" placeholder="Primary Card" required>
+                </div>
+                <div class="form-group">
+                    <label>Bank Name</label>
+                    <input type="text" id="card-bank" class="form-input" placeholder="Melli">
+                </div>
+                <div class="form-group">
+                    <label>Owner Name</label>
+                    <input type="text" id="card-owner" class="form-input" placeholder="John Doe">
+                </div>
+                <div class="form-group">
+                    <label>Card Number</label>
+                    <input type="text" id="card-number" class="form-input" placeholder="6219 86•• •••• 1234">
+                </div>
+                <div class="form-group">
+                    <label>IBAN</label>
+                    <input type="text" id="card-iban" class="form-input" placeholder="IR••">
+                </div>
+                <div class="form-group">
+                    <label>Account Number</label>
+                    <input type="text" id="card-account" class="form-input" placeholder="0123456789">
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="card-notes" class="form-input" rows="3" placeholder="Seen in dashboard"></textarea>
+                </div>
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="card-active" checked>
+                        <span>Active</span>
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCardModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let cards = [];
+
+    async function loadCards() {
+        try {
+            const resp = await fetch('/api/bank-cards?include_inactive=1');
+            const data = await resp.json();
+            if (!data.success) {
+                showToast(data.error || 'Failed to load cards', 'error');
+                return;
+            }
+            cards = data.cards || [];
+            renderCards();
+        } catch (err) {
+            showToast(err.message || 'Failed to load cards', 'error');
+        }
+    }
+
+    function renderCards() {
+        const grid = document.getElementById('cards-list');
+        if (!grid) return;
+        grid.innerHTML = '';
+        const emptyState = document.getElementById('cards-empty');
+        if (!cards.length) {
+            if (emptyState) emptyState.style.display = 'block';
+            return;
+        }
+        if (emptyState) emptyState.style.display = 'none';
+
+        cards.forEach(card => {
+            const container = document.createElement('div');
+            const statusClass = card.is_active ? 'badge-success' : 'badge-muted';
+            const formattedNumber = formatCardNumber(card.card_number || card.masked_card || '');
+            const formattedIban = formatIban(card.iban);
+            container.className = `bank-card bank-card--compact ${card.is_active ? '' : 'bank-card--disabled'}`.trim();
+            container.innerHTML = `
+                <div class="bank-card__header">
+                    <div class="bank-card__icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="3"></rect><line x1="8" y1="15" x2="8" y2="15"></line><line x1="16" y1="15" x2="16" y2="15"></line><line x1="7" y1="8" x2="17" y2="8"></line></svg>
+                    </div>
+                    <div class="bank-card__title">
+                        <div class="bank-card__name">${card.label || 'Untitled Card'}</div>
+                        <div class="bank-card__bank">${card.bank_name || 'Bank -'}</div>
+                    </div>
+                    <span class="badge ${statusClass}">${card.is_active ? 'Enabled' : 'Disabled'}</span>
+                </div>
+                <div class="bank-card__number">${formattedNumber}</div>
+                <div class="bank-card__meta">
+                    <div>
+                        <span class="meta-label">Owner</span>
+                        <p>${card.owner_name || '-'}</p>
+                    </div>
+                    <div>
+                        <span class="meta-label">IBAN</span>
+                        <p>${formattedIban}</p>
+                    </div>
+                    <div>
+                        <span class="meta-label">Account</span>
+                        <p>${card.account_number || '-'}</p>
+                    </div>
+                    <div>
+                        <span class="meta-label">Notes</span>
+                        <p>${card.notes || '-'}</p>
+                    </div>
+                </div>
+                <div class="bank-card__actions">
+                    <button class="bank-card__action" onclick="openCardModal(${card.id})" title="Edit">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 0 1 4 4L7 21l-4 1 1-4Z"/><path d="m15 5 4 4"/></svg>
+                    </button>
+                    <button class="bank-card__action danger" onclick="deleteCard(${card.id})" title="Delete">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                </div>
+            `;
+            grid.appendChild(container);
+        });
+    }
+
+    function formatCardNumber(raw) {
+        if (!raw) return '---- ---- ---- ----';
+        const digits = String(raw).replace(/[^0-9]/g, '');
+        if (!digits) return raw;
+        return digits.replace(/(.{4})/g, '$1 ').trim();
+    }
+
+    function formatIban(raw) {
+        if (!raw) return '-';
+        const cleaned = String(raw).replace(/\s+/g, '').toUpperCase();
+        return cleaned.replace(/(.{4})/g, '$1 ').trim();
+    }
+
+    function openCardModal(cardId) {
+        const modal = document.getElementById('card-modal');
+        modal.classList.remove('hidden');
+        if (!cardId) {
+            document.getElementById('card-modal-title').textContent = 'Add Card';
+            document.getElementById('card-form').reset();
+            document.getElementById('card-id').value = '';
+            document.getElementById('card-active').checked = true;
+            return;
+        }
+        document.getElementById('card-modal-title').textContent = 'Edit Card';
+        const card = cards.find(c => c.id === cardId);
+        if (!card) return;
+        document.getElementById('card-id').value = card.id;
+        document.getElementById('card-label').value = card.label || '';
+        document.getElementById('card-bank').value = card.bank_name || '';
+        document.getElementById('card-owner').value = card.owner_name || '';
+        document.getElementById('card-number').value = card.card_number || '';
+        document.getElementById('card-iban').value = card.iban || '';
+        document.getElementById('card-account').value = card.account_number || '';
+        document.getElementById('card-notes').value = card.notes || '';
+        document.getElementById('card-active').checked = !!card.is_active;
+    }
+
+    function closeCardModal() {
+        document.getElementById('card-modal').classList.add('hidden');
+    }
+
+    async function submitCardForm(event) {
+        event.preventDefault();
+        const id = document.getElementById('card-id').value;
+        const payload = {
+            label: document.getElementById('card-label').value,
+            bank_name: document.getElementById('card-bank').value,
+            owner_name: document.getElementById('card-owner').value,
+            card_number: document.getElementById('card-number').value,
+            iban: document.getElementById('card-iban').value,
+            account_number: document.getElementById('card-account').value,
+            notes: document.getElementById('card-notes').value,
+            is_active: document.getElementById('card-active').checked
+        };
+        const method = id ? 'PUT' : 'POST';
+        const url = id ? `/api/bank-cards/${id}` : '/api/bank-cards';
+        try {
+            const resp = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                showToast(data.error || 'Save failed', 'error');
+                return;
+            }
+            showToast('Saved');
+            closeCardModal();
+            await loadCards();
+        } catch (err) {
+            showToast(err.message || 'Save failed', 'error');
+        }
+    }
+
+    async function deleteCard(cardId) {
+        if (!confirm('Delete this card?')) return;
+        try {
+            const resp = await fetch(`/api/bank-cards/${cardId}`, { method: 'DELETE' });
+            const data = await resp.json();
+            if (!data.success) {
+                showToast(data.error || 'Delete failed', 'error');
+                return;
+            }
+            showToast('Card removed');
+            await loadCards();
+        } catch (err) {
+            showToast(err.message || 'Delete failed', 'error');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadCards);
+</script>
+{% endblock %}

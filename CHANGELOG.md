@@ -2,6 +2,23 @@
 
 All notable changes to Eve - Xui Manager are documented in this file.
 
+## [1.2.0] - 2025-12-06
+
+### ✨ New Features
+- **Version Checking**: Added automatic version checking against GitHub Releases.
+- **New Client Modal**: Enhanced success modal with QR codes and copyable subscription details.
+- **Transaction Logging**: Expanded transaction logging to include Admin actions when costs are involved.
+
+### 🎨 UI/UX Improvements
+- **Renew Modal**: Redesigned to match the Purchase modal layout for consistency.
+- **Receipts UI**: Improved card selection with a grid layout and copy-to-clipboard functionality.
+- **Typography**: Standardized Persian text using the "Vazirmatn" font.
+- **Sidebar**: Added a "New Release" badge with visual indicators.
+
+### 🐛 Bug Fixes
+- Fixed `TemplateAssertionError` in `base.html`.
+- Resolved issue where Admin transactions were not being logged in history.
+
 ## [1.0.0] - 2024-12-01
 
 ### 🎉 Initial Release

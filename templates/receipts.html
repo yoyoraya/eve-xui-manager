@@ -1,0 +1,788 @@
+{% extends "base.html" %}
+
+{% block title %}Manual Receipts{% endblock %}
+{% block page_title %}Manual Receipts{% endblock %}
+
+{% block content %}
+<div class="receipts-layout">
+    <!-- Left Column: Upload Form -->
+    <div class="panel-card upload-panel">
+        <div class="panel-card-header">
+            <h2>Upload Receipt</h2>
+        </div>
+        <form id="receipt-form" onsubmit="submitReceipt(event)" enctype="multipart/form-data">
+            <div class="form-group">
+                <label>Amount *</label>
+                <div class="input-group">
+                    <input type="number" id="receipt-amount" name="amount" class="form-input" min="1" placeholder="e.g. 100000" required>
+                    <span class="input-suffix">IRT</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Bank Card</label>
+                <input type="hidden" id="receipt-card-input" name="card_id" required>
+                <div id="receipt-card-list" class="card-selection-grid"></div>
+            </div>
+            <div class="form-group">
+                <label>Receipt Image *</label>
+                <div class="file-input-wrapper">
+                    <input type="file" id="receipt-file" name="file" class="form-input" accept="image/*,.pdf" required>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-block">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Submit Receipt
+                </button>
+            </div>
+        </form>
+
+        {% if is_superadmin %}
+        <div class="divider"></div>
+        <div class="panel-card-header">
+            <h2>Auto Approval</h2>
+        </div>
+        <form id="auto-window-form" onsubmit="createAutoWindow(event)">
+            <div class="form-group">
+                <label>End Date *</label>
+                <input type="text" id="auto-end-shamsi" data-jdp class="form-input" placeholder="1403/09/15 14:30" required>
+            </div>
+            <div class="form-group">
+                <label>Max Amount (0 = unlimited)</label>
+                <input type="number" id="auto-max" class="form-input" min="0" value="0">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-block">Create Window</button>
+            </div>
+        </form>
+        <div class="chip-list" id="auto-windows-list" style="margin-top: 16px;"></div>
+        {% endif %}
+    </div>
+
+    <!-- Right Column: Receipts Table -->
+    <div class="panel-card receipts-panel">
+        <div class="panel-card-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 35px;">
+            <h2 style="margin: 0;">{% if is_superadmin %}All Receipts{% else %}My Receipts{% endif %}</h2>
+            <button class="btn btn-icon" onclick="loadReceipts()" title="Refresh">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+            </button>
+        </div>
+        
+        <div class="status-chips" id="receipt-filters">
+            <button class="chip active" data-status="" onclick="setReceiptFilter(event, '')">All</button>
+            <button class="chip" data-status="pending" onclick="setReceiptFilter(event, 'pending')">Pending</button>
+            <button class="chip" data-status="approved" onclick="setReceiptFilter(event, 'approved')">Approved</button>
+            <button class="chip" data-status="rejected" onclick="setReceiptFilter(event, 'rejected')">Rejected</button>
+        </div>
+
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        {% if is_superadmin %}<th>User</th>{% endif %}
+                        <th>Amount</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="receipts-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    .receipts-layout {
+        display: grid;
+        grid-template-columns: 350px 1fr;
+        gap: 24px;
+        align-items: start;
+    }
+    
+    @media (max-width: 1024px) {
+        .receipts-layout {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .divider {
+        height: 1px;
+        background-color: var(--border-color);
+        margin: 24px 0;
+    }
+
+    .btn-icon {
+        background: transparent;
+        border: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+        padding: 4px;
+    }
+    .btn-icon:hover {
+        color: var(--text-primary);
+    }
+
+    .action-btn-group {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .action-icon.success {
+        border-color: rgba(34, 197, 94, 0.45);
+        color: rgba(74, 222, 128, 0.9);
+    }
+    .action-icon.success:hover {
+        border-color: var(--success);
+        color: var(--success);
+    }
+    
+    .persian-font {
+        font-family: 'Vazirmatn', sans-serif !important;
+    }
+
+    /* Table Styling to match attachment */
+    .data-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+    
+    .data-table th {
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        padding: 12px 16px;
+        text-align: left;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .data-table td {
+        padding: 16px;
+        vertical-align: middle;
+        border-bottom: 1px solid var(--border-color);
+        background: rgba(30, 41, 59, 0.4); /* slightly transparent card bg */
+    }
+
+    .data-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    /* Jalali Datepicker Dark Theme Overrides */
+    jdp-container {
+        background-color: var(--bg-card) !important;
+        border: 1px solid var(--border-color) !important;
+        box-shadow: var(--shadow-lg) !important;
+        font-family: 'Vazirmatn', sans-serif !important;
+        z-index: 9999 !important;
+    }
+
+    jdp-container .jdp-header {
+        background-color: var(--bg-dark) !important;
+        border-bottom: 1px solid var(--border-color) !important;
+    }
+
+    /* Fix for Month/Year Dropdowns */
+    jdp-container .jdp-header select,
+    jdp-container select {
+        background-color: var(--bg-card) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 4px !important;
+        padding: 2px 4px !important;
+        outline: none !important;
+    }
+
+    jdp-container .jdp-header .jdp-btn {
+        background-color: var(--bg-card) !important;
+        color: var(--text-secondary) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 4px !important;
+        margin: 0 2px !important;
+    }
+    
+    jdp-container .jdp-header .jdp-btn:hover {
+        background-color: var(--primary) !important;
+        color: white !important;
+        border-color: var(--primary) !important;
+    }
+
+    jdp-container .jdp-days {
+        color: var(--text-primary) !important;
+    }
+
+    jdp-container .jdp-day {
+        color: var(--text-primary) !important;
+    }
+
+    jdp-container .jdp-day:hover {
+        background-color: var(--bg-card-hover) !important;
+        border-radius: 4px !important;
+    }
+
+    jdp-container .jdp-day.selected {
+        background-color: var(--primary) !important;
+        color: white !important;
+        border-radius: 4px !important;
+        box-shadow: 0 2px 4px rgba(99, 102, 241, 0.4) !important;
+    }
+    
+    jdp-container .jdp-day.today {
+        border: 1px solid var(--primary) !important;
+        border-radius: 4px !important;
+    }
+    
+    jdp-container .jdp-day.not-in-month {
+        color: #6b7280 !important;
+        opacity: 1 !important;
+    }
+
+    /* Week Day Names (Sh, Y, D...) */
+    jdp-container small {
+        color: var(--text-secondary) !important;
+        font-weight: bold !important;
+    }
+    /* Keep Friday Red */
+    jdp-container small:last-child {
+        color: var(--danger) !important;
+    }
+
+    /* Time Picker Styling */
+    jdp-container .jdp-time-container {
+        background-color: var(--bg-dark) !important;
+        border-top: 1px solid var(--border-color) !important;
+        padding: 12px !important;
+    }
+    
+    /* Fix for Time Inputs */
+    jdp-container .jdp-time-container input,
+    jdp-container input {
+        background-color: var(--bg-card) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 6px !important;
+        padding: 6px !important;
+        font-family: 'Vazirmatn', sans-serif !important;
+        text-align: center !important;
+        font-size: 1.1rem !important;
+        width: 60px !important;
+    }
+    
+    jdp-container .jdp-time-container .jdp-time-separator {
+        color: var(--text-primary) !important;
+        font-size: 1.2rem !important;
+        margin: 0 8px !important;
+    }
+
+    /* Footer/Buttons */
+    jdp-container .jdp-footer {
+        background-color: var(--bg-dark) !important;
+        border-top: 1px solid var(--border-color) !important;
+        padding: 8px !important;
+    }
+    
+    jdp-container .jdp-btn-today, 
+    jdp-container .jdp-btn-empty {
+        background-color: var(--bg-card) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 6px !important;
+        padding: 6px 12px !important;
+        font-size: 0.9rem !important;
+        transition: all 0.2s !important;
+    }
+
+    jdp-container .jdp-btn-today:hover, 
+    jdp-container .jdp-btn-empty:hover {
+        background-color: var(--primary) !important;
+        border-color: var(--primary) !important;
+        color: white !important;
+    }
+
+    .card-selection-grid {
+        display: grid;
+        gap: 10px;
+        margin-top: 8px;
+    }
+    .card-option {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        position: relative;
+    }
+    .card-option:hover {
+        border-color: var(--primary);
+        background: rgba(99, 102, 241, 0.05);
+    }
+    .card-option.selected {
+        border-color: var(--primary);
+        background: rgba(99, 102, 241, 0.1);
+        box-shadow: 0 0 0 1px var(--primary);
+    }
+    .card-option-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .card-bank-icon {
+        width: 32px;
+        height: 32px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-primary);
+    }
+    .card-details {
+        display: flex;
+        flex-direction: column;
+    }
+    .card-number {
+        font-family: monospace;
+        font-size: 1rem;
+        letter-spacing: 1px;
+        color: var(--text-primary);
+    }
+    .card-bank-name {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+    .card-copy-btn {
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 4px;
+        transition: color 0.2s;
+    }
+    .card-copy-btn:hover {
+        color: var(--primary);
+        background: rgba(255, 255, 255, 0.05);
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/persian-date@latest/dist/persian-date.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/@majidh1/jalalidatepicker/dist/jalalidatepicker.min.css">
+<script src="https://unpkg.com/@majidh1/jalalidatepicker/dist/jalalidatepicker.min.js"></script>
+
+<script>
+    const isSuperadmin = JSON.parse('{{ (is_superadmin)|tojson }}');
+    const currentAdminId = JSON.parse('{{ (current_admin_id)|tojson }}');
+    let bankCards = [];
+    let receipts = [];
+    let autoWindows = [];
+    let receiptStatusFilter = '';
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadBankCards();
+        loadReceipts();
+        if (isSuperadmin) {
+            loadAutoWindows();
+            initShamsiPicker();
+        }
+    });
+
+    function initShamsiPicker() {
+        if (typeof jalaliDatepicker !== 'undefined') {
+            jalaliDatepicker.startWatch({
+                time: true,
+                hasSecond: false
+            });
+        }
+    }
+
+    async function loadBankCards() {
+        try {
+            const resp = await fetch('/api/bank-cards');
+            const data = await resp.json();
+            if (data.success) {
+                bankCards = data.cards || [];
+                renderCardOptions();
+            }
+        } catch (err) {
+            console.error('Failed to load cards', err);
+        }
+    }
+
+    function renderCardOptions() {
+        const container = document.getElementById('receipt-card-list');
+        const input = document.getElementById('receipt-card-input');
+        if (!container) return;
+        
+        container.innerHTML = '';
+        
+        if (bankCards.length === 0) {
+            container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.9rem; padding: 10px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px;">No bank cards available</div>';
+            return;
+        }
+
+        bankCards.forEach(card => {
+            const el = document.createElement('div');
+            el.className = 'card-option';
+            const cardNumber = card.card_number || card.number || '';
+            el.onclick = (e) => selectCard(card.id, cardNumber);
+            
+            // Format card number (groups of 4)
+            const formattedNumber = (cardNumber).replace(/(\d{4})(?=\d)/g, '$1 ');
+            
+            el.innerHTML = `
+                <div class="card-option-info">
+                    <div class="card-bank-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                    </div>
+                    <div class="card-details">
+                        <span class="card-number">${formattedNumber || card.masked_card || 'Unknown Number'}</span>
+                        <span class="card-bank-name">${card.bank_name || card.bank || 'Bank Card'} - ${card.owner_name || card.owner || ''}</span>
+                    </div>
+                </div>
+                <button class="card-copy-btn" type="button" onclick="copyCardNumber(event, '${cardNumber}')" title="Copy Number">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+            `;
+            el.dataset.id = card.id;
+            container.appendChild(el);
+        });
+    }
+
+    function selectCard(id, number) {
+        const input = document.getElementById('receipt-card-input');
+        if (input) input.value = id;
+        
+        document.querySelectorAll('.card-option').forEach(el => {
+            if (el.dataset.id == id) {
+                el.classList.add('selected');
+            } else {
+                el.classList.remove('selected');
+            }
+        });
+        
+        // Also copy to clipboard on selection as requested
+        if (number) {
+            navigator.clipboard.writeText(number).then(() => {
+                showToast('Card number copied');
+            }).catch(() => {});
+        }
+    }
+
+    function copyCardNumber(event, number) {
+        event.stopPropagation(); 
+        if (number) {
+            navigator.clipboard.writeText(number).then(() => {
+                showToast('Card number copied');
+            });
+        }
+    }
+
+    async function loadReceipts() {
+        const params = [];
+        if (receiptStatusFilter) params.push(`status=${receiptStatusFilter}`);
+        
+        const query = params.length ? `?${params.join('&')}` : '';
+        try {
+            const resp = await fetch(`/api/receipts${query}`);
+            const data = await resp.json();
+            if (!data.success) {
+                showToast(data.error || 'Failed to load receipts', 'error');
+                return;
+            }
+            receipts = data.receipts || [];
+            renderReceipts();
+        } catch (err) {
+            showToast(err.message || 'Failed to load receipts', 'error');
+        }
+    }
+
+    function renderReceipts() {
+        const body = document.getElementById('receipts-table-body');
+        body.innerHTML = '';
+        
+        if (!receipts.length) {
+            const colSpan = isSuperadmin ? 5 : 4;
+            const row = document.createElement('tr');
+            row.innerHTML = `<td colspan="${colSpan}" style="text-align:center; padding:20px; color: var(--text-secondary);">No receipts found</td>`;
+            body.appendChild(row);
+            return;
+        }
+
+        receipts.forEach(r => {
+            const tr = document.createElement('tr');
+            
+            let userCell = '';
+            if (isSuperadmin) {
+                userCell = `<td>${r.admin ? r.admin.username : 'Unknown'}</td>`;
+            }
+
+            // Shamsi Date Conversion
+            let dateStr = r.created_at;
+            try {
+                if (typeof persianDate !== 'undefined') {
+                    dateStr = new persianDate(new Date(r.created_at)).format('YYYY/MM/DD HH:mm');
+                } else {
+                    dateStr = new Date(r.created_at).toLocaleString();
+                }
+            } catch(e) {
+                console.error(e);
+            }
+
+            const statusBadge = renderStatusBadge(r.status, r.auto_deadline);
+            
+            let actions = `<div class="action-btn-group">`;
+            
+            // View Button (Icon)
+            if (r.image_url) {
+                actions += `
+                    <a href="${r.image_url}" target="_blank" class="action-icon primary" title="View Receipt">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </a>`;
+            } else {
+                actions += `
+                    <button class="action-icon" disabled title="No Image">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M21 21l-4.486-4.494M6.5 6.5l4 4"/><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>`;
+            }
+
+            // Approve/Reject Buttons (Superadmin only & Pending)
+            if (isSuperadmin && (r.status === 'pending' || r.status === 'auto_pending')) {
+                actions += `
+                    <button class="action-icon success" onclick="approveReceipt(${r.id})" title="Approve">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </button>
+                    <button class="action-icon danger" onclick="rejectReceipt(${r.id})" title="Reject">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                `;
+            }
+            
+            actions += `</div>`;
+
+            tr.innerHTML = `
+                ${userCell}
+                <td><strong>${formatNumber(r.amount)}</strong> <span class="text-muted">IRT</span></td>
+                <td><span class="persian-font">${dateStr}</span></td>
+                <td>${statusBadge}</td>
+                <td>${actions}</td>
+            `;
+            body.appendChild(tr);
+        });
+    }
+
+    function renderStatusBadge(status, deadline) {
+        const map = {
+            'pending': 'badge-warning',
+            'auto_pending': 'badge-info',
+            'approved': 'badge-success',
+            'auto_approved': 'badge-success',
+            'rejected': 'badge-danger'
+        };
+        const labelMap = {
+            'pending': 'Pending',
+            'auto_pending': 'Auto Pending',
+            'approved': 'Approved',
+            'auto_approved': 'Auto Approved',
+            'rejected': 'Rejected'
+        };
+        const cls = map[status] || 'badge-muted';
+        return `<span class="badge ${cls}">${labelMap[status] || status}</span>`;
+    }
+
+    function formatNumber(value) {
+        return Number(value || 0).toLocaleString();
+    }
+
+    function setReceiptFilter(event, status) {
+        event.preventDefault();
+        receiptStatusFilter = status;
+        document.querySelectorAll('#receipt-filters .chip').forEach(btn => btn.classList.remove('active'));
+        if (event.currentTarget) {
+            event.currentTarget.classList.add('active');
+        }
+        loadReceipts();
+    }
+
+    async function submitReceipt(event) {
+        event.preventDefault();
+        const form = document.getElementById('receipt-form');
+        const fileInput = document.getElementById('receipt-file');
+        if (!fileInput.files.length) {
+            showToast('Please attach the receipt image', 'error');
+            return;
+        }
+        const formData = new FormData(form);
+        try {
+            const resp = await fetch('/api/receipts', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                showToast(data.error || 'Upload failed', 'error');
+                return;
+            }
+            showToast('Receipt submitted');
+            form.reset();
+            loadReceipts();
+        } catch (err) {
+            showToast(err.message || 'Upload failed', 'error');
+        }
+    }
+
+    async function approveReceipt(id) {
+        if (!confirm('Approve this receipt?')) return;
+        try {
+            const resp = await fetch(`/api/receipts/${id}/approve`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.success) {
+                showToast('Receipt approved');
+                loadReceipts();
+                updateWalletBalance();
+            } else {
+                showToast(data.error || 'Failed to approve', 'error');
+            }
+        } catch (err) {
+            showToast('Failed to approve', 'error');
+        }
+    }
+
+    async function rejectReceipt(id) {
+        const reason = prompt('Enter rejection reason (optional):');
+        if (reason === null) return; // Cancelled
+        
+        try {
+            const resp = await fetch(`/api/receipts/${id}/reject`, { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: reason })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                showToast('Receipt rejected');
+                loadReceipts();
+                updateWalletBalance();
+            } else {
+                showToast(data.error || 'Failed to reject', 'error');
+            }
+        } catch (err) {
+            showToast('Failed to reject', 'error');
+        }
+    }
+
+    async function updateWalletBalance() {
+        try {
+            const resp = await fetch('/api/me');
+            const data = await resp.json();
+            if (data.success && data.user) {
+                const walletEl = document.querySelector('.wallet-amount');
+                if (walletEl) {
+                    walletEl.textContent = Number(data.user.credit || 0).toLocaleString();
+                }
+            }
+        } catch (e) {
+            console.error('Failed to update wallet balance', e);
+        }
+    }
+
+
+    async function loadAutoWindows() {
+        try {
+            const resp = await fetch('/api/auto-approval-windows');
+            const data = await resp.json();
+            if (data.success) {
+                autoWindows = data.windows || [];
+                renderAutoWindows();
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    function renderAutoWindows() {
+        const container = document.getElementById('auto-windows-list');
+        if (!container) return;
+        container.innerHTML = '';
+        autoWindows.forEach(w => {
+            const chip = document.createElement('div');
+            chip.className = 'chip';
+            chip.innerHTML = `
+                <span>Until ${new Date(w.ends_at).toLocaleString()}</span>
+                <button onclick="deleteAutoWindow(${w.id})" style="border:none;background:none;cursor:pointer;margin-left:8px;">&times;</button>
+            `;
+            container.appendChild(chip);
+        });
+    }
+
+    function shamsiToGregorian(shamsiStr) {
+        if (!shamsiStr) return null;
+        try {
+            const parts = shamsiStr.split(/[\s\/:-]+/);
+            if (parts.length < 3) return null;
+            const year = parseInt(parts[0]);
+            const month = parseInt(parts[1]);
+            const day = parseInt(parts[2]);
+            const hour = parts.length > 3 ? parseInt(parts[3]) : 0;
+            const minute = parts.length > 4 ? parseInt(parts[4]) : 0;
+            
+            if (typeof persianDate !== 'undefined') {
+                const pDate = new persianDate([year, month, day, hour, minute]);
+                return pDate.toDate().toISOString();
+            }
+            return null;
+        } catch (e) {
+            console.error('Date conversion error:', e);
+            return null;
+        }
+    }
+
+    async function createAutoWindow(event) {
+        event.preventDefault();
+        const shamsiEnd = document.getElementById('auto-end-shamsi').value;
+        const gregorianEnd = shamsiToGregorian(shamsiEnd);
+        
+        if (!gregorianEnd) {
+            showToast('Invalid date format. Use: 1403/09/15 14:30', 'error');
+            return;
+        }
+
+        const payload = {
+            starts_at: new Date().toISOString(),
+            ends_at: gregorianEnd,
+            max_amount: document.getElementById('auto-max').value
+        };
+        
+        try {
+            const resp = await fetch('/api/auto-approval-windows', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            if (data.success) {
+                showToast('Window created');
+                document.getElementById('auto-window-form').reset();
+                loadAutoWindows();
+            } else {
+                showToast(data.error || 'Failed', 'error');
+            }
+        } catch (err) {
+            showToast('Failed', 'error');
+        }
+    }
+    
+    async function deleteAutoWindow(id) {
+        if(!confirm('Remove this window?')) return;
+        try {
+            await fetch(`/api/auto-approval-windows/${id}`, { method: 'DELETE' });
+            loadAutoWindows();
+        } catch(e) {}
+    }
+</script>
+{% endblock %}

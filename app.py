@@ -15,9 +15,13 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from urllib.parse import urlparse, quote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func
+
+APP_VERSION = "1.2.0"
+GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
@@ -34,6 +38,10 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax'
 )
+
+RECEIPT_ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'heic', 'heif', 'pdf'}
+RECEIPTS_DIR = os.path.join(app.instance_path, 'receipts')
+os.makedirs(RECEIPTS_DIR, exist_ok=True)
 
 limiter = Limiter(
     app=app,
@@ -159,6 +167,118 @@ class SystemConfig(db.Model):
     __tablename__ = 'system_configs'
     key = db.Column(db.String(50), primary_key=True)
     value = db.Column(db.String(200))
+
+
+RECEIPT_STATUS_PENDING = 'pending'
+RECEIPT_STATUS_AUTO_PENDING = 'auto_pending'
+RECEIPT_STATUS_APPROVED = 'approved'
+RECEIPT_STATUS_AUTO_APPROVED = 'auto_approved'
+RECEIPT_STATUS_REJECTED = 'rejected'
+
+
+class BankCard(db.Model):
+    __tablename__ = 'bank_cards'
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(120), nullable=False)
+    bank_name = db.Column(db.String(120))
+    owner_name = db.Column(db.String(120))
+    card_number = db.Column(db.String(32))
+    iban = db.Column(db.String(34))
+    account_number = db.Column(db.String(64))
+    notes = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def masked_card(self):
+        if not self.card_number:
+            return None
+        cleaned = ''.join(filter(str.isdigit, self.card_number))
+        if len(cleaned) <= 4:
+            return cleaned
+        return f"{'*' * (len(cleaned) - 4)}{cleaned[-4:]}"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'label': self.label,
+            'bank_name': self.bank_name,
+            'owner_name': self.owner_name,
+            'card_number': self.card_number,
+            'masked_card': self.masked_card(),
+            'iban': self.iban,
+            'account_number': self.account_number,
+            'notes': self.notes,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class ManualReceipt(db.Model):
+    __tablename__ = 'manual_receipts'
+    id = db.Column(db.Integer, primary_key=True)
+    admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=False)
+    card_id = db.Column(db.Integer, db.ForeignKey('bank_cards.id'))
+    amount = db.Column(db.Integer, nullable=False)
+    currency = db.Column(db.String(10), default='IRT')
+    deposit_at = db.Column(db.DateTime)
+    reference_code = db.Column(db.String(120))
+    image_path = db.Column(db.String(300))
+    status = db.Column(db.String(32), default=RECEIPT_STATUS_PENDING, index=True)
+    auto_deadline = db.Column(db.DateTime, index=True)
+    reviewer_id = db.Column(db.Integer, db.ForeignKey('admins.id'))
+    reviewed_at = db.Column(db.DateTime)
+    rejection_reason = db.Column(db.String(255))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    admin = db.relationship('Admin', foreign_keys=[admin_id], backref=db.backref('receipts', lazy=True))
+    reviewer = db.relationship('Admin', foreign_keys=[reviewer_id])
+    card = db.relationship('BankCard', backref=db.backref('receipts', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'admin': {'id': self.admin.id, 'username': self.admin.username} if self.admin else None,
+            'card': self.card.to_dict() if self.card else None,
+            'amount': self.amount,
+            'currency': self.currency,
+            'deposit_at': self.deposit_at.isoformat() if self.deposit_at else None,
+            'reference_code': self.reference_code,
+            'image_path': self.image_path,
+            'status': self.status,
+            'auto_deadline': self.auto_deadline.isoformat() if self.auto_deadline else None,
+            'reviewer': {'id': self.reviewer.id, 'username': self.reviewer.username} if self.reviewer else None,
+            'reviewed_at': self.reviewed_at.isoformat() if self.reviewed_at else None,
+            'rejection_reason': self.rejection_reason,
+            'notes': self.notes,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class AutoApprovalWindow(db.Model):
+    __tablename__ = 'auto_approval_windows'
+    id = db.Column(db.Integer, primary_key=True)
+    starts_at = db.Column(db.DateTime, nullable=False)
+    ends_at = db.Column(db.DateTime, nullable=False)
+    max_amount = db.Column(db.Integer, default=0)
+    status = db.Column(db.String(20), default='enabled')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def is_active(self, moment=None):
+        moment = moment or datetime.utcnow()
+        if self.status != 'enabled':
+            return False
+        return self.starts_at <= moment <= self.ends_at
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'starts_at': self.starts_at.isoformat() if self.starts_at else None,
+            'ends_at': self.ends_at.isoformat() if self.ends_at else None,
+            'max_amount': self.max_amount,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
 
 class Transaction(db.Model):
     __tablename__ = 'transactions'
@@ -506,6 +626,93 @@ def resolve_allowed_servers(raw_value):
                 continue
         return cleaned
     return []
+
+def parse_iso_datetime(value):
+    if not value:
+        return None
+    try:
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(value)
+    except Exception:
+        try:
+            # fallback for "2024-12-01 12:00"
+            return datetime.strptime(value, '%Y-%m-%d %H:%M')
+        except Exception:
+            return None
+
+def allowed_receipt_file(filename):
+    if not filename or '.' not in filename:
+        return False
+    ext = filename.rsplit('.', 1)[1].lower()
+    return ext in RECEIPT_ALLOWED_EXTENSIONS
+
+def save_receipt_file(file_storage):
+    if not file_storage or not allowed_receipt_file(file_storage.filename):
+        return None
+    ext = file_storage.filename.rsplit('.', 1)[1].lower()
+    subdir = datetime.utcnow().strftime('%Y/%m')
+    dest_dir = os.path.join(RECEIPTS_DIR, subdir)
+    os.makedirs(dest_dir, exist_ok=True)
+    unique_name = f"{uuid.uuid4().hex}.{ext}"
+    safe_name = secure_filename(unique_name)
+    relative_path = os.path.join('receipts', subdir, safe_name)
+    full_path = os.path.join(app.instance_path, relative_path)
+    file_storage.save(full_path)
+    return relative_path
+
+def get_active_auto_window(now=None):
+    now = now or datetime.utcnow()
+    return AutoApprovalWindow.query.filter(
+        AutoApprovalWindow.status == 'enabled',
+        AutoApprovalWindow.starts_at <= now,
+        AutoApprovalWindow.ends_at >= now
+    ).order_by(AutoApprovalWindow.ends_at.asc()).first()
+
+def apply_receipt_credit(receipt, reviewer=None, auto=False):
+    owner = db.session.get(Admin, receipt.admin_id)
+    if not owner:
+        return False, 'Owner not found'
+    owner.credit = (owner.credit or 0) + receipt.amount
+    tx_type = 'manual_receipt_auto' if auto else 'manual_receipt'
+    description = f"Receipt #{receipt.id}"
+    log_transaction(owner.id, receipt.amount, tx_type, description)
+    receipt.status = RECEIPT_STATUS_AUTO_APPROVED if auto else RECEIPT_STATUS_APPROVED
+    receipt.reviewed_at = datetime.utcnow()
+    receipt.reviewer_id = reviewer.id if reviewer else None
+    receipt.auto_deadline = None
+    receipt.rejection_reason = None
+    return True, None
+
+def rollback_receipt_credit(receipt, reviewer=None, reason=None):
+    owner = db.session.get(Admin, receipt.admin_id)
+    if not owner:
+        return False, 'Owner not found'
+    owner.credit = (owner.credit or 0) - receipt.amount
+    log_transaction(owner.id, -receipt.amount, 'manual_receipt_reversal', f"Receipt #{receipt.id} rejected")
+    receipt.reviewer_id = reviewer.id if reviewer else None
+    receipt.reviewed_at = datetime.utcnow()
+    receipt.rejection_reason = reason
+    return True, None
+
+def trigger_auto_receipt_processing():
+    now = datetime.utcnow()
+    due_receipts = ManualReceipt.query.filter(
+        ManualReceipt.status == RECEIPT_STATUS_AUTO_PENDING,
+        ManualReceipt.auto_deadline.isnot(None),
+        ManualReceipt.auto_deadline <= now
+    ).all()
+    updated = 0
+    for receipt in due_receipts:
+        success, err = apply_receipt_credit(receipt, reviewer=None, auto=True)
+        if success:
+            updated += 1
+        else:
+            receipt.status = RECEIPT_STATUS_PENDING
+            receipt.auto_deadline = None
+            receipt.rejection_reason = err
+    if updated or due_receipts:
+        db.session.commit()
 
 def format_bytes(size):
     if size is None or size == 0: return "0 B"
@@ -1076,10 +1283,14 @@ def reset_client_traffic(server_id, inbound_id):
                         continue
                 except ValueError:
                     pass
+                
                 if user.role == 'reseller' and charge_amount > 0:
                     user.credit -= charge_amount
+                
+                if charge_amount > 0:
                     log_transaction(user.id, -charge_amount, 'reset_traffic', f"Reset traffic {volume_gb}GB - {email}")
                     db.session.commit()
+
                 response = {"success": True}
                 if user.role == 'reseller':
                     response["remaining_credit"] = user.credit
@@ -1150,6 +1361,8 @@ def renew_client(server_id, inbound_id, email):
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
         if not ownership:
             return jsonify({"success": False, "error": "Access denied"}), 403
+        if price > 0 and user.credit < price:
+            return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
     
     session_obj, error = get_xui_session(server)
     if error:
@@ -1218,6 +1431,14 @@ def renew_client(server_id, inbound_id, email):
                         continue
                 except ValueError:
                     pass
+                
+                if user.role == 'reseller' and price > 0:
+                    user.credit -= price
+                
+                if price > 0:
+                    log_transaction(user.id, -price, 'renew', description)
+                    db.session.commit()
+
                 return jsonify({"success": True})
 
             errors.append(f"{template}: {resp.status_code}")
@@ -1521,6 +1742,8 @@ def add_client(server_id, inbound_id):
             
             if user.role == 'reseller' and price > 0:
                 user.credit -= price
+            
+            if price > 0:
                 log_transaction(user.id, -price, 'purchase', description)
             
             ownership = ClientOwnership(
@@ -1534,7 +1757,35 @@ def add_client(server_id, inbound_id):
             db.session.add(ownership)
             db.session.commit()
             
-            return jsonify({"success": True})
+            # Generate Links for Response
+            parsed_host = urlparse(server.host)
+            hostname = parsed_host.hostname
+            scheme = parsed_host.scheme
+            final_port = server.sub_port if server.sub_port else parsed_host.port
+            port_str = f":{final_port}" if final_port else ""
+            
+            base_sub = f"{scheme}://{hostname}{port_str}"
+            s_path = server.sub_path.strip('/')
+            final_id = client_sub_id if client_sub_id else client_uuid
+            
+            sub_url = f"{base_sub}/{s_path}/{final_id}"
+            app_base = request.url_root.rstrip('/')
+            dash_sub_url = f"{app_base}/s/{server.id}/{final_id}"
+            
+            direct_link = generate_client_link(new_client, inbound_data, server.host)
+
+            return jsonify({
+                "success": True,
+                "client": {
+                    "email": email,
+                    "protocol": inbound_data.get('protocol', 'vless'),
+                    "volume": volume_gb,
+                    "days": days,
+                    "sub_link": sub_url,
+                    "direct_link": direct_link,
+                    "dashboard_link": dash_sub_url
+                }
+            })
         else:
             msg = up_resp.json().get('msg', 'Unknown error') if up_resp.content else 'Panel update failed'
             return jsonify({"success": False, "error": f"Panel Error: {msg}"})
@@ -1850,6 +2101,76 @@ def packages_page():
                          is_superadmin=session.get('is_superadmin', False),
                          role=session.get('role', 'admin'))
 
+@app.route('/bank-cards')
+@superadmin_required
+def bank_cards_page():
+    return render_template('bank_cards.html',
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
+
+@app.route('/api/bank-cards', methods=['GET'])
+@login_required
+def list_bank_cards():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 401
+    include_inactive = request.args.get('include_inactive', '0') in ('1', 'true', 'True')
+    query = BankCard.query
+    if not (user.role == 'superadmin' or user.is_superadmin):
+        query = query.filter_by(is_active=True)
+    elif not include_inactive:
+        query = query.filter_by(is_active=True)
+    cards = query.order_by(BankCard.created_at.desc()).all()
+    return jsonify({'success': True, 'cards': [card.to_dict() for card in cards]})
+
+@app.route('/api/bank-cards', methods=['POST'])
+@superadmin_required
+def create_bank_card():
+    data = request.get_json() or {}
+    label = (data.get('label') or '').strip()
+    if not label:
+        return jsonify({'success': False, 'error': 'Label is required'}), 400
+    card = BankCard(
+        label=label,
+        bank_name=(data.get('bank_name') or '').strip() or None,
+        owner_name=(data.get('owner_name') or '').strip() or None,
+        card_number=(data.get('card_number') or '').strip() or None,
+        iban=(data.get('iban') or '').strip() or None,
+        account_number=(data.get('account_number') or '').strip() or None,
+        notes=(data.get('notes') or '').strip() or None,
+        is_active=bool(data.get('is_active', True))
+    )
+    db.session.add(card)
+    db.session.commit()
+    return jsonify({'success': True, 'card': card.to_dict()})
+
+@app.route('/api/bank-cards/<int:card_id>', methods=['PUT'])
+@superadmin_required
+def update_bank_card(card_id):
+    card = db.session.get(BankCard, card_id)
+    if not card:
+        return jsonify({'success': False, 'error': 'Card not found'}), 404
+    data = request.get_json() or {}
+    for field in ('label', 'bank_name', 'owner_name', 'card_number', 'iban', 'account_number', 'notes'):
+        if field in data:
+            value = data.get(field)
+            setattr(card, field, value.strip() if isinstance(value, str) else value)
+    if 'is_active' in data:
+        card.is_active = bool(data.get('is_active'))
+    db.session.commit()
+    return jsonify({'success': True, 'card': card.to_dict()})
+
+@app.route('/api/bank-cards/<int:card_id>', methods=['DELETE'])
+@superadmin_required
+def delete_bank_card(card_id):
+    card = db.session.get(BankCard, card_id)
+    if not card:
+        return jsonify({'success': False, 'error': 'Card not found'}), 404
+    db.session.delete(card)
+    db.session.commit()
+    return jsonify({'success': True})
+
 @app.route('/transactions')
 @login_required
 def transactions_page():
@@ -1864,6 +2185,252 @@ def transactions_page():
                          role=session.get('role', 'admin'),
                          servers=servers,
                          admin_options=admin_options)
+
+@app.route('/receipts')
+@login_required
+def receipts_page():
+    return render_template('receipts.html',
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'),
+                         current_admin_id=session.get('admin_id'))
+
+@app.route('/api/receipts', methods=['POST'])
+@login_required
+def upload_receipt():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 401
+    trigger_auto_receipt_processing()
+
+    form = request.form
+    try:
+        amount = int(form.get('amount', 0))
+    except (TypeError, ValueError):
+        amount = 0
+    if amount <= 0:
+        return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+    card_id = form.get('card_id')
+    card = None
+    if card_id:
+        try:
+            card = db.session.get(BankCard, int(card_id))
+        except (TypeError, ValueError):
+            card = None
+        if not card:
+            return jsonify({'success': False, 'error': 'Selected card not found'}), 404
+        if not card.is_active and not (user.role == 'superadmin' or user.is_superadmin):
+            return jsonify({'success': False, 'error': 'Card is inactive'}), 400
+
+    slip_file = request.files.get('file')
+    if not slip_file or not slip_file.filename:
+        return jsonify({'success': False, 'error': 'Receipt image is required'}), 400
+    if not allowed_receipt_file(slip_file.filename):
+        return jsonify({'success': False, 'error': 'Unsupported file type'}), 400
+    stored_path = save_receipt_file(slip_file)
+    if not stored_path:
+        return jsonify({'success': False, 'error': 'Failed to store file'}), 400
+
+    deposit_at = parse_iso_datetime(form.get('deposit_at'))
+    reference_code = (form.get('reference_code') or '').strip() or None
+    notes = (form.get('notes') or '').strip() or None
+    currency = (form.get('currency') or 'IRT').strip().upper()
+    if len(currency) > 10:
+        currency = currency[:10]
+
+    auto_window = get_active_auto_window()
+    initial_status = RECEIPT_STATUS_PENDING
+    auto_deadline = None
+    if auto_window and (auto_window.max_amount <= 0 or amount <= auto_window.max_amount):
+        initial_status = RECEIPT_STATUS_AUTO_PENDING
+        auto_deadline = auto_window.ends_at
+
+    receipt = ManualReceipt(
+        admin_id=user.id,
+        card_id=card.id if card else None,
+        amount=amount,
+        currency=currency,
+        deposit_at=deposit_at,
+        reference_code=reference_code,
+        image_path=stored_path,
+        status=initial_status,
+        auto_deadline=auto_deadline,
+        notes=notes
+    )
+    db.session.add(receipt)
+    db.session.commit()
+
+    payload = receipt.to_dict()
+    payload['image_url'] = url_for('download_receipt_file', receipt_id=receipt.id)
+    return jsonify({'success': True, 'receipt': payload})
+
+@app.route('/api/receipts', methods=['GET'])
+@login_required
+def list_receipts():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 401
+    trigger_auto_receipt_processing()
+    query = ManualReceipt.query.join(Admin, ManualReceipt.admin_id == Admin.id)
+    if not (user.role == 'superadmin' or user.is_superadmin):
+        query = query.filter(ManualReceipt.admin_id == user.id)
+    else:
+        admin_filter = request.args.get('user_id', type=int)
+        if admin_filter:
+            query = query.filter(ManualReceipt.admin_id == admin_filter)
+    status_filter = request.args.get('status')
+    if status_filter:
+        query = query.filter(ManualReceipt.status == status_filter)
+    limit = request.args.get('limit', type=int) or 200
+    limit = max(1, min(limit, 1000))
+    receipts = query.order_by(ManualReceipt.created_at.desc()).limit(limit).all()
+    payload = []
+    for receipt in receipts:
+        data = receipt.to_dict()
+        data['image_url'] = url_for('download_receipt_file', receipt_id=receipt.id)
+        payload.append(data)
+    return jsonify({'success': True, 'receipts': payload})
+
+@app.route('/receipts/file/<int:receipt_id>')
+@login_required
+def download_receipt_file(receipt_id):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 401
+    receipt = db.session.get(ManualReceipt, receipt_id)
+    if not receipt:
+        return jsonify({'success': False, 'error': 'Receipt not found'}), 404
+    if receipt.admin_id != user.id and not (user.role == 'superadmin' or user.is_superadmin):
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    if not receipt.image_path:
+        return jsonify({'success': False, 'error': 'File missing'}), 404
+    full_path = os.path.join(app.instance_path, receipt.image_path)
+    if not os.path.abspath(full_path).startswith(os.path.abspath(RECEIPTS_DIR)):
+        return jsonify({'success': False, 'error': 'Invalid path'}), 403
+    if not os.path.isfile(full_path):
+        return jsonify({'success': False, 'error': 'File missing'}), 404
+    return send_file(full_path, as_attachment=False)
+
+@app.route('/api/receipts/<int:receipt_id>/approve', methods=['POST'])
+@superadmin_required
+def approve_receipt(receipt_id):
+    trigger_auto_receipt_processing()
+    receipt = db.session.get(ManualReceipt, receipt_id)
+    if not receipt:
+        return jsonify({'success': False, 'error': 'Receipt not found'}), 404
+    reviewer = db.session.get(Admin, session['admin_id'])
+    allowed_states = {RECEIPT_STATUS_PENDING, RECEIPT_STATUS_AUTO_PENDING, RECEIPT_STATUS_REJECTED}
+    if receipt.status not in allowed_states:
+        if receipt.status in (RECEIPT_STATUS_APPROVED, RECEIPT_STATUS_AUTO_APPROVED):
+            data = receipt.to_dict()
+            data['image_url'] = url_for('download_receipt_file', receipt_id=receipt.id)
+            return jsonify({'success': True, 'receipt': data})
+        return jsonify({'success': False, 'error': 'Invalid receipt state'}), 400
+    success, error = apply_receipt_credit(receipt, reviewer=reviewer, auto=False)
+    if not success:
+        return jsonify({'success': False, 'error': error}), 400
+    db.session.commit()
+    data = receipt.to_dict()
+    data['image_url'] = url_for('download_receipt_file', receipt_id=receipt.id)
+    data['new_balance'] = receipt.admin.credit if receipt.admin else None
+    return jsonify({'success': True, 'receipt': data})
+
+@app.route('/api/receipts/<int:receipt_id>/reject', methods=['POST'])
+@superadmin_required
+def reject_receipt(receipt_id):
+    trigger_auto_receipt_processing()
+    receipt = db.session.get(ManualReceipt, receipt_id)
+    if not receipt:
+        return jsonify({'success': False, 'error': 'Receipt not found'}), 404
+    data = request.get_json() or {}
+    reason = (data.get('reason') or '').strip() or 'Rejected'
+    reviewer = db.session.get(Admin, session['admin_id'])
+    if receipt.status in (RECEIPT_STATUS_APPROVED, RECEIPT_STATUS_AUTO_APPROVED):
+        success, error = rollback_receipt_credit(receipt, reviewer=reviewer, reason=reason)
+        if not success:
+            return jsonify({'success': False, 'error': error}), 400
+    receipt.status = RECEIPT_STATUS_REJECTED
+    receipt.reviewer_id = reviewer.id if reviewer else None
+    receipt.reviewed_at = datetime.utcnow()
+    receipt.rejection_reason = reason
+    receipt.auto_deadline = None
+    db.session.commit()
+    data = receipt.to_dict()
+    data['image_url'] = url_for('download_receipt_file', receipt_id=receipt.id)
+    return jsonify({'success': True, 'receipt': data})
+
+@app.route('/api/receipts/auto-windows', methods=['GET'])
+@superadmin_required
+def list_auto_windows():
+    windows = AutoApprovalWindow.query.order_by(AutoApprovalWindow.starts_at.desc()).all()
+    return jsonify({'success': True, 'windows': [w.to_dict() for w in windows]})
+
+@app.route('/api/receipts/auto-windows', methods=['POST'])
+@superadmin_required
+def create_auto_window():
+    data = request.get_json() or {}
+    starts_at = parse_iso_datetime(data.get('starts_at')) or datetime.utcnow()
+    ends_at = parse_iso_datetime(data.get('ends_at'))
+    if not ends_at or ends_at <= starts_at:
+        return jsonify({'success': False, 'error': 'Invalid window timeframe'}), 400
+    try:
+        max_amount = int(data.get('max_amount', 0) or 0)
+    except (TypeError, ValueError):
+        max_amount = 0
+    window = AutoApprovalWindow(
+        starts_at=starts_at,
+        ends_at=ends_at,
+        max_amount=max_amount,
+        status='enabled'
+    )
+    db.session.add(window)
+    db.session.commit()
+    return jsonify({'success': True, 'window': window.to_dict()})
+
+@app.route('/api/receipts/auto-windows/<int:window_id>', methods=['DELETE'])
+@superadmin_required
+def disable_auto_window(window_id):
+    window = db.session.get(AutoApprovalWindow, window_id)
+    if not window:
+        return jsonify({'success': False, 'error': 'Window not found'}), 404
+    window.status = 'disabled'
+    db.session.commit()
+    return jsonify({'success': True})
+
+@app.route('/api/me', methods=['GET'])
+@login_required
+def get_current_user_info():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 401
+    return jsonify({
+        'success': True,
+        'user': user.to_dict()
+    })
+
+@app.context_processor
+def inject_version():
+    return dict(app_version=APP_VERSION)
+
+@app.route('/api/check-update', methods=['GET'])
+@login_required
+def check_update():
+    try:
+        resp = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            latest_version = data.get('tag_name', '').lstrip('v')
+            return jsonify({
+                'success': True,
+                'current_version': APP_VERSION,
+                'latest_version': latest_version,
+                'update_available': latest_version != APP_VERSION,
+                'release_url': data.get('html_url', '')
+            })
+        return jsonify({'success': False, 'error': 'GitHub API error'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
