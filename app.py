@@ -1172,7 +1172,12 @@ def settings_page():
     user = db.session.get(Admin, session['admin_id'])
     if not user.is_superadmin:
         return redirect(url_for('dashboard'))
-    return render_template('settings.html', current_user=user, is_superadmin=user.is_superadmin, app_version=APP_VERSION)
+    return render_template('settings.html', 
+                         current_user=user, 
+                         is_superadmin=user.is_superadmin, 
+                         app_version=APP_VERSION,
+                         admin_username=user.username,
+                         role=user.role)
 
 @app.route('/api/clients/search')
 @login_required
@@ -1705,7 +1710,7 @@ def test_server_connection(server_id):
     session_obj, error = get_xui_session(server)
     if error:
         return jsonify({"success": False, "error": error}), 400
-    return jsonify({"success": True})
+    return jsonify({"success": True, "panel_type": server.panel_type})
 
 @app.route('/api/assign-client', methods=['POST'])
 @superadmin_required
@@ -2730,6 +2735,43 @@ def save_backup_settings():
     
     db.session.commit()
     return jsonify({'success': True, 'message': 'Settings saved'})
+
+@app.route('/api/settings/ssl', methods=['GET'])
+@login_required
+def get_ssl_settings():
+    cert = db.session.get(SystemSetting, 'ssl_cert_path')
+    key = db.session.get(SystemSetting, 'ssl_key_path')
+    return jsonify({
+        'success': True,
+        'cert_path': cert.value if cert else '',
+        'key_path': key.value if key else ''
+    })
+
+@app.route('/api/settings/ssl', methods=['POST'])
+@login_required
+def save_ssl_settings():
+    data = request.json
+    cert_path = data.get('cert_path', '').strip()
+    key_path = data.get('key_path', '').strip()
+    
+    # Save cert path
+    cert_setting = db.session.get(SystemSetting, 'ssl_cert_path')
+    if not cert_setting:
+        cert_setting = SystemSetting(key='ssl_cert_path', value=cert_path)
+        db.session.add(cert_setting)
+    else:
+        cert_setting.value = cert_path
+        
+    # Save key path
+    key_setting = db.session.get(SystemSetting, 'ssl_key_path')
+    if not key_setting:
+        key_setting = SystemSetting(key='ssl_key_path', value=key_path)
+        db.session.add(key_setting)
+    else:
+        key_setting.value = key_path
+    
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'SSL settings saved'})
 
 @app.route('/api/backups/<filename>/download', methods=['GET'])
 @login_required

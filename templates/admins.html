@@ -259,6 +259,7 @@
         document.getElementById('modal-title').textContent = 'Add User';
         document.getElementById('edit-admin-id').value = '';
         document.getElementById('admin-username').value = '';
+        document.getElementById('admin-username').disabled = false;
         document.getElementById('admin-password').value = '';
         document.getElementById('admin-role').value = 'reseller';
         document.getElementById('admin-telegram-id').value = '';
@@ -280,6 +281,7 @@
         document.getElementById('modal-title').textContent = 'Edit User';
         document.getElementById('edit-admin-id').value = admin.id;
         document.getElementById('admin-username').value = admin.username;
+        document.getElementById('admin-username').disabled = true;
         document.getElementById('admin-password').value = '';
         document.getElementById('admin-role').value = admin.role || 'admin';
         document.getElementById('admin-telegram-id').value = admin.telegram_id || '';

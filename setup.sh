@@ -287,16 +287,51 @@ EOF
     print_success "systemd service active"
 }
 
+SSL_CERT_PATH=""
+SSL_KEY_PATH=""
+
+prompt_ssl_config() {
+    print_header "SSL Configuration"
+    read -rp "Do you want to configure SSL (HTTPS)? [y/N]: " ssl_confirm
+    if [[ "$ssl_confirm" =~ ^[Yy]$ ]]; then
+        read -rp "Enter path to SSL Certificate (.crt/.pem): " SSL_CERT_PATH
+        read -rp "Enter path to SSL Private Key (.key): " SSL_KEY_PATH
+        
+        if [ ! -f "$SSL_CERT_PATH" ] || [ ! -f "$SSL_KEY_PATH" ]; then
+            print_warning "Certificate or Key file not found. SSL will be skipped."
+            SSL_CERT_PATH=""
+            SSL_KEY_PATH=""
+        else
+            print_success "SSL paths verified."
+        fi
+    fi
+}
+
 configure_nginx() {
     print_header "Step 11: Nginx reverse proxy"
+    
+    local listen_block="listen 80;"
+    local ssl_block=""
+    
+    if [ -n "$SSL_CERT_PATH" ] && [ -n "$SSL_KEY_PATH" ]; then
+        listen_block="listen 80; listen 443 ssl;"
+        ssl_block="
+    ssl_certificate $SSL_CERT_PATH;
+    ssl_certificate_key $SSL_KEY_PATH;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+        "
+    fi
+
     cat > /etc/nginx/sites-available/${SERVICE_NAME} <<EOF
 upstream eve_xui_manager {
     server 127.0.0.1:${APP_PORT};
 }
 
 server {
-    listen 80;
+    $listen_block
     server_name ${DOMAIN};
+    $ssl_block
 
     client_max_body_size 20M;
     proxy_read_timeout 120s;
@@ -382,6 +417,7 @@ run_full_install() {
     create_env_file
     initialize_database
     create_systemd_service
+    prompt_ssl_config
     configure_nginx
     configure_firewall
     print_summary
