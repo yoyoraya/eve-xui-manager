@@ -2490,6 +2490,91 @@ def get_sub_apps():
     apps = SubAppConfig.query.all()
     return jsonify([a.to_dict() for a in apps])
 
+@app.route('/api/sub-apps', methods=['POST'])
+@superadmin_required
+def create_sub_app():
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+    
+    app_code = data.get('app_code')
+    if not app_code:
+        return jsonify({'success': False, 'error': 'App code is required'}), 400
+        
+    if SubAppConfig.query.filter_by(app_code=app_code).first():
+        return jsonify({'success': False, 'error': 'App code already exists'}), 400
+        
+    new_app = SubAppConfig(
+        app_code=app_code,
+        name=data.get('name'),
+        is_enabled=data.get('is_enabled', True),
+        title_fa=data.get('title_fa'),
+        description_fa=data.get('description_fa'),
+        title_en=data.get('title_en'),
+        description_en=data.get('description_en'),
+        download_link=data.get('download_link'),
+        store_link=data.get('store_link'),
+        tutorial_link=data.get('tutorial_link')
+    )
+    
+    try:
+        db.session.add(new_app)
+        db.session.commit()
+        return jsonify({'success': True, 'app': new_app.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/sub-apps/<int:app_id>', methods=['PUT'])
+@superadmin_required
+def update_sub_app(app_id):
+    app_config = db.session.get(SubAppConfig, app_id)
+    if not app_config:
+        return jsonify({'success': False, 'error': 'App not found'}), 404
+        
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+    # Check if app_code is being changed and if it conflicts
+    new_app_code = data.get('app_code')
+    if new_app_code and new_app_code != app_config.app_code:
+        if SubAppConfig.query.filter_by(app_code=new_app_code).first():
+            return jsonify({'success': False, 'error': 'App code already exists'}), 400
+        app_config.app_code = new_app_code
+        
+    if 'name' in data: app_config.name = data['name']
+    if 'is_enabled' in data: app_config.is_enabled = data['is_enabled']
+    if 'title_fa' in data: app_config.title_fa = data['title_fa']
+    if 'description_fa' in data: app_config.description_fa = data['description_fa']
+    if 'title_en' in data: app_config.title_en = data['title_en']
+    if 'description_en' in data: app_config.description_en = data['description_en']
+    if 'download_link' in data: app_config.download_link = data['download_link']
+    if 'store_link' in data: app_config.store_link = data['store_link']
+    if 'tutorial_link' in data: app_config.tutorial_link = data['tutorial_link']
+    
+    try:
+        db.session.commit()
+        return jsonify({'success': True, 'app': app_config.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/sub-apps/<int:app_id>', methods=['DELETE'])
+@superadmin_required
+def delete_sub_app(app_id):
+    app_config = db.session.get(SubAppConfig, app_id)
+    if not app_config:
+        return jsonify({'success': False, 'error': 'App not found'}), 404
+        
+    try:
+        db.session.delete(app_config)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/packages')
 @superadmin_required
 def packages_page():

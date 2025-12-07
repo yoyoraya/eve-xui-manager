@@ -21,16 +21,24 @@
         <div class="modal-body">
             <input type="hidden" id="edit-app-id">
             
-            <div class="form-group" style="margin-bottom: 20px;">
-                <label style="color: var(--primary); font-weight: bold;">App Name (Display Name)</label>
-                <input type="text" id="edit-app-name" class="form-input" placeholder="e.g. v2rayNG (Android)">
-            </div>
+            <div style="display: flex; gap: 15px; align-items: flex-end; margin-bottom: 20px;">
+                <div class="form-group" style="flex: 0 0 150px;">
+                    <label style="color: var(--primary); font-weight: bold; margin-bottom: 5px; display: block;">App Code</label>
+                    <input type="text" id="edit-app-code" class="form-input" placeholder="ID">
+                </div>
 
-            <div class="form-group checkbox-group">
-                <label class="checkbox-label">
-                    <input type="checkbox" id="edit-enabled">
-                    <span>Show in Subscription Page</span>
-                </label>
+                <div class="form-group" style="flex: 1;">
+                    <label style="color: var(--primary); font-weight: bold; margin-bottom: 5px; display: block;">App Name</label>
+                    <input type="text" id="edit-app-name" class="form-input" placeholder="Display Name">
+                </div>
+
+                <div class="form-group checkbox-group" style="margin-bottom: 0; padding-bottom: 12px;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="edit-enabled">
+                        <span class="checkmark"></span>
+                        <span>Show in Sub Page</span>
+                    </label>
+                </div>
             </div>
 
             <div style="display: flex; gap: 20px; margin-bottom: 20px;">
@@ -157,6 +165,7 @@
         document.getElementById('edit-app-id').value = '';
         document.getElementById('modal-title').textContent = 'Add New App';
         
+        document.getElementById('edit-app-code').value = '';
         document.getElementById('edit-app-name').value = '';
         document.getElementById('edit-enabled').checked = true;
         document.getElementById('edit-title-fa').value = '';
@@ -175,6 +184,7 @@
         document.getElementById('edit-app-id').value = app.id;
         document.getElementById('modal-title').textContent = 'Edit App';
         
+        document.getElementById('edit-app-code').value = app.app_code || '';
         document.getElementById('edit-app-name').value = app.name;
         document.getElementById('edit-enabled').checked = app.is_enabled;
         document.getElementById('edit-title-fa').value = app.title_fa || '';
@@ -191,6 +201,7 @@
     async function saveApp() {
         const id = document.getElementById('edit-app-id').value;
         const data = {
+            app_code: document.getElementById('edit-app-code').value,
             name: document.getElementById('edit-app-name').value,
             is_enabled: document.getElementById('edit-enabled').checked,
             title_fa: document.getElementById('edit-title-fa').value,
@@ -201,6 +212,11 @@
             store_link: document.getElementById('edit-store').value,
             tutorial_link: document.getElementById('edit-video').value
         };
+
+        if (!data.app_code.trim()) {
+            showToast('App Code is required', 'error');
+            return;
+        }
 
         if (!data.name.trim()) {
             showToast('App Name is required', 'error');
