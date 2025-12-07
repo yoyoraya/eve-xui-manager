@@ -199,8 +199,14 @@ clone_or_update_repo() {
     elif [ -d "$APP_DIR" ] && [ "$(ls -A $APP_DIR)" ]; then
         print_warning "Directory $APP_DIR exists but is not a git repo. Backing up..."
         mv "$APP_DIR" "${APP_DIR}.bak.$(date +%s)"
+        # Create directory and set permissions before cloning
+        mkdir -p "$APP_DIR"
+        chown "$APP_USER:$APP_USER" "$APP_DIR"
         sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
     else
+        # Create directory and set permissions before cloning
+        mkdir -p "$APP_DIR"
+        chown "$APP_USER:$APP_USER" "$APP_DIR"
         sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
     fi
     print_success "Source code synced"
