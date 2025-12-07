@@ -12,6 +12,8 @@ import shutil
 import glob
 import threading
 import time
+import concurrent.futures
+from types import SimpleNamespace
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
@@ -61,7 +63,7 @@ os.makedirs(BACKUP_DIR, exist_ok=True)
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=["5000 per day", "500 per hour"]
 )
 
 db = SQLAlchemy(app)
@@ -1125,6 +1127,17 @@ def admins_page():
                          is_superadmin=session.get('is_superadmin', False),
                          role=session.get('role', 'admin'))
 
+def fetch_worker(server_dict):
+    with app.app_context():
+        # Convert dict to object for compatibility with existing functions
+        server_obj = SimpleNamespace(**server_dict)
+        session_obj, error = get_xui_session(server_obj)
+        if error:
+            return server_dict['id'], None, error
+        
+        inbounds, fetch_error = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
+        return server_dict['id'], inbounds, fetch_error
+
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
@@ -1135,15 +1148,32 @@ def api_refresh():
     total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
     server_results = []
     
+    # Prepare data for threads
+    server_dicts = [{
+        'id': s.id, 
+        'name': s.name, 
+        'host': s.host, 
+        'username': s.username, 
+        'password': s.password, 
+        'panel_type': s.panel_type,
+        'sub_port': s.sub_port,
+        'sub_path': s.sub_path,
+        'json_path': s.json_path
+    } for s in servers]
+    
+    # Parallel fetch
+    fetched_data = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
+        for future in concurrent.futures.as_completed(future_to_id):
+            srv_id, inbounds, error = future.result()
+            fetched_data[srv_id] = (inbounds, error)
+            
     for server in servers:
-        session_obj, error = get_xui_session(server)
+        inbounds, error = fetched_data.get(server.id, (None, "Unknown error"))
+        
         if error:
             server_results.append({"server_id": server.id, "server_name": server.name, "success": False, "error": error})
-            continue
-        
-        inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
-        if fetch_error:
-            server_results.append({"server_id": server.id, "server_name": server.name, "success": False, "error": fetch_error})
             continue
         
         processed_inbounds, stats = process_inbounds(inbounds, server, user)
@@ -1181,6 +1211,7 @@ def settings_page():
 
 @app.route('/api/clients/search')
 @login_required
+@limiter.limit("60 per minute")
 def global_client_search():
     user = db.session.get(Admin, session['admin_id'])
     query = (request.args.get('email') or '').strip()
@@ -1446,6 +1477,7 @@ def renew_client(server_id, inbound_id, email):
         return jsonify({"success": False, "error": "Invalid data"}), 400
 
     start_after_first_use = bool(data.get('start_after_first_use', False))
+    reset_traffic = bool(data.get('reset_traffic', False))
     mode = (data.get('mode') or 'custom').lower()
     if mode not in ('package', 'custom'):
         mode = 'custom'
@@ -1519,7 +1551,17 @@ def renew_client(server_id, inbound_id, email):
         
         # Update volume
         current_volume = target_client.get('totalGB', 0)
-        new_volume = current_volume + (volume_gb_to_add * 1024 * 1024 * 1024) if volume_gb_to_add > 0 else current_volume
+        
+        if reset_traffic:
+            target_client['up'] = 0
+            target_client['down'] = 0
+            # If resetting, set limit to new volume (if adding volume) or keep current (if just extending time)
+            if volume_gb_to_add > 0:
+                new_volume = volume_gb_to_add * 1024 * 1024 * 1024
+            else:
+                new_volume = current_volume
+        else:
+            new_volume = current_volume + (volume_gb_to_add * 1024 * 1024 * 1024) if volume_gb_to_add > 0 else current_volume
         
         # Update client
         target_client['expiryTime'] = new_expiry
@@ -1561,6 +1603,28 @@ def renew_client(server_id, inbound_id, email):
                 except ValueError:
                     pass
                 
+                # If reset_traffic was requested, we must call the specific reset endpoint
+                # because updateClient usually ignores 'up'/'down' fields.
+                if reset_traffic:
+                    reset_templates = collect_endpoint_templates(server.panel_type, 'client_reset_traffic', CLIENT_RESET_FALLBACKS)
+                    for r_template in reset_templates:
+                        r_url = build_panel_url(server.host, r_template, replacements)
+                        if not r_url: continue
+                        
+                        # Some panels need email in body, some in URL. Try both if needed.
+                        requires_path_email = (':email' in r_template) or ('{email}' in r_template)
+                        r_payload = None if requires_path_email else {"email": email}
+                        
+                        try:
+                            if r_payload is None:
+                                session_obj.post(r_url, verify=False, timeout=5)
+                            else:
+                                session_obj.post(r_url, json=r_payload, verify=False, timeout=5)
+                            # We don't strictly check success here as the main update succeeded, 
+                            # but we try our best to reset traffic.
+                        except:
+                            pass
+
                 if user.role == 'reseller' and price > 0:
                     user.credit -= price
                 

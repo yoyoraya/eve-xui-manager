@@ -283,6 +283,14 @@
             
             <div class="form-group checkbox-group">
                 <label class="checkbox-label">
+                    <input type="checkbox" id="renew-reset-traffic">
+                    <span class="checkmark"></span>
+                    <span>Reset Traffic</span>
+                </label>
+            </div>
+            
+            <div class="form-group checkbox-group">
+                <label class="checkbox-label">
                     <input type="checkbox" id="renew-start-after-first-use">
                     <span class="checkmark"></span>
                     <span>Start after first use</span>
@@ -567,6 +575,12 @@
                     showToast('Server errors: ' + errors, 'error');
                 }
                 if (!isSilent) showToast('Data updated successfully');
+
+                // If there is an active search, re-run it to update the results view
+                const searchInput = document.getElementById('global-search-input');
+                if (searchInput && searchInput.value.trim().length > 0) {
+                    performGlobalSearch();
+                }
             } else {
                 if (!isSilent) showToast('Error loading data', 'error');
             }
@@ -704,20 +718,20 @@
                                                         <rect x="3" y="14" width="7" height="7"></rect>
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn renew" onclick="openRenewModal(${client.server_id}, ${client.inbound_id}, '${client.email}')" title="Renew">
+                                                <button class="action-btn renew" onclick="openRenewModal(${client.server_id}, '${client.inbound_id}', '${client.email}')" title="Renew">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <circle cx="12" cy="12" r="10"></circle>
                                                         <polyline points="12 6 12 12 16 14"></polyline>
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn ${client.enable ? 'danger' : 'success'}" onclick="toggleClient(${client.server_id}, ${client.inbound_id}, '${client.email}', ${!client.enable})" title="${client.enable ? 'Disable' : 'Enable'}">
+                                                <button class="action-btn ${client.enable ? 'danger' : 'success'}" onclick="toggleClient(${client.server_id}, '${client.inbound_id}', '${client.email}', ${!client.enable})" title="${client.enable ? 'Disable' : 'Enable'}">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         ${client.enable 
                                                             ? '<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>'
                                                             : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'}
                                                     </svg>
                                                 </button>
-                                                <button class="action-btn warning" onclick="openResetModal(${client.server_id}, ${client.inbound_id}, '${client.email}', ${client.totalGB || 0})" title="Reset Traffic">
+                                                <button class="action-btn warning" onclick="openResetModal(${client.server_id}, '${client.inbound_id}', '${client.email}', ${client.totalGB || 0})" title="Reset Traffic">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <polyline points="1 4 1 10 7 10"></polyline>
                                                         <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
@@ -964,6 +978,7 @@
         document.getElementById('renew-email').value = email;
         document.getElementById('renew-client-email').textContent = email;
         document.getElementById('renew-start-after-first-use').checked = false;
+        document.getElementById('renew-reset-traffic').checked = false;
         document.getElementById('renew-custom-days').value = 30;
         document.getElementById('renew-custom-volume').value = 10;
         selectedRenewPackageId = null;
@@ -981,11 +996,13 @@
         const inboundId = document.getElementById('renew-inbound-id').value;
         const email = document.getElementById('renew-email').value;
         const startAfterFirstUse = document.getElementById('renew-start-after-first-use').checked;
+        const resetTraffic = document.getElementById('renew-reset-traffic').checked;
 
         const usePackage = Boolean(selectedRenewPackageId);
         const payload = {
             mode: usePackage ? 'package' : 'custom',
-            start_after_first_use: startAfterFirstUse
+            start_after_first_use: startAfterFirstUse,
+            reset_traffic: resetTraffic
         };
 
         if (usePackage) {
@@ -1602,26 +1619,49 @@
         }
     }
 
+    let searchTimeout = null;
+
     async function performGlobalSearch() {
         const searchInput = document.getElementById('global-search-input');
         const query = searchInput.value.trim().toLowerCase();
         
+        if (searchTimeout) {
+            clearTimeout(searchTimeout);
+        }
+
         if (query.length === 0) {
-            clearSearch();
+            clearSearch(false); // Pass false to avoid refreshing data immediately if not needed
             return;
         }
         
-        try {
-            const response = await fetch(`/api/clients/search?email=${encodeURIComponent(query)}`);
-            const data = await response.json();
-            
-            if (data.success && data.results.length > 0) {
-                displaySearchResults(data.results, query);
-            } else {
-                displaySearchResults([], query);
+        searchTimeout = setTimeout(async () => {
+            try {
+                const response = await fetch(`/api/clients/search?email=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                
+                if (data.success && data.results.length > 0) {
+                    displaySearchResults(data.results, query);
+                } else {
+                    displaySearchResults([], query);
+                }
+            } catch (error) {
+                console.error('Search error:', error);
             }
-        } catch (error) {
-            console.error('Search error:', error);
+        }, 500); // 500ms debounce
+    }
+
+    function clearSearch(shouldRefresh = true) {
+        const searchResultsDiv = document.getElementById('search-results');
+        const wasShowingResults = searchResultsDiv.style.display !== 'none';
+
+        document.getElementById('global-search-input').value = '';
+        searchResultsDiv.style.display = 'none';
+        document.getElementById('clear-search-btn').style.display = 'none';
+        
+        if (shouldRefresh) {
+            refreshData();
+        } else if (wasShowingResults) {
+            refreshData(true);
         }
     }
 
@@ -1775,13 +1815,6 @@
         `).join('');
         
         container.innerHTML = html;
-    }
-
-    function clearSearch() {
-        document.getElementById('global-search-input').value = '';
-        document.getElementById('search-results').style.display = 'none';
-        document.getElementById('clear-search-btn').style.display = 'none';
-        refreshData();
     }
 
     async function loadResellersForModal() {
