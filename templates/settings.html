@@ -37,22 +37,52 @@
         </div>
 
         <div id="tab-backups" class="tab-pane">
+            <!-- Auto Backup Settings -->
+            <div class="panel-card" style="margin-bottom: 24px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Automatic Backup</h2>
+                        <p class="text-secondary">Configure scheduled backups for your database.</p>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 16px; align-items: center;">
+                    <div class="form-group" style="margin-bottom: 0; flex: 1; max-width: 300px;">
+                        <label>Backup Frequency</label>
+                        <select id="backup-frequency" class="form-select" onchange="saveBackupSettings()">
+                            <option value="disabled">Disabled</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Backup List -->
             <div class="panel-card">
                 <div class="panel-card-header">
                     <div class="header-content">
-                        <h2>Database Backup</h2>
-                        <p class="text-secondary">Create and manage backups of your database.</p>
+                        <h2>Database Backups</h2>
+                        <p class="text-secondary">Manage your system and uploaded backups.</p>
                     </div>
-                    <button class="btn btn-primary" onclick="createBackup()">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                        Create Backup
-                    </button>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="file" id="upload-backup-input" accept=".db" style="display: none;" onchange="handleUpload(this)">
+                        <button class="btn btn-secondary" onclick="document.getElementById('upload-backup-input').click()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                            Upload Backup
+                        </button>
+                        <button class="btn btn-primary" onclick="createBackup()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                            Create Backup
+                        </button>
+                    </div>
                 </div>
                 <div class="table-responsive">
                     <table class="table">
                         <thead>
                             <tr>
                                 <th>Filename</th>
+                                <th>Type</th>
                                 <th>Date</th>
                                 <th>Size</th>
                                 <th>Actions</th>
@@ -271,7 +301,6 @@
     .action-buttons {
         display: flex;
         gap: 8px;
-        opacity: 0.7;
         transition: opacity 0.2s;
     }
 
@@ -302,6 +331,18 @@
         color: white;
         border-color: var(--primary);
     }
+
+    /* Badge Styles */
+    .badge {
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+    .badge-info { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+    .badge-success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+    .badge-secondary { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
 
     /* Table Styles */
     .table-responsive {
@@ -338,36 +379,42 @@
     }
 
     .action-btn {
-        background: transparent;
+        background: rgba(255, 255, 255, 0.03);
         border: 1px solid var(--border-color);
-        color: var(--text-secondary);
-        width: 32px;
-        height: 32px;
-        border-radius: 8px;
+        color: var(--text-primary);
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
-        transition: all 0.2s;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         text-decoration: none;
+        opacity: 0.9;
     }
 
     .action-btn:hover {
         background: var(--primary);
         border-color: var(--primary);
         color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        opacity: 1;
     }
 
     .action-btn.warning:hover {
         background: var(--warning);
         border-color: var(--warning);
         color: white;
+        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
     }
 
     .action-btn.danger:hover {
         background: var(--danger);
         border-color: var(--danger);
         color: white;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
     }
 </style>
 {% endblock %}
@@ -385,7 +432,65 @@
 
         if (tabName === 'backups') {
             loadBackups();
+            loadBackupSettings();
         }
+    }
+
+    async function loadBackupSettings() {
+        try {
+            const res = await fetch('/api/settings/backup');
+            const data = await res.json();
+            if (data.success) {
+                document.getElementById('backup-frequency').value = data.frequency;
+            }
+        } catch (e) {
+            console.error('Error loading settings', e);
+        }
+    }
+
+    async function saveBackupSettings() {
+        const freq = document.getElementById('backup-frequency').value;
+        try {
+            const res = await fetch('/api/settings/backup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ frequency: freq })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Settings saved');
+            } else {
+                showToast('Error saving settings', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function handleUpload(input) {
+        if (!input.files || !input.files[0]) return;
+        
+        const file = input.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const res = await fetch('/api/backups/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                showToast('Backup uploaded successfully');
+                loadBackups();
+            } else {
+                showToast(data.error || 'Error uploading backup', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+        input.value = ''; // Reset input
     }
 
     async function loadBackups() {
@@ -401,13 +506,16 @@
     function renderBackups(backups) {
         const tbody = document.getElementById('backups-table-body');
         if (backups.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-secondary">No backups found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary">No backups found</td></tr>';
             return;
         }
 
         tbody.innerHTML = backups.map(b => `
             <tr>
                 <td>${b.name}</td>
+                <td>
+                    <span class="badge ${getBadgeClass(b.type)}">${b.type}</span>
+                </td>
                 <td>${b.date}</td>
                 <td>${formatBytes(b.size)}</td>
                 <td>
@@ -425,6 +533,15 @@
                 </td>
             </tr>
         `).join('');
+    }
+
+    function getBadgeClass(type) {
+        switch(type) {
+            case 'Uploaded': return 'badge-info';
+            case 'Automatic': return 'badge-success';
+            case 'Safety': return 'badge-warning';
+            default: return 'badge-secondary';
+        }
     }
 
     async function createBackup() {

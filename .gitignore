@@ -54,3 +54,9 @@ Thumbs.db
 
 # Assets
 attached_assets/
+
+# Database
+instance/
+*.db
+*.sqlite
+*.sqlite3

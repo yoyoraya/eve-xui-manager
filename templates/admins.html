@@ -40,13 +40,19 @@
                 </div>
             </div>
 
-            <div class="form-group">
-                <label>Role</label>
-                <select id="admin-role" class="form-select" onchange="toggleResellerFields()">
-                    <option value="reseller">Reseller</option>
-                    <option value="admin">Admin</option>
-                    <option value="superadmin">Super Admin</option>
-                </select>
+            <div style="display: flex; gap: 10px;">
+                <div class="form-group" style="flex: 1;">
+                    <label>Role</label>
+                    <select id="admin-role" class="form-select" onchange="toggleResellerFields()">
+                        <option value="reseller">Reseller</option>
+                        <option value="admin">Admin</option>
+                        <option value="superadmin">Super Admin</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Telegram ID</label>
+                    <input type="text" id="admin-telegram-id" placeholder="Telegram ID">
+                </div>
             </div>
 
             <div id="reseller-fields">
@@ -255,6 +261,7 @@
         document.getElementById('admin-username').value = '';
         document.getElementById('admin-password').value = '';
         document.getElementById('admin-role').value = 'reseller';
+        document.getElementById('admin-telegram-id').value = '';
         document.getElementById('admin-credit').value = '0';
         document.getElementById('admin-allowed-servers').value = '*';
         document.getElementById('admin-discount').value = '0';
@@ -275,6 +282,7 @@
         document.getElementById('admin-username').value = admin.username;
         document.getElementById('admin-password').value = '';
         document.getElementById('admin-role').value = admin.role || 'admin';
+        document.getElementById('admin-telegram-id').value = admin.telegram_id || '';
         document.getElementById('admin-credit').value = (admin.credit || 0).toLocaleString();
         
         let servers = admin.allowed_servers;
@@ -317,6 +325,7 @@
             username: document.getElementById('admin-username').value,
             password: document.getElementById('admin-password').value,
             role: role,
+            telegram_id: document.getElementById('admin-telegram-id').value,
             credit: parseInt(creditRaw) || 0,
             allowed_servers: allowedServers,
             enabled: document.getElementById('admin-enabled').checked,

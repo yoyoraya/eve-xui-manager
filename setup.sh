@@ -41,7 +41,14 @@ DB_NAME="eve_manager_db"
 DB_USER="eve_manager"
 DB_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)"
 SESSION_SECRET="$(tr -dc 'A-Fa-f0-9' < /dev/urandom | head -c 64)"
+ADMIN_USERNAME_DEFAULT="admin"
+ADMIN_USERNAME="$ADMIN_USERNAME_DEFAULT"
 ADMIN_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)"
+
+reset_admin_defaults() {
+    ADMIN_USERNAME="$ADMIN_USERNAME_DEFAULT"
+    ADMIN_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)"
+}
 
 # ----------------------- Prerequisites ----------------------
 require_root() {
@@ -59,6 +66,35 @@ ask_domain() {
         print_error "Domain/IP is required"
         exit 1
     fi
+}
+
+prompt_admin_credentials() {
+    print_header "Super Admin Credentials"
+    read -rp "Enter super admin username [${ADMIN_USERNAME_DEFAULT}]: " input_username
+    if [ -n "${input_username}" ]; then
+        ADMIN_USERNAME="${input_username}"
+    fi
+
+    while true; do
+        read -rsp "Enter password for ${ADMIN_USERNAME} (leave empty for generated): " pass1
+        echo
+        if [ -z "$pass1" ]; then
+            print_warning "Using generated password: ${ADMIN_PASS}"
+            break
+        fi
+        read -rsp "Confirm password: " pass2
+        echo
+        if [ "$pass1" != "$pass2" ]; then
+            print_error "Passwords do not match. Try again."
+            continue
+        fi
+        if [ -z "$pass1" ]; then
+            print_error "Password cannot be empty."
+            continue
+        fi
+        ADMIN_PASS="$pass1"
+        break
+    done
 }
 
 detect_os() {
@@ -184,13 +220,14 @@ create_env_file() {
 FLASK_ENV=${ENVIRONMENT}
 DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}
 SESSION_SECRET=${SESSION_SECRET}
+INITIAL_ADMIN_USERNAME=${ADMIN_USERNAME}
 INITIAL_ADMIN_PASSWORD=${ADMIN_PASS}
 API_PORT=${APP_PORT}
 EOF
     chown "$APP_USER:$APP_USER" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     print_success ".env created at $ENV_FILE"
-    print_warning "Default admin password: ${ADMIN_PASS} (change after login)"
+    print_warning "Super admin credentials -> user: ${ADMIN_USERNAME} | pass: ${ADMIN_PASS}"
 }
 
 initialize_database() {
@@ -284,10 +321,27 @@ configure_firewall() {
     fi
 }
 
+quick_update() {
+    print_header "Quick Update"
+    if [ ! -d "$APP_DIR/.git" ]; then
+        print_error "Application not found at $APP_DIR. Run full install first."
+        return
+    fi
+    clone_or_update_repo
+    setup_python_env
+    initialize_database
+    if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+        systemctl restart ${SERVICE_NAME}
+        print_success "Service ${SERVICE_NAME} restarted"
+    else
+        print_warning "Systemd service ${SERVICE_NAME} not found. Start the app manually if needed."
+    fi
+}
+
 print_summary() {
     print_header "Installation Complete"
     echo -e "${GREEN}Dashboard URL:${NC} http://${DOMAIN}"
-    echo -e "${GREEN}Admin Username:${NC} admin"
+    echo -e "${GREEN}Admin Username:${NC} ${ADMIN_USERNAME}"
     echo -e "${GREEN}Admin Password:${NC} ${ADMIN_PASS}"
     echo -e "${YELLOW}Change the admin password after first login!${NC}"
     echo ""
@@ -297,12 +351,10 @@ print_summary() {
     echo "Logs: ${LOG_DIR}/gunicorn.log"
 }
 
-# -------------------------- Main ---------------------------
-main() {
-    clear
-    print_header "Eve X-UI Manager | Quick Installer"
-    require_root
+run_full_install() {
+    reset_admin_defaults
     ask_domain
+    prompt_admin_credentials
     detect_os
     update_system
     install_dependencies
@@ -318,6 +370,41 @@ main() {
     configure_nginx
     configure_firewall
     print_summary
+}
+
+pause_prompt() {
+    read -rp "Press Enter to return to the menu... " _
+}
+
+# -------------------------- Main ---------------------------
+main() {
+    require_root
+    while true; do
+        clear
+        print_header "Eve X-UI Manager | Setup Menu"
+        echo "1) Install / Update"
+        echo "2) Update code & restart service"
+        echo "3) Exit"
+        read -rp "Select an option: " choice
+        case "$choice" in
+            1)
+                run_full_install
+                pause_prompt
+                ;;
+            2)
+                quick_update
+                pause_prompt
+                ;;
+            3)
+                print_success "Goodbye!"
+                exit 0
+                ;;
+            *)
+                print_error "Invalid selection"
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 main "$@"

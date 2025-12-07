@@ -10,6 +10,8 @@ import secrets
 import string
 import shutil
 import glob
+import threading
+import time
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
@@ -20,7 +22,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from urllib.parse import urlparse, quote
 from jdatetime import datetime as jdatetime_class
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, text, inspect
 
 APP_VERSION = "1.2.1"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
@@ -71,6 +73,7 @@ class Admin(db.Model):
     discount_percent = db.Column(db.Integer, default=0)
     custom_cost_per_day = db.Column(db.Integer, nullable=True)
     custom_cost_per_gb = db.Column(db.Integer, nullable=True)
+    telegram_id = db.Column(db.String(100), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
     
@@ -94,6 +97,7 @@ class Admin(db.Model):
             'discount_percent': self.discount_percent,
             'custom_cost_per_day': self.custom_cost_per_day,
             'custom_cost_per_gb': self.custom_cost_per_gb,
+            'telegram_id': self.telegram_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
@@ -244,6 +248,11 @@ class NotificationTemplate(db.Model):
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+class SystemSetting(db.Model):
+    __tablename__ = 'system_settings'
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.Text)
 
 class ManualReceipt(db.Model):
     __tablename__ = 'manual_receipts'
@@ -453,6 +462,22 @@ def build_panel_url(host, template, replacements):
 with app.app_context():
     db.create_all()
     
+    # Check for telegram_id column in admins table
+    try:
+        inspector = inspect(db.engine)
+        columns = [c['name'] for c in inspector.get_columns('admins')]
+        print(f"Current columns in admins: {columns}")
+        if 'telegram_id' not in columns:
+            print("telegram_id column missing, attempting to add...")
+            with db.engine.connect() as conn:
+                conn.execute(text('ALTER TABLE admins ADD COLUMN telegram_id VARCHAR(100)'))
+                conn.commit()
+            print("Added telegram_id column to admins table")
+        else:
+            print("telegram_id column already exists")
+    except Exception as e:
+        print(f"Migration error: {e}")
+    
     # Initialize PanelAPI data
     if not PanelAPI.query.first():
         panel_apis = [
@@ -495,9 +520,10 @@ with app.app_context():
         ]
         db.session.add_all(panel_apis)
     
-    if not Admin.query.filter_by(username='admin').first():
+    initial_username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
+    if not Admin.query.filter_by(username=initial_username).first():
         default_admin = Admin(
-            username='admin',
+            username=initial_username,
             is_superadmin=True,
             role='superadmin',
             enabled=True,
@@ -1563,7 +1589,8 @@ def add_admin():
         enabled=data.get('enabled', True),
         discount_percent=int(data.get('discount_percent', 0)),
         custom_cost_per_day=int(data.get('custom_cost_per_day')) if data.get('custom_cost_per_day') is not None else None,
-        custom_cost_per_gb=int(data.get('custom_cost_per_gb')) if data.get('custom_cost_per_gb') is not None else None
+        custom_cost_per_gb=int(data.get('custom_cost_per_gb')) if data.get('custom_cost_per_gb') is not None else None,
+        telegram_id=data.get('telegram_id')
     )
     new_admin.set_password(data['password'])
     db.session.add(new_admin)
@@ -1587,6 +1614,7 @@ def update_admin(admin_id):
         admin.custom_cost_per_day = int(data['custom_cost_per_day']) if data['custom_cost_per_day'] is not None else None
     if 'custom_cost_per_gb' in data: 
         admin.custom_cost_per_gb = int(data['custom_cost_per_gb']) if data['custom_cost_per_gb'] is not None else None
+    if 'telegram_id' in data: admin.telegram_id = data['telegram_id']
     db.session.commit()
     return jsonify({"success": True})
 
@@ -2619,7 +2647,18 @@ def list_backups():
             name = os.path.basename(f)
             size = os.path.getsize(f)
             date = datetime.fromtimestamp(os.path.getmtime(f)).strftime('%Y-%m-%d %H:%M:%S')
-            backups.append({'name': name, 'size': size, 'date': date})
+            
+            # Determine type
+            if name.startswith('upload_'):
+                b_type = 'Uploaded'
+            elif name.startswith('auto_'):
+                b_type = 'Automatic'
+            elif name.startswith('pre_restore_'):
+                b_type = 'Safety'
+            else:
+                b_type = 'System'
+                
+            backups.append({'name': name, 'size': size, 'date': date, 'type': b_type})
     return jsonify({'success': True, 'backups': backups})
 
 @app.route('/api/backups', methods=['POST'])
@@ -2638,6 +2677,51 @@ def create_backup():
         return jsonify({'success': True, 'message': 'Backup created', 'filename': filename})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/backups/upload', methods=['POST'])
+@login_required
+def upload_backup():
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file part'})
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No selected file'})
+    
+    if file and file.filename.endswith('.db'):
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safe_name = secure_filename(file.filename)
+            filename = f'upload_{timestamp}_{safe_name}'
+            file.save(os.path.join(BACKUP_DIR, filename))
+            return jsonify({'success': True, 'message': 'Backup uploaded successfully'})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': False, 'error': 'Invalid file type. Only .db files allowed'})
+
+@app.route('/api/settings/backup', methods=['GET'])
+@login_required
+def get_backup_settings():
+    freq = db.session.get(SystemSetting, 'backup_frequency')
+    return jsonify({
+        'success': True,
+        'frequency': freq.value if freq else 'disabled'
+    })
+
+@app.route('/api/settings/backup', methods=['POST'])
+@login_required
+def save_backup_settings():
+    data = request.json
+    freq_val = data.get('frequency', 'disabled')
+    
+    setting = db.session.get(SystemSetting, 'backup_frequency')
+    if not setting:
+        setting = SystemSetting(key='backup_frequency', value=freq_val)
+        db.session.add(setting)
+    else:
+        setting.value = freq_val
+    
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Settings saved'})
 
 @app.route('/api/backups/<filename>/download', methods=['GET'])
 @login_required
@@ -2716,5 +2800,57 @@ def check_update():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+def run_scheduler():
+    with app.app_context():
+        while True:
+            try:
+                freq_setting = db.session.get(SystemSetting, 'backup_frequency')
+                if freq_setting and freq_setting.value != 'disabled':
+                    last_backup = db.session.get(SystemSetting, 'last_auto_backup')
+                    
+                    should_backup = False
+                    now = datetime.now()
+                    
+                    if not last_backup:
+                        should_backup = True
+                    else:
+                        last_time = datetime.fromisoformat(last_backup.value)
+                        if freq_setting.value == 'daily' and (now - last_time) > timedelta(days=1):
+                            should_backup = True
+                        elif freq_setting.value == 'weekly' and (now - last_time) > timedelta(weeks=1):
+                            should_backup = True
+                        elif freq_setting.value == 'monthly' and (now - last_time) > timedelta(days=30):
+                            should_backup = True
+                            
+                    if should_backup:
+                        db_path = os.path.join(app.instance_path, 'servers.db')
+                        if os.path.exists(db_path):
+                            timestamp = now.strftime('%Y%m%d_%H%M%S')
+                            filename = f'auto_{timestamp}.db'
+                            dest = os.path.join(BACKUP_DIR, filename)
+                            shutil.copy2(db_path, dest)
+                            
+                            # Update last backup time
+                            if not last_backup:
+                                last_backup = SystemSetting(key='last_auto_backup', value=now.isoformat())
+                                db.session.add(last_backup)
+                            else:
+                                last_backup.value = now.isoformat()
+                            db.session.commit()
+                            print(f"Auto backup created: {filename}")
+                            
+            except Exception as e:
+                print(f"Scheduler error: {e}")
+            
+            time.sleep(3600) # Check every hour
+
 if __name__ == '__main__':
+    # Create tables if not exist
+    with app.app_context():
+        db.create_all()
+        
+    # Start scheduler in background
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    
     app.run(host='0.0.0.0', port=5000, debug=True)
