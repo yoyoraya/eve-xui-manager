@@ -16,3 +16,7 @@ dependencies = [
     "urllib3>=2.5.0",
     "werkzeug>=3.1.4",
 ]
+
+[tool.setuptools]
+py-modules = ["app", "main"]
+

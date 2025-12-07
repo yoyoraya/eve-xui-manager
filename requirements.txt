@@ -1,0 +1,11 @@
+flask>=3.1.2
+flask-limiter>=4.0.0
+flask-sqlalchemy>=3.1.1
+gunicorn>=23.0.0
+jdatetime>=5.2.0
+pillow>=12.0.0
+psycopg2-binary>=2.9.11
+qrcode>=8.2
+requests>=2.32.5
+urllib3>=2.5.0
+werkzeug>=3.1.4
