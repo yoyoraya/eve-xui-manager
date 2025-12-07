@@ -164,8 +164,6 @@ install_dependencies() {
         curl \
         wget \
         nginx \
-        postgresql postgresql-contrib \
-        libpq-dev \
         build-essential \
         supervisor \
         ufw \
@@ -186,26 +184,10 @@ create_app_user() {
 
 prepare_directories() {
     print_header "Step 4: Prepare directories"
-    mkdir -p "$APP_DIR" "$LOG_DIR"
+    mkdir -p "$APP_DIR" "$LOG_DIR" "$APP_DIR/instance"
     chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$LOG_DIR"
     chmod 750 "$APP_DIR"
     print_success "Directories ready"
-}
-
-setup_database() {
-    print_header "Step 5: Configure PostgreSQL"
-    systemctl enable postgresql >/dev/null 2>&1 || true
-    systemctl start postgresql || true
-
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 || \
-        sudo -u postgres psql -c "CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASS}';"
-
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
-        sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
-
-    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >/dev/null
-    print_success "Database ready"
-    print_warning "DB user: ${DB_USER} | DB name: ${DB_NAME}"
 }
 
 clone_or_update_repo() {
@@ -244,7 +226,6 @@ create_env_file() {
     fi
     cat > "$ENV_FILE" <<EOF
 FLASK_ENV=${ENVIRONMENT}
-DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}
 SESSION_SECRET=${SESSION_SECRET}
 INITIAL_ADMIN_USERNAME=${ADMIN_USERNAME}
 INITIAL_ADMIN_PASSWORD=${ADMIN_PASS}
@@ -271,8 +252,7 @@ create_systemd_service() {
     cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=Eve X-UI Manager
-After=network.target postgresql.service
-Wants=postgresql.service
+After=network.target
 
 [Service]
 User=${APP_USER}
@@ -387,7 +367,6 @@ run_full_install() {
     ensure_python_pkg
     create_app_user
     prepare_directories
-    setup_database
     clone_or_update_repo
     setup_python_env
     create_env_file
