@@ -435,6 +435,12 @@ CLIENT_RESET_FALLBACKS = [
     "/xui/inbound/:id/resetClientTraffic/:email"
 ]
 
+CLIENT_DELETE_FALLBACKS = [
+    "/panel/api/inbounds/:id/delClient/:clientId",
+    "/xui/API/inbounds/:id/delClient/:clientId",
+    "/xui/inbound/delClient/:clientId"
+]
+
 
 def collect_endpoint_templates(panel_type, attr_name, fallbacks):
     """Return ordered list of endpoint templates for the requested action."""
@@ -1459,6 +1465,183 @@ def reset_client_traffic(server_id, inbound_id):
         return jsonify({"success": False, "error": "Reset endpoint returned error"}), 400
     except Exception as e:
         app.logger.error(f"Reset error: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 400
+
+@app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/edit', methods=['POST'])
+@login_required
+def edit_client(server_id, inbound_id, email):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or not user.is_superadmin:
+        return jsonify({"success": False, "error": "Access denied"}), 403
+    
+    server = Server.query.get_or_404(server_id)
+    
+    try:
+        data = request.get_json() or {}
+        new_email = data.get('new_email', '').strip()
+    except:
+        return jsonify({"success": False, "error": "Invalid data"}), 400
+
+    if not new_email:
+        return jsonify({"success": False, "error": "New email is required"}), 400
+        
+    session_obj, error = get_xui_session(server)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+        
+    try:
+        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        if fetch_err:
+            return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+            
+        target_client, _ = find_client(inbounds, inbound_id, email)
+        if not target_client:
+            return jsonify({"success": False, "error": "Client not found"}), 404
+            
+        # Extract ID before modification to ensure we target the correct client
+        client_id = target_client.get('id', target_client.get('password', email))
+        
+        # Update email
+        target_client['email'] = new_email
+        
+        update_payload = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [target_client]})
+        }
+        
+        replacements = {
+            'id': inbound_id,
+            'inbound_id': inbound_id,
+            'inboundId': inbound_id,
+            'clientId': client_id,
+            'client_id': client_id,
+            'email': email 
+        }
+        
+        templates = collect_endpoint_templates(server.panel_type, 'client_update', CLIENT_UPDATE_FALLBACKS)
+        errors = []
+        success = False
+        
+        for template in templates:
+            full_url = build_panel_url(server.host, template, replacements)
+            if not full_url:
+                continue
+            try:
+                resp = session_obj.post(full_url, json=update_payload, verify=False, timeout=10)
+            except Exception as exc:
+                errors.append(f"{template}: {exc}")
+                continue
+                
+            if resp.status_code == 200:
+                try:
+                    resp_json = resp.json()
+                    if isinstance(resp_json, dict) and resp_json.get('success') is False:
+                        errors.append(f"{template}: success false")
+                        continue
+                except ValueError:
+                    pass
+                
+                success = True
+                break
+            
+            errors.append(f"{template}: {resp.status_code}")
+            
+        if success:
+            # Update ownership if exists
+            ownerships = ClientOwnership.query.filter_by(server_id=server_id, client_email=email).all()
+            for own in ownerships:
+                own.client_email = new_email
+            db.session.commit()
+            
+            return jsonify({"success": True})
+        else:
+            app.logger.warning(f"Edit client failed for {email}: {'; '.join(errors)}")
+            return jsonify({"success": False, "error": "Update failed"}), 400
+            
+    except Exception as e:
+        app.logger.error(f"Edit client error: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 400
+
+@app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/delete', methods=['POST'])
+@login_required
+def delete_client(server_id, inbound_id, email):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
+    server = Server.query.get_or_404(server_id)
+    
+    if user.role == 'reseller':
+        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
+        if not ownership:
+            return jsonify({"success": False, "error": "Access denied"}), 403
+            
+    session_obj, error = get_xui_session(server)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+        
+    try:
+        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        if fetch_err:
+            return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+            
+        target_client, _ = find_client(inbounds, inbound_id, email)
+        if not target_client:
+            return jsonify({"success": False, "error": "Client not found"}), 404
+            
+        client_id = target_client.get('id', target_client.get('password', email))
+        
+        replacements = {
+            'id': inbound_id,
+            'inbound_id': inbound_id,
+            'inboundId': inbound_id,
+            'clientId': client_id,
+            'client_id': client_id,
+            'email': email 
+        }
+        
+        templates = collect_endpoint_templates(server.panel_type, 'client_delete', CLIENT_DELETE_FALLBACKS)
+        errors = []
+        success = False
+        
+        for template in templates:
+            full_url = build_panel_url(server.host, template, replacements)
+            if not full_url:
+                continue
+            try:
+                resp = session_obj.post(full_url, verify=False, timeout=10)
+            except Exception as exc:
+                errors.append(f"{template}: {exc}")
+                continue
+                
+            if resp.status_code == 200:
+                try:
+                    resp_json = resp.json()
+                    if isinstance(resp_json, dict) and resp_json.get('success') is False:
+                        errors.append(f"{template}: success false")
+                        continue
+                except ValueError:
+                    pass
+                
+                success = True
+                break
+            
+            errors.append(f"{template}: {resp.status_code}")
+            
+        if success:
+            # Remove ownership if exists
+            ClientOwnership.query.filter_by(server_id=server_id, client_email=email).delete()
+            db.session.commit()
+            
+            log_transaction(user.id, 0, 'delete_client', f"Deleted client {email}")
+            
+            return jsonify({"success": True})
+        else:
+            app.logger.warning(f"Delete client failed for {email}: {'; '.join(errors)}")
+            return jsonify({"success": False, "error": "Delete failed"}), 400
+            
+    except Exception as e:
+        app.logger.error(f"Delete client error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 400
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew', methods=['POST'])
