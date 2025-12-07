@@ -29,10 +29,18 @@ GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL", "sqlite:///servers.db")
+
+# Use SQLite by default, but allow override via DATABASE_URL
+db_url = os.environ.get("DATABASE_URL")
+if not db_url or db_url.startswith("postgresql://"):
+    # Fallback to SQLite if DATABASE_URL is missing or points to the old postgres config
+    db_path = os.path.join(app.instance_path, 'servers.db')
+    os.makedirs(app.instance_path, exist_ok=True)
+    db_url = f"sqlite:///{db_path}"
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 5,
     'pool_recycle': 1800,
     'pool_pre_ping': True
 }
