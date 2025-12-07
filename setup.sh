@@ -24,6 +24,32 @@ print_success() { echo -e "${GREEN}✓ $1${NC}"; }
 print_error() { echo -e "${RED}✗ $1${NC}"; }
 print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
 
+generate_secret() {
+    local length="$1"
+    local mode="${2:-alnum}"
+    if ! command -v python3 >/dev/null 2>&1; then
+        # Fallback to openssl if python3 unavailable
+        if [ "$mode" = "hex" ]; then
+            openssl rand -hex $((length/2 + 1)) | cut -c1-${length}
+        else
+            openssl rand -base64 $((length*2)) | tr -dc 'A-Za-z0-9' | head -c ${length}
+        fi
+        return
+    fi
+    python3 - "$length" "$mode" <<'PY'
+import secrets, string, sys
+length = int(sys.argv[1])
+mode = sys.argv[2]
+if mode == 'hex':
+    alphabet = '0123456789abcdef'
+elif mode == 'alnum':
+    alphabet = string.ascii_letters + string.digits
+else:
+    alphabet = mode
+print(''.join(secrets.choice(alphabet) for _ in range(length)))
+PY
+}
+
 # ------------------------- Config --------------------------
 APP_NAME="Eve X-UI Manager"
 SERVICE_NAME="eve-manager"
@@ -39,15 +65,15 @@ ENVIRONMENT="${2:-production}"
 
 DB_NAME="eve_manager_db"
 DB_USER="eve_manager"
-DB_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)"
-SESSION_SECRET="$(tr -dc 'A-Fa-f0-9' < /dev/urandom | head -c 64)"
+DB_PASS="$(generate_secret 20 alnum)"
+SESSION_SECRET="$(generate_secret 64 hex)"
 ADMIN_USERNAME_DEFAULT="admin"
 ADMIN_USERNAME="$ADMIN_USERNAME_DEFAULT"
-ADMIN_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)"
+ADMIN_PASS="$(generate_secret 12 alnum)"
 
 reset_admin_defaults() {
     ADMIN_USERNAME="$ADMIN_USERNAME_DEFAULT"
-    ADMIN_PASS="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)"
+    ADMIN_PASS="$(generate_secret 12 alnum)"
 }
 
 # ----------------------- Prerequisites ----------------------
