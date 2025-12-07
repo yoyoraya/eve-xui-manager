@@ -2835,3 +2835,56 @@ select optgroup {
         height: 60px !important;
     }
 }
+
+/* Overview Toggle - Mobile Only */
+.overview-toggle {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .overview-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .overview-toggle:hover {
+        background: var(--bg-card-hover);
+    }
+
+    .overview-toggle h3 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .overview-toggle svg {
+        color: var(--text-secondary);
+        transition: transform 0.3s ease;
+    }
+
+    .overview-toggle.active svg {
+        transform: rotate(180deg);
+    }
+
+    /* Hide stats grid by default on mobile */
+    .stats-grid {
+        display: none;
+    }
+
+    /* Show when toggled */
+    .stats-grid.show {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+}

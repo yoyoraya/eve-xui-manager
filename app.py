@@ -1225,10 +1225,10 @@ def global_client_search():
         return jsonify({"success": False, "error": "Query parameter 'email' is required"}), 400
 
     try:
-        limit = int(request.args.get('limit', 50))
+        limit = int(request.args.get('limit', 500))
     except ValueError:
-        limit = 50
-    limit = max(1, min(limit, 200))
+        limit = 500
+    limit = max(1, min(limit, 5000))
 
     search_term = query.lower()
     servers = get_accessible_servers(user)

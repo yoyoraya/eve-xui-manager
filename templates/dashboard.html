@@ -33,61 +33,67 @@
 {% endblock %}
 
 {% block content %}
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-icon purple">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-            </svg>
-        </div>
-        <div class="stat-info">
-            <span class="stat-label">Servers</span>
-            <span class="stat-value" id="stat-servers">{{ server_count }}</span>
-        </div>
+<div class="overview-wrapper">
+    <div class="overview-toggle" onclick="toggleOverview()">
+        <h3>Overview</h3>
+        <svg id="overview-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
     </div>
-    <div class="stat-card">
-        <div class="stat-icon blue">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                <line x1="8" y1="21" x2="16" y2="21"></line>
-                <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
-        </div>
-        <div class="stat-info">
-            <span class="stat-label">Inbounds</span>
-            <span class="stat-value" id="stat-inbounds">0</span>
-            <span class="stat-sub" id="stat-active">0 Active</span>
-        </div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon green">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                <circle cx="9" cy="7" r="4"></circle>
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-        </div>
-        <div class="stat-info">
-            <span class="stat-label">Clients</span>
-            <span class="stat-value" id="stat-total-clients">0</span>
-            <div class="client-breakdown">
-                <span class="client-count active-count"><span id="stat-active-clients">0</span></span>
-                <span class="client-count inactive-count"><span id="stat-inactive-clients">0</span></span>
+    <div class="stats-grid" id="overview-stats">
+        <div class="stat-card">
+            <div class="stat-icon purple">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-label">Servers</span>
+                <span class="stat-value" id="stat-servers">{{ server_count }}</span>
             </div>
         </div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon orange">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-            </svg>
+        <div class="stat-card">
+            <div class="stat-icon blue">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-label">Inbounds</span>
+                <span class="stat-value" id="stat-inbounds">0</span>
+                <span class="stat-sub" id="stat-active">0 Active</span>
+            </div>
         </div>
-        <div class="stat-info">
-            <span class="stat-label">Total Traffic</span>
-            <span class="stat-value" id="stat-traffic">0 B</span>
-            <span class="stat-sub"><span id="stat-upload">↑ 0 B</span> / <span id="stat-download">↓ 0 B</span></span>
+        <div class="stat-card">
+            <div class="stat-icon green">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="9" cy="7" r="4"></circle>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-label">Clients</span>
+                <span class="stat-value" id="stat-total-clients">0</span>
+                <div class="client-breakdown">
+                    <span class="client-count active-count"><span id="stat-active-clients">0</span></span>
+                    <span class="client-count inactive-count"><span id="stat-inactive-clients">0</span></span>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon orange">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                </svg>
+            </div>
+            <div class="stat-info">
+                <span class="stat-label">Total Traffic</span>
+                <span class="stat-value" id="stat-traffic">0 B</span>
+                <span class="stat-sub"><span id="stat-upload">↑ 0 B</span> / <span id="stat-download">↓ 0 B</span></span>
+            </div>
         </div>
     </div>
 </div>
@@ -2235,6 +2241,13 @@
         } catch (error) {
             showToast('Error updating client', 'error');
         }
+    }
+
+    function toggleOverview() {
+        const stats = document.getElementById('overview-stats');
+        const toggle = document.querySelector('.overview-toggle');
+        stats.classList.toggle('show');
+        toggle.classList.toggle('active');
     }
 
     function openDeleteClientModal(serverId, inboundId, email, uuid, enable, expiry, up, down, total, remaining) {
