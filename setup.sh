@@ -196,6 +196,10 @@ clone_or_update_repo() {
         print_warning "Repository exists, pulling latest changes"
         sudo -u "$APP_USER" git -C "$APP_DIR" fetch --all
         sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/main
+    elif [ -d "$APP_DIR" ] && [ "$(ls -A $APP_DIR)" ]; then
+        print_warning "Directory $APP_DIR exists but is not a git repo. Backing up..."
+        mv "$APP_DIR" "${APP_DIR}.bak.$(date +%s)"
+        sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
     else
         sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
     fi
