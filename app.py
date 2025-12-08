@@ -2469,6 +2469,7 @@ def client_subscription(server_id, sub_id):
         "remaining": format_bytes(remaining) if remaining is not None else None,
         "subscription_url": f"{request.base_url}?format=b64",
         "configs": configs,
+        "server_name": server.name
     }
 
     apps = SubAppConfig.query.filter_by(is_enabled=True).all()
