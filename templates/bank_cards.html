@@ -67,11 +67,12 @@
                     <label>Notes</label>
                     <textarea id="card-notes" class="form-input" rows="3" placeholder="Seen in dashboard"></textarea>
                 </div>
-                <div class="form-group checkbox-group">
-                    <label class="checkbox-label">
+                <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+                    <label class="toggle-switch">
                         <input type="checkbox" id="card-active" checked>
-                        <span>Active</span>
+                        <span class="slider"></span>
                     </label>
+                    <span>Active</span>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeCardModal()">Cancel</button>
