@@ -2911,6 +2911,15 @@ select optgroup {
     gap: 12px;
     margin-top: 12px;
     margin-bottom: 12px;
+    padding: 10px 14px;
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    transition: background 0.2s;
+}
+
+.form-toggle-item:hover {
+    background: rgba(255, 255, 255, 0.03);
 }
 
 .form-toggle-item span {
@@ -2919,4 +2928,5 @@ select optgroup {
     line-height: 1;
     display: flex;
     align-items: center;
+    font-weight: 500;
 }
