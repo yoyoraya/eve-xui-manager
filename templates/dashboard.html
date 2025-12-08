@@ -624,6 +624,7 @@
     let currentLink = '';
     let inboundsData = [];
     let allInboundsData = [];
+    let refreshController = null;
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
@@ -634,8 +635,10 @@
 
     document.addEventListener('DOMContentLoaded', function() {
         showLoading();
-        refreshData(true).then(() => hideLoading());
-        loadServers();
+        // Load servers first to know if we have any
+        loadServers().then(() => {
+            refreshData(true).then(() => hideLoading());
+        });
         document.getElementById('global-search-input').addEventListener('input', performGlobalSearch);
         if (IS_SUPERADMIN) loadResellersForModal();
     });
@@ -672,6 +675,13 @@
     async function refreshData(isSilent = false) {
         const refreshBtn = document.querySelector('.header-controls .btn-primary');
         
+        // Cancel previous request if it exists
+        if (refreshController) {
+            refreshController.abort();
+        }
+        refreshController = new AbortController();
+        const signal = refreshController.signal;
+
         if (!isSilent) {
             if (refreshBtn) {
                 if (!refreshBtn.dataset.originalContent) {
@@ -685,7 +695,7 @@
         }
         
         try {
-            const response = await fetch('/api/refresh');
+            const response = await fetch('/api/refresh', { signal });
             const data = await response.json();
             
             if (data.success) {
@@ -712,10 +722,16 @@
                 }
             } else {
                 if (!isSilent) showToast('Error loading data', 'error');
+                handleRefreshError();
             }
         } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('Refresh aborted');
+                return;
+            }
             console.error('Refresh error:', error);
             if (!isSilent) showToast('Error updating: ' + error.message, 'error');
+            handleRefreshError();
         } finally {
             if (!isSilent) {
                 if (refreshBtn) {
@@ -726,6 +742,28 @@
                 }
             }
             hideLoading();
+            refreshController = null;
+        }
+    }
+
+    function handleRefreshError() {
+        // If we have servers but failed to load data, show error state instead of "No servers added"
+        if (allServers && allServers.length > 0) {
+            const container = document.getElementById('inbounds-container');
+            // Only replace if it's currently showing the empty state or nothing
+            if (container.querySelector('.empty-state') || container.innerHTML.trim() === '') {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <h3>Connection Error</h3>
+                        <p>Failed to load data from servers. Please check your connection and try again.</p>
+                        <button class="btn btn-primary" onclick="refreshData()">Try Again</button>
+                    </div>`;
+            }
         }
     }
 
