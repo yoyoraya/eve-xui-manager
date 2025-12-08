@@ -2903,3 +2903,20 @@ select optgroup {
         margin-bottom: 20px;
     }
 }
+
+/* Toggle Switch Row Styles */
+.form-toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    margin-bottom: 12px;
+}
+
+.form-toggle-item span {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+}
