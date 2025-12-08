@@ -2313,6 +2313,12 @@ select optgroup {
         font-size: 0.8rem;
     }
     
+    /* Restore button size in modals */
+    .modal .btn {
+        padding: 10px 20px;
+        font-size: 0.95rem;
+    }
+    
     .btn svg {
         width: 14px;
         height: 14px;
