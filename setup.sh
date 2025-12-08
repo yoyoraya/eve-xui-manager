@@ -300,6 +300,14 @@ EOF
 
 setup_certbot_ssl() {
     print_header "Step 11: SSL Configuration (Certbot)"
+    
+    # Ensure certbot is installed
+    if ! command -v certbot >/dev/null 2>&1; then
+        print_warning "Certbot not found. Installing..."
+        apt-get update -qq
+        apt-get install -y -qq certbot python3-certbot-nginx
+    fi
+
     if [ -z "$DOMAIN" ]; then
         ask_domain
     fi
