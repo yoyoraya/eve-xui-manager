@@ -18,6 +18,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
             SSL Settings
         </button>
+        <button class="settings-tab" onclick="switchTab('session')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            Session Settings
+        </button>
         <!-- Add more tabs here later -->
     </div>
 
@@ -121,6 +125,26 @@
                     <label>Private Key Path</label>
                     <input type="text" id="ssl-key-path" class="form-control" placeholder="/etc/ssl/private/your_key.key">
                     <small class="text-secondary">Absolute path to your .key file</small>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-session" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Session Timeout</h2>
+                        <p class="text-secondary">Configure how long a user stays logged in.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveSessionSettings()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                        Save Settings
+                    </button>
+                </div>
+                <div class="form-group">
+                    <label>Session Timeout (Hours)</label>
+                    <input type="number" id="session-timeout" class="form-control" min="1" value="168">
+                    <small class="text-secondary">Default is 168 hours (7 days). Set to a higher value to keep users logged in longer.</small>
                 </div>
             </div>
         </div>
@@ -464,6 +488,8 @@
             loadBackupSettings();
         } else if (tabName === 'ssl') {
             loadSSLSettings();
+        } else if (tabName === 'session') {
+            loadSessionSettings();
         }
     }
 
@@ -829,6 +855,38 @@
                 loadTemplates();
             } else {
                 showToast(data.error || 'Error deleting', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    // Session Settings
+    async function loadSessionSettings() {
+        try {
+            const res = await fetch('/api/settings/session');
+            const data = await res.json();
+            if (data.success) {
+                document.getElementById('session-timeout').value = data.timeout_hours;
+            }
+        } catch (e) {
+            console.error('Error loading session settings:', e);
+        }
+    }
+
+    async function saveSessionSettings() {
+        const hours = document.getElementById('session-timeout').value;
+        try {
+            const res = await fetch('/api/settings/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ timeout_hours: hours })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Session settings saved');
+            } else {
+                showToast(data.message || 'Error saving settings', 'error');
             }
         } catch (e) {
             showToast('Network error', 'error');

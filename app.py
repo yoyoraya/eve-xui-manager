@@ -3106,6 +3106,40 @@ def save_ssl_settings():
     db.session.commit()
     return jsonify({'success': True, 'message': 'SSL settings saved'})
 
+@app.route('/api/settings/session', methods=['GET'])
+@login_required
+def get_session_settings():
+    setting = db.session.get(SystemSetting, 'session_timeout_hours')
+    return jsonify({
+        'success': True,
+        'timeout_hours': int(setting.value) if setting else 168 # Default 7 days = 168 hours
+    })
+
+@app.route('/api/settings/session', methods=['POST'])
+@login_required
+def save_session_settings():
+    data = request.json
+    try:
+        hours = int(data.get('timeout_hours', 168))
+        if hours < 1:
+            return jsonify({'success': False, 'message': 'Timeout must be at least 1 hour'}), 400
+            
+        setting = db.session.get(SystemSetting, 'session_timeout_hours')
+        if not setting:
+            setting = SystemSetting(key='session_timeout_hours', value=str(hours))
+            db.session.add(setting)
+        else:
+            setting.value = str(hours)
+            
+        db.session.commit()
+        
+        # Update config immediately
+        app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=hours)
+        
+        return jsonify({'success': True, 'message': 'Session settings saved'})
+    except ValueError:
+        return jsonify({'success': False, 'message': 'Invalid value'}), 400
+
 @app.route('/api/backups/<filename>/download', methods=['GET'])
 @login_required
 def download_backup(filename):
@@ -3227,10 +3261,26 @@ def run_scheduler():
             
             time.sleep(3600) # Check every hour
 
+def update_session_lifetime():
+    with app.app_context():
+        try:
+            # Check if table exists first to avoid error on fresh install
+            inspector = inspect(db.engine)
+            if 'system_settings' in inspector.get_table_names():
+                setting = db.session.get(SystemSetting, 'session_timeout_hours')
+                if setting:
+                    hours = int(setting.value)
+                    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=hours)
+                    print(f"Session lifetime updated to {hours} hours")
+        except Exception as e:
+            print(f"Error updating session lifetime: {e}")
+
 if __name__ == '__main__':
     # Create tables if not exist
     with app.app_context():
         db.create_all()
+    
+    update_session_lifetime()
         
     # Start scheduler in background
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
