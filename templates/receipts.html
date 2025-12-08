@@ -98,11 +98,29 @@
         grid-template-columns: 350px 1fr;
         gap: 24px;
         align-items: start;
+        width: 100%;
+    }
+    
+    .table-wrapper {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
     
     @media (max-width: 1024px) {
         .receipts-layout {
             grid-template-columns: 1fr;
+        }
+    }
+    
+    @media (max-width: 768px) {
+        .receipts-layout {
+            gap: 16px;
+        }
+        
+        .panel-card {
+            width: 100%;
+            box-sizing: border-box;
         }
     }
 
