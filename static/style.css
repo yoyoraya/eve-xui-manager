@@ -2265,32 +2265,7 @@ select optgroup {
         grid-template-columns: repeat(2, 1fr);
     }
     
-    .header-controls {
-        flex-wrap: wrap;
-    }
-}
-
-@media (max-width: 768px) {
-    .sidebar {
-        transform: translateX(-100%);
-    }
-    
-    .sidebar.open {
-        transform: translateX(0);
-    }
-    
-    .main-content {
-        margin-left: 0;
-    }
-    
-    .mobile-menu-btn {
-        display: flex;
-    }
-    
-    .sidebar-toggle {
-        display: flex;
-    }
-    
+    /* Header Responsive Fixes */
     .top-header {
         height: auto;
         min-height: 70px;
@@ -2305,37 +2280,11 @@ select optgroup {
         width: auto;
     }
     
-    .mobile-menu-btn {
-        order: 0;
-    }
-    
     .header-actions {
         order: 2;
         width: 100%;
         justify-content: space-between;
         margin-top: 5px;
-    }
-    
-    .content-area {
-        padding: 16px;
-    }
-    
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 12px;
-    }
-    
-    .stat-card {
-        padding: 16px;
-    }
-    
-    .stat-icon {
-        width: 40px;
-        height: 40px;
-    }
-    
-    .stat-value {
-        font-size: 1.25rem;
     }
     
     .header-controls {
@@ -2372,6 +2321,51 @@ select optgroup {
     .interval-select {
         padding: 6px;
         font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        transform: translateX(-100%);
+    }
+    
+    .sidebar.open {
+        transform: translateX(0);
+    }
+    
+    .main-content {
+        margin-left: 0;
+    }
+    
+    .mobile-menu-btn {
+        display: flex;
+        order: 0;
+    }
+    
+    .sidebar-toggle {
+        display: flex;
+    }
+    
+    .content-area {
+        padding: 16px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+    
+    .stat-card {
+        padding: 16px;
+    }
+    
+    .stat-icon {
+        width: 40px;
+        height: 40px;
+    }
+    
+    .stat-value {
+        font-size: 1.25rem;
     }
     
     .inbounds-section {
