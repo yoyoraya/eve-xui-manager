@@ -214,6 +214,16 @@ clone_or_update_repo() {
     print_success "Source code synced"
 }
 
+run_migrations() {
+    print_header "Running Database Migrations"
+    if [ -f "$APP_DIR/migrations.py" ]; then
+        sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate 2>/dev/null || true && cd $APP_DIR && python3 migrations.py"
+        print_success "Database migrations completed"
+    else
+        print_warning "No migrations file found, skipping"
+    fi
+}
+
 setup_python_env() {
     print_header "Step 7: Python virtual environment"
     PY_BIN="python${PYTHON_VERSION}"
@@ -228,6 +238,9 @@ setup_python_env() {
     # Ensure gunicorn and psycopg2-binary even if pyproject changes
     sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install gunicorn psycopg2-binary >/dev/null"
     print_success "Virtual environment configured"
+    
+    # Run database migrations after venv is ready
+    run_migrations
 }
 
 create_env_file() {
