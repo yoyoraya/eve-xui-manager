@@ -26,7 +26,7 @@ from urllib.parse import urlparse, quote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect
 
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 # Simple in-memory cache for update checks
@@ -152,6 +152,7 @@ class SubAppConfig(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     app_code = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(100))
+    os_type = db.Column(db.String(20), default='android')  # android, ios, windows
     is_enabled = db.Column(db.Boolean, default=True)
     title_fa = db.Column(db.String(200))
     description_fa = db.Column(db.Text)
@@ -166,6 +167,7 @@ class SubAppConfig(db.Model):
             'id': self.id,
             'app_code': self.app_code,
             'name': self.name,
+            'os_type': self.os_type or 'android',
             'is_enabled': self.is_enabled,
             'title_fa': self.title_fa,
             'description_fa': self.description_fa,
@@ -174,6 +176,28 @@ class SubAppConfig(db.Model):
             'download_link': self.download_link,
             'store_link': self.store_link,
             'tutorial_link': self.tutorial_link
+        }
+
+class FAQ(db.Model):
+    __tablename__ = 'faqs'
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    content = db.Column(db.Text)  # HTML content
+    image_url = db.Column(db.String(500))
+    video_url = db.Column(db.String(500))
+    platform = db.Column(db.String(20), default='android')  # android, ios, windows
+    is_enabled = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'content': self.content,
+            'image_url': self.image_url,
+            'video_url': self.video_url,
+            'platform': self.platform or 'android',
+            'is_enabled': self.is_enabled
         }
 
 class Package(db.Model):
@@ -2449,6 +2473,37 @@ def client_subscription(server_id, sub_id):
     base_sub = f"{scheme}://{hostname}{port_str}"
     sub_url = f"{base_sub}/{sub_path}/{normalized_sub_id}" if sub_path else f"{base_sub}/{normalized_sub_id}"
 
+    # Prepare User-Agent check
+    user_agent = (request.headers.get('User-Agent') or '').lower()
+    agent_tokens = ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobox', 'clash', 'sing-box', 'sagernet', 'v2box']
+    wants_b64 = request.args.get('format', '').lower() == 'b64'
+    is_client_app = wants_b64 or any(token in user_agent for token in agent_tokens)
+
+    # If it's a client app, try to proxy the subscription from the upstream X-UI panel
+    if is_client_app:
+        try:
+            # Calculate headers for stats
+            expiry_time_ms = target_client.get('expiryTime', 0)
+            expiry_time_sec = int(expiry_time_ms / 1000) if expiry_time_ms > 0 else 0
+            
+            user_info_header = f"upload={up}; download={down}; total={total_limit}; expire={expiry_time_sec}"
+            headers = {
+                'Subscription-Userinfo': user_info_header,
+                'Profile-Update-Interval': '3600',
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Profile-Title': f"{server.name} - {client_email}"
+            }
+            
+            # Fetch from upstream
+            resp = requests.get(sub_url, headers={'User-Agent': request.headers.get('User-Agent')}, timeout=15, verify=False)
+            if resp.status_code == 200:
+                return resp.content, 200, headers
+            else:
+                app.logger.warning(f"Upstream sub fetch failed: {resp.status_code} for {sub_url}")
+        except Exception as e:
+            app.logger.error(f"Upstream sub fetch error: {e}")
+
+    # Fallback to manual generation (or if not a client app, show the HTML page)
     configs = []
     direct_link = generate_client_link(target_client, target_inbound, server.host)
     if direct_link:
@@ -2460,10 +2515,7 @@ def client_subscription(server_id, sub_id):
     subscription_blob = '\n'.join(subscription_entries)
     encoded_blob = base64.b64encode((subscription_blob or '').encode('utf-8')).decode('utf-8') if subscription_blob else ''
 
-    user_agent = (request.headers.get('User-Agent') or '').lower()
-    agent_tokens = ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobox', 'clash', 'sing-box']
-    wants_b64 = request.args.get('format', '').lower() == 'b64'
-    if encoded_blob and (wants_b64 or any(token in user_agent for token in agent_tokens)):
+    if encoded_blob and is_client_app:
         return encoded_blob, 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
     client_payload = {
@@ -2481,17 +2533,36 @@ def client_subscription(server_id, sub_id):
 
     apps = SubAppConfig.query.filter_by(is_enabled=True).all()
     apps_payload = [app.to_dict() for app in apps]
+    
+    # Get FAQs
+    faqs = FAQ.query.filter_by(is_enabled=True).all()
+    faqs_payload = [faq.to_dict() for faq in faqs]
+    
+    # Get support info
+    support_telegram = db.session.get(SystemConfig, 'support_telegram')
+    support_whatsapp = db.session.get(SystemConfig, 'support_whatsapp')
+    
+    support_info = {
+        'telegram': support_telegram.value if support_telegram else '',
+        'whatsapp': support_whatsapp.value if support_whatsapp else ''
+    }
 
-    return render_template('subscription.html', client=client_payload, apps=apps_payload)
+    return render_template('subscription.html', client=client_payload, apps=apps_payload, faqs=faqs_payload, support=support_info)
 
 @app.route('/sub-manager')
 @superadmin_required
 def sub_manager_page():
     user = db.session.get(Admin, session['admin_id'])
+    
+    support_telegram = db.session.get(SystemConfig, 'support_telegram')
+    support_whatsapp = db.session.get(SystemConfig, 'support_whatsapp')
+    
     return render_template('sub_manager.html',
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
-                         role=session.get('role', 'admin'))
+                         role=session.get('role', 'admin'),
+                         support_telegram=support_telegram.value if support_telegram else '',
+                         support_whatsapp=support_whatsapp.value if support_whatsapp else '')
 
 @app.route('/api/sub-apps', methods=['GET'])
 def get_sub_apps():
@@ -2505,9 +2576,10 @@ def create_sub_app():
     if not data:
         return jsonify({'success': False, 'error': 'No data provided'}), 400
     
+    # Auto-generate app_code if not provided
     app_code = data.get('app_code')
     if not app_code:
-        return jsonify({'success': False, 'error': 'App code is required'}), 400
+        app_code = str(uuid.uuid4())[:8]
         
     if SubAppConfig.query.filter_by(app_code=app_code).first():
         return jsonify({'success': False, 'error': 'App code already exists'}), 400
@@ -2515,6 +2587,7 @@ def create_sub_app():
     new_app = SubAppConfig(
         app_code=app_code,
         name=data.get('name'),
+        os_type=data.get('os_type', 'android'),
         is_enabled=data.get('is_enabled', True),
         title_fa=data.get('title_fa'),
         description_fa=data.get('description_fa'),
@@ -2552,6 +2625,7 @@ def update_sub_app(app_id):
         app_config.app_code = new_app_code
         
     if 'name' in data: app_config.name = data['name']
+    if 'os_type' in data: app_config.os_type = data['os_type']
     if 'is_enabled' in data: app_config.is_enabled = data['is_enabled']
     if 'title_fa' in data: app_config.title_fa = data['title_fa']
     if 'description_fa' in data: app_config.description_fa = data['description_fa']
@@ -2577,6 +2651,117 @@ def delete_sub_app(app_id):
         
     try:
         db.session.delete(app_config)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# FAQ APIs
+@app.route('/api/faqs', methods=['GET'])
+def get_faqs():
+    faqs = FAQ.query.order_by(FAQ.created_at.desc()).all()
+    return jsonify([f.to_dict() for f in faqs])
+
+@app.route('/api/faqs', methods=['POST'])
+@superadmin_required
+def create_faq():
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+    
+    if not data.get('title'):
+        return jsonify({'success': False, 'error': 'Title is required'}), 400
+        
+    new_faq = FAQ(
+        title=data.get('title'),
+        content=data.get('content'),
+        image_url=data.get('image_url'),
+        video_url=data.get('video_url'),
+        platform=data.get('platform', 'android'),
+        is_enabled=data.get('is_enabled', True)
+    )
+    
+    try:
+        db.session.add(new_faq)
+        db.session.commit()
+        return jsonify({'success': True, 'faq': new_faq.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/faqs/<int:faq_id>', methods=['PUT'])
+@superadmin_required
+def update_faq(faq_id):
+    faq = db.session.get(FAQ, faq_id)
+    if not faq:
+        return jsonify({'success': False, 'error': 'FAQ not found'}), 404
+        
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+    if 'title' in data: faq.title = data['title']
+    if 'content' in data: faq.content = data['content']
+    if 'image_url' in data: faq.image_url = data['image_url']
+    if 'video_url' in data: faq.video_url = data['video_url']
+    if 'platform' in data: faq.platform = data['platform']
+    if 'is_enabled' in data: faq.is_enabled = data['is_enabled']
+    
+    try:
+        db.session.commit()
+        return jsonify({'success': True, 'faq': faq.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/faqs/<int:faq_id>', methods=['DELETE'])
+@superadmin_required
+def delete_faq(faq_id):
+    faq = db.session.get(FAQ, faq_id)
+    if not faq:
+        return jsonify({'success': False, 'error': 'FAQ not found'}), 404
+        
+    try:
+        db.session.delete(faq)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/upload', methods=['POST'])
+@superadmin_required
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No selected file'}), 400
+        
+    if file:
+        filename = secure_filename(f"{uuid.uuid4().hex[:8]}_{file.filename}")
+        upload_folder = os.path.join(app.static_folder, 'uploads')
+        os.makedirs(upload_folder, exist_ok=True)
+        file.save(os.path.join(upload_folder, filename))
+        return jsonify({'success': True, 'url': f'/static/uploads/{filename}'})
+
+@app.route('/api/system-config', methods=['POST'])
+@superadmin_required
+def update_system_config():
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+        
+    try:
+        for key, value in data.items():
+            config = db.session.get(SystemConfig, key)
+            if config:
+                config.value = str(value)
+            else:
+                config = SystemConfig(key=key, value=str(value))
+                db.session.add(config)
+        
         db.session.commit()
         return jsonify({'success': True})
     except Exception as e:

@@ -322,21 +322,23 @@
                 Packages override the custom price. Without a package the amount is based on days & volume.
             </div>
             
-            <label class="form-group form-toggle-item" style="cursor: pointer;">
-                <div class="toggle-switch">
-                    <input type="checkbox" id="renew-reset-traffic">
-                    <span class="slider"></span>
-                </div>
-                <span>Reset Traffic</span>
-            </label>
-            
-            <label class="form-group form-toggle-item" style="cursor: pointer;">
-                <div class="toggle-switch">
-                    <input type="checkbox" id="renew-start-after-first-use">
-                    <span class="slider"></span>
-                </div>
-                <span>Start after first use</span>
-            </label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="renew-reset-traffic">
+                        <span class="slider"></span>
+                    </div>
+                    <span>Reset Traffic</span>
+                </label>
+                
+                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="renew-start-after-first-use">
+                        <span class="slider"></span>
+                    </div>
+                    <span>Start after first use</span>
+                </label>
+            </div>
             
             <div class="form-footer" style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 15px;">
                 <div style="font-size: 0.9rem; display: flex; align-items: center;">
@@ -2184,16 +2186,47 @@
         container.innerHTML = html;
     }
 
+    function toggleResellerDropdown() {
+        const dropdown = document.getElementById('assign-reseller-dropdown');
+        dropdown.classList.toggle('hidden');
+    }
+
+    // Close reseller dropdown when clicking outside
+    document.addEventListener('click', function(event) {
+        const dropdown = document.getElementById('assign-reseller-dropdown');
+        const btn = document.getElementById('assign-reseller-btn');
+        if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(event.target) && !btn.contains(event.target)) {
+            dropdown.classList.add('hidden');
+        }
+    });
+
+    function selectReseller(id, name) {
+        document.getElementById('assign-reseller-select').value = id;
+        document.getElementById('assign-reseller-label').textContent = name;
+        document.getElementById('assign-reseller-dropdown').classList.add('hidden');
+    }
+
     async function loadResellersForModal() {
         try {
             const response = await fetch('/api/admins');
             const admins = await response.json();
             const resellers = admins.filter(a => a.role === 'reseller');
-            const select = document.getElementById('assign-reseller-select');
-            select.innerHTML = '<option value="">Select Reseller</option>' + 
-                resellers.map(r => `<option value="${r.id}">${r.username} (Credit: ${r.credit})</option>`).join('');
+            const list = document.getElementById('assign-reseller-list');
+            
+            if (resellers.length === 0) {
+                list.innerHTML = '<div style="padding: 10px; color: var(--text-secondary); text-align: center;">No resellers found</div>';
+                return;
+            }
+
+            list.innerHTML = resellers.map(r => `
+                <div class="filter-item" onclick="selectReseller(${r.id}, '${r.username}')">
+                    <span style="flex: 1;">${r.username}</span>
+                    <span style="font-size: 0.8rem; color: #4ade80;">${r.credit.toLocaleString()} T</span>
+                </div>
+            `).join('');
         } catch (error) {
             console.error('Error loading resellers:', error);
+            document.getElementById('assign-reseller-list').innerHTML = '<div style="padding: 10px; color: var(--danger); text-align: center;">Error loading resellers</div>';
         }
     }
 
@@ -2201,7 +2234,13 @@
         document.getElementById('assign-server-id').value = serverId;
         document.getElementById('assign-client-email-hidden').value = email;
         document.getElementById('assign-client-email').textContent = email;
+        
+        // Reset selection
+        document.getElementById('assign-reseller-select').value = '';
+        document.getElementById('assign-reseller-label').textContent = 'Select Reseller';
+        
         document.getElementById('assign-modal').classList.remove('hidden');
+        loadResellersForModal();
     }
 
     function closeAssignModal() {

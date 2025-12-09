@@ -1611,6 +1611,7 @@ input:checked + .slider:before {
 .modal-header h2 {
     font-size: 1.1rem;
     font-weight: 600;
+    color: white;
 }
 
 .modal-close {

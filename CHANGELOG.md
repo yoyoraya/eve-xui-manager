@@ -2,6 +2,18 @@
 
 All notable changes to Eve - Xui Manager are documented in this file.
 
+## [1.3.0] - 2025-12-09
+
+### ✨ New Features
+- **FAQ Platform Support**: Added ability to categorize FAQs by platform (Android, iOS, Windows).
+- **FAQ Editor**: Enhanced FAQ editor with RTL/LTR support and improved toolbar.
+- **Subscription Page**: Added platform filtering for Apps and FAQs.
+
+### 🎨 UI/UX Improvements
+- **Upload UI**: Redesigned file upload inputs with a modern button-and-spinner style.
+- **Dropdowns**: Standardized OS and Platform selection to use consistent dropdown components on the Subscription page.
+- **Icons**: Added platform-specific icons to selection menus.
+
 ## [1.2.1] - 2025-12-06
 
 ### ✨ New Features

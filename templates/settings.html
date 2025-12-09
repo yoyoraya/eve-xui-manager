@@ -73,12 +73,21 @@
                         <h2>Database Backups</h2>
                         <p class="text-secondary">Manage your system and uploaded backups.</p>
                     </div>
-                    <div style="display: flex; gap: 10px;">
-                        <input type="file" id="upload-backup-input" accept=".db" style="display: none;" onchange="handleUpload(this)">
-                        <button class="btn btn-secondary" onclick="document.getElementById('upload-backup-input').click()">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                            Upload Backup
-                        </button>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <div class="file-upload-wrapper" id="backup-upload-container" style="width: 280px;">
+                            <div class="file-upload-btn" id="backup-upload-btn">
+                                <span class="btn-text">Choose File</span>
+                                <span class="btn-loading hidden">
+                                    <svg class="animate-spin" width="16" height="16" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Uploading...
+                                </span>
+                            </div>
+                            <div class="file-upload-text" id="backup-file-name">No file chosen</div>
+                            <input type="file" id="upload-backup-input" class="file-upload-input" accept=".db" onchange="handleUpload(this)">
+                        </div>
                         <button class="btn btn-primary" onclick="createBackup()">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                             Create Backup
@@ -397,6 +406,119 @@
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
     .badge-secondary { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
 
+    /* Vazirmatn font for forms */
+    .form-input, .form-select, .form-control, label, .modal-body {
+        font-family: 'Vazirmatn', sans-serif !important;
+    }
+    
+    /* Spinner animation */
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+    .animate-spin {
+        animation: spin 1s linear infinite;
+    }
+
+    /* Custom File Upload Style - Redesigned */
+    .file-upload-wrapper {
+        position: relative;
+        display: flex;
+        width: 100%;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+        background-color: var(--bg-dark);
+        transition: all 0.2s;
+        height: 46px;
+    }
+    .file-upload-wrapper:hover {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 1px var(--primary);
+    }
+    .file-upload-wrapper.uploading {
+        pointer-events: none;
+        opacity: 0.8;
+    }
+    .file-upload-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 20px;
+        background-color: var(--bg-card-hover);
+        color: var(--text-primary);
+        font-size: 0.9rem;
+        font-weight: 500;
+        border-right: 1px solid var(--border-color);
+        white-space: nowrap;
+        transition: background-color 0.2s;
+        flex-shrink: 0;
+        min-width: 130px;
+    }
+    .file-upload-btn.loading {
+        background-color: rgba(99, 102, 241, 0.15);
+        color: var(--primary);
+        pointer-events: none;
+    }
+    .file-upload-btn .btn-text,
+    .file-upload-btn .btn-loading {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .file-upload-btn .btn-loading.hidden,
+    .file-upload-btn.loading .btn-text {
+        display: none;
+    }
+    .file-upload-btn.loading .btn-loading {
+        display: flex;
+    }
+    .file-upload-wrapper:hover .file-upload-btn {
+        background-color: rgba(99, 102, 241, 0.1);
+        color: var(--primary);
+    }
+    .file-upload-text {
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+    }
+    .file-upload-input {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+        z-index: 10;
+    }
+    .upload-spinner-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.95);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 20;
+        backdrop-filter: blur(2px);
+        gap: 10px;
+        font-size: 0.9rem;
+        color: var(--text-primary);
+    }
+    .upload-spinner-overlay svg {
+        width: 20px;
+        height: 20px;
+        color: var(--primary);
+    }
+
     /* Table Styles */
     .table-responsive {
         overflow-x: auto;
@@ -565,6 +687,14 @@
         if (!input.files || !input.files[0]) return;
         
         const file = input.files[0];
+        document.getElementById('backup-file-name').textContent = file.name;
+        
+        // Show loading state on button
+        const wrapper = document.getElementById('backup-upload-container');
+        const btn = document.getElementById('backup-upload-btn');
+        wrapper.classList.add('uploading');
+        btn.classList.add('loading');
+
         const formData = new FormData();
         formData.append('file', file);
         
@@ -583,8 +713,10 @@
             }
         } catch (e) {
             showToast('Network error', 'error');
+        } finally {
+            wrapper.classList.remove('uploading');
+            btn.classList.remove('loading');
         }
-        input.value = ''; // Reset input
     }
 
     async function loadBackups() {
