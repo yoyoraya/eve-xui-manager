@@ -48,7 +48,7 @@ body {
     top: 0;
     left: 0;
     height: 100vh;
-    z-index: 100;
+    z-index: 200;
     transition: transform 0.3s ease;
 }
 
@@ -233,7 +233,7 @@ body.sidebar-open {
     gap: 20px;
     position: sticky;
     top: 0;
-    z-index: 50;
+    z-index: 100;
 }
 
 .mobile-menu-btn {
@@ -1565,12 +1565,16 @@ input:checked + .slider:before {
     width: 100%;
     max-width: 600px;
     max-height: 90vh;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: visible;
     box-shadow: var(--shadow-lg);
     display: flex;
     flex-direction: column;
      color: #4ade80;
+}
+
+.modal .modal-body {
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .admin-credit-amount small {
@@ -1636,6 +1640,8 @@ input:checked + .slider:before {
 
 .modal-body {
     padding: 24px;
+    max-height: calc(90vh - 80px);
+    overflow-y: auto;
 }
 
 .server-form h3,
