@@ -366,10 +366,13 @@ class Transaction(db.Model):
     __tablename__ = 'transactions'
     id = db.Column(db.Integer, primary_key=True)
     admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=False)
+    server_id = db.Column(db.Integer, db.ForeignKey('servers.id'), nullable=True)
     amount = db.Column(db.Integer, nullable=False)
     type = db.Column(db.String(20))
     description = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    server = db.relationship('Server', backref='transactions', lazy=True)
     
     def to_dict(self):
         admin_info = None
@@ -379,9 +382,19 @@ class Transaction(db.Model):
                 'username': self.admin.username,
                 'role': self.admin.role
             }
+        
+        server_info = None
+        if self.server:
+            server_info = {
+                'id': self.server.id,
+                'name': self.server.name
+            }
+            
         return {
             'id': self.id,
             'admin_id': self.admin_id,
+            'server_id': self.server_id,
+            'server': server_info,
             'amount': self.amount,
             'type': self.type,
             'description': self.description,
@@ -661,8 +674,8 @@ def get_config(key, default=0):
     conf = db.session.get(SystemConfig, key)
     return int(conf.value) if conf else default
 
-def log_transaction(user_id, amount, type, desc):
-    trans = Transaction(admin_id=user_id, amount=amount, type=type, description=desc)
+def log_transaction(user_id, amount, type, desc, server_id=None):
+    trans = Transaction(admin_id=user_id, amount=amount, type=type, description=desc, server_id=server_id)
     db.session.add(trans)
 
 @app.context_processor
@@ -1386,7 +1399,7 @@ def toggle_client(server_id, inbound_id):
                     pass
                 if user.role == 'reseller' and price > 0:
                     user.credit -= price
-                    log_transaction(user.id, -price, 'renew', description or f"Renew client {email}")
+                    log_transaction(user.id, -price, 'renew', description or f"Renew client {email}", server_id=server.id)
                     db.session.commit()
                 response = {"success": True}
                 if user.role == 'reseller':
@@ -1480,7 +1493,7 @@ def reset_client_traffic(server_id, inbound_id):
                     user.credit -= charge_amount
                 
                 if charge_amount > 0:
-                    log_transaction(user.id, -charge_amount, 'reset_traffic', f"Reset traffic {volume_gb}GB - {email}")
+                    log_transaction(user.id, -charge_amount, 'reset_traffic', f"Reset traffic {volume_gb}GB - {email}", server_id=server.id)
                     db.session.commit()
 
                 response = {"success": True}
@@ -1664,7 +1677,7 @@ def delete_client(server_id, inbound_id, email):
             ClientOwnership.query.filter_by(server_id=server_id, client_email=email).delete()
             db.session.commit()
             
-            log_transaction(user.id, 0, 'delete_client', f"Deleted client {email}")
+            log_transaction(user.id, 0, 'delete_client', f"Deleted client {email}", server_id=server.id)
             
             return jsonify({"success": True})
         else:
@@ -1843,7 +1856,7 @@ def renew_client(server_id, inbound_id, email):
                     user.credit -= price
                 
                 if price > 0:
-                    log_transaction(user.id, -price, 'renew', description)
+                    log_transaction(user.id, -price, 'renew', description, server_id=server.id)
                     db.session.commit()
 
                 return jsonify({"success": True})
@@ -2165,7 +2178,7 @@ def add_client(server_id, inbound_id):
                 user.credit -= price
             
             if price > 0:
-                log_transaction(user.id, -price, 'purchase', description)
+                log_transaction(user.id, -price, 'purchase', description, server_id=server.id)
             
             ownership = ClientOwnership(
                 reseller_id=user.id,
@@ -2325,6 +2338,14 @@ def get_transactions():
         if target_user_id:
             query = query.filter(Transaction.admin_id == target_user_id)
 
+    # Filter by Server (using new column)
+    server_filter = request.args.get('server_id', type=int)
+    if server_filter:
+        accessible_ids = {s.id for s in get_accessible_servers(user, include_disabled=True)}
+        if user.role == 'reseller' and server_filter not in accessible_ids:
+            return jsonify({"success": False, "error": "Access denied to requested server"}), 403
+        query = query.filter(Transaction.server_id == server_filter)
+
     search_term = (request.args.get('search') or '').strip()
     if search_term:
         pattern = f"%{search_term}%"
@@ -2342,28 +2363,23 @@ def get_transactions():
     if end_dt:
         query = query.filter(Transaction.created_at <= end_dt)
 
-    limit = request.args.get('limit', type=int)
-    if limit is None:
-        limit = 300
-    limit = max(1, min(limit, 1000))
+    # Pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('limit', 20, type=int)
+    per_page = max(1, min(per_page, 100))
 
-    query = query.order_by(Transaction.created_at.desc())
-    transactions = query.limit(limit).all()
+    pagination = query.order_by(Transaction.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
+    transactions = pagination.items
 
-    server_filter = request.args.get('server_id', type=int)
-    if server_filter:
-        accessible_ids = {s.id for s in get_accessible_servers(user, include_disabled=True)}
-        if user.role == 'reseller' and (not accessible_ids or server_filter not in accessible_ids):
-            return jsonify({"success": False, "error": "Access denied to requested server"}), 403
-
+    # Fallback logic for old transactions (missing server_id)
     transaction_emails = {}
     email_pairs = set()
     for tx in transactions:
-        email = extract_email_from_description(tx.description)
-        if not email:
-            continue
-        transaction_emails[tx.id] = email
-        email_pairs.add((tx.admin_id, email))
+        if not tx.server_id:
+            email = extract_email_from_description(tx.description)
+            if email:
+                transaction_emails[tx.id] = email
+                email_pairs.add((tx.admin_id, email))
 
     ownership_map = {}
     if email_pairs:
@@ -2385,24 +2401,29 @@ def get_transactions():
     payload = []
     for tx in transactions:
         tx_data = tx.to_dict()
-        email = transaction_emails.get(tx.id)
-        tx_data['client_email'] = email
-        server_meta = None
-        server_id = None
-        if email:
-            ownership = ownership_map.get((tx.admin_id, email))
-            if ownership:
-                server_id = ownership.server_id
-                server_meta = {
-                    'id': ownership.server_id,
-                    'name': ownership.server.name if ownership.server else None
-                }
-        if server_filter and server_id != server_filter:
-            continue
-        tx_data['server'] = server_meta
+        
+        # If server_id was missing, try to fill it from ownership map
+        if not tx_data.get('server'):
+            email = transaction_emails.get(tx.id)
+            if email:
+                tx_data['client_email'] = email
+                ownership = ownership_map.get((tx.admin_id, email))
+                if ownership and ownership.server:
+                    tx_data['server_id'] = ownership.server.id
+                    tx_data['server'] = {
+                        'id': ownership.server.id,
+                        'name': ownership.server.name
+                    }
+
         payload.append(tx_data)
 
-    return jsonify(payload)
+    return jsonify({
+        'transactions': payload,
+        'total': pagination.total,
+        'pages': pagination.pages,
+        'current_page': page,
+        'per_page': per_page
+    })
 
 @app.route('/s/<int:server_id>/<sub_id>')
 def client_subscription(server_id, sub_id):

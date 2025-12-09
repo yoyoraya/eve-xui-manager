@@ -72,6 +72,16 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating system_settings table: {e}")
 
+        # 5. افزودن ستون server_id به جدول transactions
+        try:
+            c.execute("ALTER TABLE transactions ADD COLUMN server_id INTEGER REFERENCES servers(id)")
+            print("✅ Added 'server_id' to transactions table.")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                print("ℹ️  'server_id' already exists in transactions.")
+            else:
+                print(f"⚠️  Error adding server_id: {e}")
+
         conn.commit()
         conn.close()
         print("\n🚀 Database repair completed! You can now restart your app.")
