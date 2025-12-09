@@ -8,92 +8,83 @@ import sqlite3
 import os
 import sys
 
-# Database path
+# مسیر دیتابیس (معمولا در پوشه instance است)
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'servers.db')
 
-def get_db_connection():
-    """Get database connection."""
+def fix_database():
     if not os.path.exists(DB_PATH):
-        print(f"❌ Database not found at {DB_PATH}")
-        print("   Run the application first to create the database.")
-        return None
-    return sqlite3.connect(DB_PATH)
-
-def get_table_columns(conn, table_name):
-    """Get list of column names for a table."""
-    cursor = conn.execute(f"PRAGMA table_info({table_name})")
-    return [row[1] for row in cursor.fetchall()]
-
-def table_exists(conn, table_name):
-    """Check if a table exists."""
-    cursor = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", 
-        (table_name,)
-    )
-    return cursor.fetchone() is not None
-
-def migration_v1_3_0(conn):
-    """
-    Migration for v1.3.0
-    - Add 'platform' column to 'faqs' table
-    """
-    print("📦 Running migration for v1.3.0...")
-    
-    changes_made = False
-    
-    # Check if faqs table exists
-    if table_exists(conn, 'faqs'):
-        columns = get_table_columns(conn, 'faqs')
-        
-        # Add platform column if missing
-        if 'platform' not in columns:
-            print("   ➕ Adding 'platform' column to 'faqs' table...")
-            conn.execute("ALTER TABLE faqs ADD COLUMN platform VARCHAR(20) DEFAULT 'android'")
-            changes_made = True
-            print("   ✅ Added 'platform' column")
-        else:
-            print("   ⏭️  'platform' column already exists in 'faqs'")
-    else:
-        print("   ⏭️  'faqs' table not found (will be created on first run)")
-    
-    return changes_made
-
-def run_migrations():
-    """Run all pending migrations."""
-    print("\n🔄 Eve X-UI Manager - Database Migration")
-    print("=" * 45)
-    
-    conn = get_db_connection()
-    if not conn:
+        print(f"❌ Database file not found at: {DB_PATH}")
+        print("   Make sure the application has been run to create the database.")
         return False
-    
+
+    print(f"🔧 Connecting to database: {DB_PATH}")
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
     try:
-        changes_made = False
-        
-        # Run v1.3.0 migration
-        if migration_v1_3_0(conn):
-            changes_made = True
-        
-        # Add future migrations here:
-        # if migration_v1_4_0(conn):
-        #     changes_made = True
-        
-        if changes_made:
-            conn.commit()
-            print("\n✅ Database migration completed successfully!")
-        else:
-            print("\n✅ Database is already up to date!")
-        
+        # 1. افزودن ستون telegram_id به جدول admins
+        try:
+            c.execute("ALTER TABLE admins ADD COLUMN telegram_id VARCHAR(100)")
+            print("✅ Added 'telegram_id' to admins table.")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                print("ℹ️  'telegram_id' already exists in admins.")
+            else:
+                print(f"⚠️  Error adding telegram_id: {e}")
+
+        # 2. افزودن ستون os_type به جدول sub_app_configs (مشکل اصلی کرش شما)
+        try:
+            c.execute("ALTER TABLE sub_app_configs ADD COLUMN os_type VARCHAR(20) DEFAULT 'android'")
+            print("✅ Added 'os_type' to sub_app_configs table.")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                print("ℹ️  'os_type' already exists in sub_app_configs.")
+            else:
+                print(f"⚠️  Error adding os_type: {e}")
+
+        # 3. ساخت جدول faqs (اگر وجود ندارد)
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS faqs (
+                id INTEGER PRIMARY KEY,
+                title VARCHAR(200) NOT NULL,
+                content TEXT,
+                image_url VARCHAR(500),
+                video_url VARCHAR(500),
+                platform VARCHAR(20) DEFAULT 'android',
+                is_enabled BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            print("✅ Table 'faqs' checked/created.")
+        except Exception as e:
+            print(f"⚠️  Error creating faqs table: {e}")
+
+        # 4. ساخت جدول system_settings (اگر وجود ندارد)
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key VARCHAR(50) PRIMARY KEY,
+                value TEXT
+            )
+            ''')
+            print("✅ Table 'system_settings' checked/created.")
+        except Exception as e:
+            print(f"⚠️  Error creating system_settings table: {e}")
+
+        conn.commit()
+        conn.close()
+        print("\n🚀 Database repair completed! You can now restart your app.")
         return True
-        
+
     except Exception as e:
         print(f"\n❌ Migration error: {e}")
         conn.rollback()
-        return False
-        
-    finally:
         conn.close()
+        return False
 
 if __name__ == "__main__":
-    success = run_migrations()
+    print("\n🔄 Eve X-UI Manager - Database Migration")
+    print("=" * 45)
+    success = fix_database()
     sys.exit(0 if success else 1)
