@@ -362,17 +362,73 @@ class AutoApprovalWindow(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+class Payment(db.Model):
+    """Track incoming payments from customers"""
+    __tablename__ = 'payments'
+    id = db.Column(db.Integer, primary_key=True)
+    admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=False)
+    card_id = db.Column(db.Integer, db.ForeignKey('bank_cards.id'), nullable=True)  # کارت مقصد (شما)
+    sender_card = db.Column(db.String(32))  # شماره کارت مشتری (اختیاری)
+    sender_name = db.Column(db.String(120))  # نام فرستنده
+    amount = db.Column(db.Integer, nullable=False)  # مبلغ به تومان
+    payment_date = db.Column(db.DateTime, nullable=False)  # تاریخ واریز
+    client_email = db.Column(db.String(100))  # مربوط به کدوم کلاینت
+    description = db.Column(db.Text)  # توضیحات
+    verified = db.Column(db.Boolean, default=False)  # تایید شده؟
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    admin = db.relationship('Admin', backref=db.backref('payments', lazy=True))
+    card = db.relationship('BankCard', backref=db.backref('payments', lazy=True))
+    
+    def to_dict(self):
+        card_info = None
+        if self.card:
+            card_info = {
+                'id': self.card.id,
+                'label': self.card.label,
+                'bank_name': self.card.bank_name,
+                'masked_card': self.card.masked_card()
+            }
+        
+        admin_info = None
+        if self.admin:
+            admin_info = {
+                'id': self.admin.id,
+                'username': self.admin.username,
+                'role': self.admin.role
+            }
+        
+        return {
+            'id': self.id,
+            'admin_id': self.admin_id,
+            'admin': admin_info,
+            'card_id': self.card_id,
+            'card': card_info,
+            'sender_card': self.sender_card,
+            'sender_name': self.sender_name,
+            'amount': self.amount,
+            'payment_date': self.payment_date.isoformat() if self.payment_date else None,
+            'payment_date_jalali': format_jalali(self.payment_date),
+            'client_email': self.client_email,
+            'description': self.description,
+            'verified': self.verified,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
 class Transaction(db.Model):
     __tablename__ = 'transactions'
     id = db.Column(db.Integer, primary_key=True)
     admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=False)
     server_id = db.Column(db.Integer, db.ForeignKey('servers.id'), nullable=True)
+    card_id = db.Column(db.Integer, db.ForeignKey('bank_cards.id'), nullable=True)  # کارت مقصد (شما)
+    sender_card = db.Column(db.String(32), nullable=True)  # شماره کارت مشتری
     amount = db.Column(db.Integer, nullable=False)
     type = db.Column(db.String(20))
     description = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     server = db.relationship('Server', backref='transactions', lazy=True)
+    card = db.relationship('BankCard', backref='transactions', lazy=True)
     
     def to_dict(self):
         admin_info = None
@@ -389,12 +445,24 @@ class Transaction(db.Model):
                 'id': self.server.id,
                 'name': self.server.name
             }
+        
+        card_info = None
+        if self.card:
+            card_info = {
+                'id': self.card.id,
+                'label': self.card.label,
+                'bank_name': self.card.bank_name,
+                'masked_card': self.card.masked_card()
+            }
             
         return {
             'id': self.id,
             'admin_id': self.admin_id,
             'server_id': self.server_id,
             'server': server_info,
+            'card_id': self.card_id,
+            'card': card_info,
+            'sender_card': self.sender_card,
             'amount': self.amount,
             'type': self.type,
             'description': self.description,
@@ -674,8 +742,16 @@ def get_config(key, default=0):
     conf = db.session.get(SystemConfig, key)
     return int(conf.value) if conf else default
 
-def log_transaction(user_id, amount, type, desc, server_id=None):
-    trans = Transaction(admin_id=user_id, amount=amount, type=type, description=desc, server_id=server_id)
+def log_transaction(user_id, amount, type, desc, server_id=None, card_id=None, sender_card=None):
+    trans = Transaction(
+        admin_id=user_id, 
+        amount=amount, 
+        type=type, 
+        description=desc, 
+        server_id=server_id,
+        card_id=card_id,
+        sender_card=sender_card
+    )
     db.session.add(trans)
 
 @app.context_processor
@@ -1148,6 +1224,9 @@ def dashboard():
     # Calculate user-specific costs
     user_cost_day = calculate_reseller_price(user, base_price=base_cost_day, cost_type='day')
     user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
+    
+    # Get active bank cards for payment forms
+    bank_cards = BankCard.query.filter_by(is_active=True).all()
         
     return render_template('dashboard.html', 
                          servers=servers, 
@@ -1157,7 +1236,8 @@ def dashboard():
                          role=user.role,
                          credit=user.credit,
                          base_cost_day=user_cost_day,
-                         base_cost_gb=user_cost_gb)
+                         base_cost_gb=user_cost_gb,
+                         bank_cards=bank_cards)
 
 @app.route('/servers')
 @login_required
@@ -1493,7 +1573,9 @@ def reset_client_traffic(server_id, inbound_id):
                     user.credit -= charge_amount
                 
                 if charge_amount > 0:
-                    log_transaction(user.id, -charge_amount, 'reset_traffic', f"Reset traffic {volume_gb}GB - {email}", server_id=server.id)
+                    sender_card = data.get('sender_card', '') or ''
+                    card_id = data.get('card_id')
+                    log_transaction(user.id, -charge_amount, 'reset_traffic', f"Reset traffic {volume_gb}GB - {email}", server_id=server.id, sender_card=sender_card, card_id=card_id)
                     db.session.commit()
 
                 response = {"success": True}
@@ -1856,7 +1938,9 @@ def renew_client(server_id, inbound_id, email):
                     user.credit -= price
                 
                 if price > 0:
-                    log_transaction(user.id, -price, 'renew', description, server_id=server.id)
+                    sender_card = data.get('sender_card', '') or ''
+                    card_id = data.get('card_id')
+                    log_transaction(user.id, -price, 'renew', description, server_id=server.id, sender_card=sender_card, card_id=card_id)
                     db.session.commit()
 
                 return jsonify({"success": True})
@@ -2178,7 +2262,9 @@ def add_client(server_id, inbound_id):
                 user.credit -= price
             
             if price > 0:
-                log_transaction(user.id, -price, 'purchase', description, server_id=server.id)
+                sender_card = data.get('sender_card', '') or ''
+                card_id = data.get('card_id')
+                log_transaction(user.id, -price, 'purchase', description, server_id=server.id, sender_card=sender_card, card_id=card_id)
             
             ownership = ClientOwnership(
                 reseller_id=user.id,
@@ -2424,6 +2510,329 @@ def get_transactions():
         'current_page': page,
         'per_page': per_page
     })
+
+
+# ==================== FINANCE OVERVIEW ====================
+
+@app.route('/finance')
+@login_required
+def finance_page():
+    user = db.session.get(Admin, session['admin_id'])
+    cards = BankCard.query.filter_by(is_active=True).all()
+    
+    # Get admins list for superadmin filter
+    admin_options = []
+    if user.is_superadmin:
+        admin_options = Admin.query.order_by(Admin.username).all()
+    
+    return render_template('finance.html', 
+                           cards=cards, 
+                           is_superadmin=user.is_superadmin,
+                           admin_options=admin_options)
+
+
+@app.route('/api/payments', methods=['GET'])
+@login_required
+def get_payments():
+    """Get payment transactions (transactions that have card info)"""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
+    # Use Transaction table, filter for transactions with card info
+    query = Transaction.query
+    
+    # Role-based filtering
+    if user.role == 'reseller':
+        query = query.filter(Transaction.admin_id == user.id)
+    else:
+        # Superadmin can filter by user
+        target_user_id = request.args.get('user_id', type=int)
+        if target_user_id:
+            query = query.filter(Transaction.admin_id == target_user_id)
+    
+    # Filter by card
+    card_id = request.args.get('card_id', type=int)
+    if card_id:
+        query = query.filter(Transaction.card_id == card_id)
+    
+    # Only show transactions with card info (actual payments)
+    show_all = request.args.get('show_all', 'false') == 'true'
+    if not show_all:
+        query = query.filter(or_(
+            Transaction.card_id.isnot(None),
+            Transaction.sender_card.isnot(None),
+            Transaction.sender_card != ''
+        ))
+    
+    # Search
+    search_term = (request.args.get('search') or '').strip()
+    if search_term:
+        pattern = f"%{search_term}%"
+        query = query.filter(or_(
+            Transaction.description.ilike(pattern),
+            Transaction.sender_card.ilike(pattern)
+        ))
+    
+    # Date filters
+    start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
+    if start_dt:
+        query = query.filter(Transaction.created_at >= start_dt)
+    
+    end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
+    if end_dt:
+        query = query.filter(Transaction.created_at <= end_dt)
+    
+    # Pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('limit', 20, type=int)
+    per_page = max(1, min(per_page, 100))
+    
+    pagination = query.order_by(Transaction.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
+    
+    # Convert to payment-like format
+    payments = []
+    for t in pagination.items:
+        admin = db.session.get(Admin, t.admin_id)
+        card = db.session.get(BankCard, t.card_id) if t.card_id else None
+        
+        # Convert to Jalali date
+        jalali_date = ''
+        if t.created_at:
+            try:
+                import jdatetime
+                jdt = jdatetime.datetime.fromgregorian(datetime=t.created_at)
+                jalali_date = jdt.strftime('%Y/%m/%d %H:%M')
+            except:
+                jalali_date = t.created_at.strftime('%Y-%m-%d %H:%M')
+        
+        payments.append({
+            'id': t.id,
+            'admin_id': t.admin_id,
+            'admin': {
+                'id': admin.id,
+                'username': admin.username
+            } if admin else None,
+            'sender_card': t.sender_card or '',
+            'card_id': t.card_id,
+            'card': {
+                'id': card.id,
+                'label': card.label,
+                'bank_name': card.bank_name
+            } if card else None,
+            'amount': abs(t.amount),  # Show as positive
+            'type': t.type,
+            'description': t.description,
+            'client_email': t.description.split(' - ')[-1] if ' - ' in t.description else '',
+            'payment_date': t.created_at.isoformat() if t.created_at else None,
+            'payment_date_jalali': jalali_date,
+            'verified': True,  # Transactions are already verified actions
+            'status': 'verified'
+        })
+    
+    return jsonify({
+        'payments': payments,
+        'total': pagination.total,
+        'pages': pagination.pages,
+        'current_page': page,
+        'per_page': per_page
+    })
+
+
+@app.route('/api/payments', methods=['POST'])
+@login_required
+def add_payment():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
+    try:
+        data = request.get_json() or {}
+    except:
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
+    
+    amount = data.get('amount')
+    if not amount or int(amount) <= 0:
+        return jsonify({"success": False, "error": "Amount is required and must be positive"}), 400
+    
+    payment_date_str = data.get('payment_date')
+    payment_date = parse_jalali_date(payment_date_str, end_of_day=False)
+    if not payment_date:
+        payment_date = datetime.utcnow()
+    
+    payment = Payment(
+        admin_id=user.id,
+        card_id=data.get('card_id') or None,
+        sender_card=data.get('sender_card', '').strip() or None,
+        sender_name=data.get('sender_name', '').strip() or None,
+        amount=int(amount),
+        payment_date=payment_date,
+        client_email=data.get('client_email', '').strip() or None,
+        description=data.get('description', '').strip() or None,
+        verified=False
+    )
+    
+    db.session.add(payment)
+    db.session.commit()
+    
+    return jsonify({"success": True, "payment": payment.to_dict()})
+
+
+@app.route('/api/payments/<int:payment_id>', methods=['PUT'])
+@login_required
+def update_payment(payment_id):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
+    payment = Payment.query.get_or_404(payment_id)
+    
+    # Only owner or superadmin can edit
+    if payment.admin_id != user.id and not user.is_superadmin:
+        return jsonify({"success": False, "error": "Access denied"}), 403
+    
+    try:
+        data = request.get_json() or {}
+    except:
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
+    
+    if 'amount' in data:
+        payment.amount = int(data['amount'])
+    if 'card_id' in data:
+        payment.card_id = data['card_id'] or None
+    if 'sender_card' in data:
+        payment.sender_card = data['sender_card'].strip() or None
+    if 'sender_name' in data:
+        payment.sender_name = data['sender_name'].strip() or None
+    if 'client_email' in data:
+        payment.client_email = data['client_email'].strip() or None
+    if 'description' in data:
+        payment.description = data['description'].strip() or None
+    if 'verified' in data and user.is_superadmin:
+        payment.verified = bool(data['verified'])
+    if 'payment_date' in data:
+        new_date = parse_jalali_date(data['payment_date'], end_of_day=False)
+        if new_date:
+            payment.payment_date = new_date
+    
+    db.session.commit()
+    return jsonify({"success": True, "payment": payment.to_dict()})
+
+
+@app.route('/api/payments/<int:payment_id>', methods=['DELETE'])
+@login_required
+def delete_payment(payment_id):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
+    payment = Payment.query.get_or_404(payment_id)
+    
+    # Only owner or superadmin can delete
+    if payment.admin_id != user.id and not user.is_superadmin:
+        return jsonify({"success": False, "error": "Access denied"}), 403
+    
+    db.session.delete(payment)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@app.route('/api/finance/stats', methods=['GET'])
+@login_required
+def get_finance_stats():
+    """Get income statistics from transactions: today, this week, this month"""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+    
+    # Use Transaction table - filter for transactions with card info (actual payments)
+    query = Transaction.query.filter(or_(
+        Transaction.card_id.isnot(None),
+        Transaction.sender_card.isnot(None),
+        Transaction.sender_card != ''
+    ))
+    
+    # Role-based filtering
+    if user.role == 'reseller':
+        query = query.filter(Transaction.admin_id == user.id)
+    else:
+        target_user_id = request.args.get('user_id', type=int)
+        if target_user_id:
+            query = query.filter(Transaction.admin_id == target_user_id)
+    
+    # Filter by card if specified
+    card_id = request.args.get('card_id', type=int)
+    if card_id:
+        query = query.filter(Transaction.card_id == card_id)
+    
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=now.weekday())  # Monday
+    month_start = today_start.replace(day=1)
+    
+    # Today's income (absolute value of negative amounts = purchases)
+    today_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
+        Transaction.id.in_(query.with_entities(Transaction.id)),
+        Transaction.created_at >= today_start,
+        Transaction.amount < 0  # Purchases are negative
+    ).scalar() or 0
+    
+    # This week's income
+    week_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
+        Transaction.id.in_(query.with_entities(Transaction.id)),
+        Transaction.created_at >= week_start,
+        Transaction.amount < 0
+    ).scalar() or 0
+    
+    # This month's income
+    month_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
+        Transaction.id.in_(query.with_entities(Transaction.id)),
+        Transaction.created_at >= month_start,
+        Transaction.amount < 0
+    ).scalar() or 0
+    
+    # Total income
+    total_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
+        Transaction.id.in_(query.with_entities(Transaction.id)),
+        Transaction.amount < 0
+    ).scalar() or 0
+    
+    # Payment count
+    payment_count = query.filter(Transaction.amount < 0).count()
+    
+    # Income by card
+    income_by_card = []
+    if user.is_superadmin or user.role == 'reseller':
+        card_stats = db.session.query(
+            BankCard.id,
+            BankCard.label,
+            BankCard.bank_name,
+            func.sum(func.abs(Transaction.amount)).label('total')
+        ).join(Transaction, Transaction.card_id == BankCard.id).filter(
+            Transaction.id.in_(query.with_entities(Transaction.id)),
+            Transaction.amount < 0
+        ).group_by(BankCard.id).all()
+        
+        for card_id, label, bank_name, total in card_stats:
+            income_by_card.append({
+                'card_id': card_id,
+                'label': label,
+                'bank_name': bank_name,
+                'total': total or 0
+            })
+    
+    return jsonify({
+        'success': True,
+        'stats': {
+            'today': today_income,
+            'week': week_income,
+            'month': month_income,
+            'total': total_income,
+            'payment_count': payment_count,
+            'by_card': income_by_card
+        }
+    })
+
 
 @app.route('/s/<int:server_id>/<sub_id>')
 def client_subscription(server_id, sub_id):

@@ -82,6 +82,47 @@ def fix_database():
             else:
                 print(f"⚠️  Error adding server_id: {e}")
 
+        # 6. افزودن ستون card_id به جدول transactions
+        try:
+            c.execute("ALTER TABLE transactions ADD COLUMN card_id INTEGER REFERENCES bank_cards(id)")
+            print("✅ Added 'card_id' to transactions table.")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                print("ℹ️  'card_id' already exists in transactions.")
+            else:
+                print(f"⚠️  Error adding card_id: {e}")
+
+        # 7. افزودن ستون sender_card به جدول transactions
+        try:
+            c.execute("ALTER TABLE transactions ADD COLUMN sender_card VARCHAR(32)")
+            print("✅ Added 'sender_card' to transactions table.")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" in str(e).lower():
+                print("ℹ️  'sender_card' already exists in transactions.")
+            else:
+                print(f"⚠️  Error adding sender_card: {e}")
+
+        # 8. ساخت جدول payments (پرداخت‌های دریافتی)
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY,
+                admin_id INTEGER NOT NULL REFERENCES admins(id),
+                card_id INTEGER REFERENCES bank_cards(id),
+                sender_card VARCHAR(32),
+                sender_name VARCHAR(120),
+                amount INTEGER NOT NULL,
+                payment_date DATETIME NOT NULL,
+                client_email VARCHAR(100),
+                description TEXT,
+                verified BOOLEAN DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            print("✅ Table 'payments' checked/created.")
+        except Exception as e:
+            print(f"⚠️  Error creating payments table: {e}")
+
         conn.commit()
         conn.close()
         print("\n🚀 Database repair completed! You can now restart your app.")

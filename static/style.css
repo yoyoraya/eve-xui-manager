@@ -989,6 +989,23 @@ input:checked + .slider:before {
     color: #ffffff;
 }
 
+.action-btn.edit {
+    background-color: #8a2be2; /* بنفش */
+    color: #fff;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.action-btn.edit:hover {
+    background-color: #6a1bb2; /* رنگ تیره‌تر برای هاور */
+}
+
 .status-chips {
     display: flex;
     flex-wrap: wrap;
