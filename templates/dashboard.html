@@ -322,21 +322,21 @@
                 Packages override the custom price. Without a package the amount is based on days & volume.
             </div>
             
-            <div class="form-group form-toggle-item">
-                <label class="toggle-switch">
+            <label class="form-group form-toggle-item" style="cursor: pointer;">
+                <div class="toggle-switch">
                     <input type="checkbox" id="renew-reset-traffic">
                     <span class="slider"></span>
-                </label>
+                </div>
                 <span>Reset Traffic</span>
-            </div>
+            </label>
             
-            <div class="form-group form-toggle-item">
-                <label class="toggle-switch">
+            <label class="form-group form-toggle-item" style="cursor: pointer;">
+                <div class="toggle-switch">
                     <input type="checkbox" id="renew-start-after-first-use">
                     <span class="slider"></span>
-                </label>
+                </div>
                 <span>Start after first use</span>
-            </div>
+            </label>
             
             <div class="form-footer" style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 15px;">
                 <div style="font-size: 0.9rem; display: flex; align-items: center;">
@@ -445,13 +445,13 @@
                 Package price takes priority. Otherwise, days × cost/day + GB × cost/GB.
             </div>
             
-            <div class="form-group form-toggle-item">
-                <label class="toggle-switch">
+            <label class="form-group form-toggle-item" style="cursor: pointer;">
+                <div class="toggle-switch">
                     <input type="checkbox" id="add-client-start-after-first-use">
                     <span class="slider"></span>
-                </label>
+                </div>
                 <span>Start after first use</span>
-            </div>
+            </label>
 
             <div class="form-footer" style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 15px;">
                 <div style="font-size: 0.9rem; display: flex; align-items: center;">
@@ -484,9 +484,18 @@
             
             <div class="form-group">
                 <label>Select Reseller</label>
-                <select id="assign-reseller-select" class="form-select">
-                    <option value="">Loading...</option>
-                </select>
+                <div class="filter-dropdown-wrapper" style="width: 100%;">
+                    <button class="filter-btn" onclick="toggleResellerDropdown()" id="assign-reseller-btn" style="width: 100%; justify-content: space-between;">
+                        <span id="assign-reseller-label">Select Reseller</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </button>
+                    <div id="assign-reseller-dropdown" class="filter-dropdown hidden" style="width: 100%;">
+                        <div id="assign-reseller-list" class="filter-list">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+                <input type="hidden" id="assign-reseller-select">
             </div>
             
             <div class="form-actions">

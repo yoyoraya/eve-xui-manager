@@ -29,6 +29,13 @@ from sqlalchemy import or_, func, text, inspect
 APP_VERSION = "1.2.1"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
+# Simple in-memory cache for update checks
+UPDATE_CACHE = {
+    'last_check': 0,
+    'data': None,
+    'ttl': 3600  # 1 hour cache
+}
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
 
@@ -3201,20 +3208,35 @@ def inject_version():
 @app.route('/api/check-update', methods=['GET'])
 @login_required
 def check_update():
+    # Check cache first
+    current_time = time.time()
+    if UPDATE_CACHE['data'] and (current_time - UPDATE_CACHE['last_check'] < UPDATE_CACHE['ttl']):
+        return jsonify(UPDATE_CACHE['data'])
+
     try:
-        resp = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=5)
+        resp = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=3)
         if resp.status_code == 200:
             data = resp.json()
             latest_version = data.get('tag_name', '').lstrip('v')
-            return jsonify({
+            
+            result = {
                 'success': True,
                 'current_version': APP_VERSION,
                 'latest_version': latest_version,
                 'update_available': latest_version != APP_VERSION,
                 'release_url': data.get('html_url', '')
-            })
+            }
+            
+            # Update cache
+            UPDATE_CACHE['last_check'] = current_time
+            UPDATE_CACHE['data'] = result
+            
+            return jsonify(result)
         return jsonify({'success': False, 'error': 'GitHub API error'})
     except Exception as e:
+        # If request fails (timeout/network), return cached data if available (even if expired) to avoid error
+        if UPDATE_CACHE['data']:
+            return jsonify(UPDATE_CACHE['data'])
         return jsonify({'success': False, 'error': str(e)})
 
 def run_scheduler():

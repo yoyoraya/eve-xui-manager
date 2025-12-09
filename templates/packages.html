@@ -4,7 +4,7 @@
 {% block page_title %}Package & Tariff Management{% endblock %}
 
 {% block content %}
-<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+<div class="packages-layout">
     
     <div class="server-card">
         <div class="server-header">
@@ -33,7 +33,7 @@
                 <h3>📦 Ready Packages</h3>
             </div>
             <div class="server-actions">
-                <button class="btn btn-success" type="button" onclick="openPackageModal()">
+                <button class="btn btn-success btn-full-mobile" type="button" onclick="openPackageModal()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -48,6 +48,20 @@
         </div>
     </div>
 </div>
+
+<style>
+    .packages-layout {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 20px;
+    }
+
+    @media (max-width: 768px) {
+        .packages-layout {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
 
 <div class="modal-overlay hidden" id="pkg-modal">
     <div class="modal modal-sm">

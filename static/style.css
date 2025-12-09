@@ -1515,7 +1515,6 @@ input:checked + .slider:before {
     min-width: 20px;
     text-align: center;
 }
-}
 
 .badge-count.hidden {
     display: none;
@@ -1682,6 +1681,14 @@ input:checked + .slider:before {
 
 .form-select {
     cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    padding-right: 40px !important;
 }
 
 select,
@@ -2056,8 +2063,14 @@ select optgroup {
 
 .servers-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 16px;
+}
+
+@media (max-width: 640px) {
+    .servers-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .server-card {
@@ -2294,7 +2307,7 @@ select optgroup {
         gap: 8px;
     }
     
-    .header-actions .btn .btn-label {
+    .header-actions .btn:not(.btn-full-mobile) .btn-label {
         display: none;
     }
     
@@ -2633,19 +2646,37 @@ select optgroup {
     .header-controls {
         width: 100%;
     }
+
+    .btn-full-mobile {
+        width: 100%;
+        justify-content: center;
+    }
     
+    /* 
+       User requested to keep button sizes consistent on mobile.
+       Removed aggressive padding reduction.
+    */
     .btn {
-        padding: 6px 10px;
-        font-size: 0.7rem;
+        /* padding: 10px 16px;  Inherit from desktop default */
+        /* font-size: 0.85rem;  Inherit from desktop default */
     }
     
-    .btn span {
-        display: none;
+    /* Only hide text if absolutely necessary, but user seems to prefer full buttons */
+    .btn:not(.btn-full-mobile):not(.btn-block) span {
+        /* display: none; */ 
+        /* User requested full buttons, so we might want to show text too, 
+           but let's stick to size first. If they want text hidden, they didn't say so explicitly, 
+           but "don't cut from sides" implies keeping content. 
+           However, keeping text on ALL buttons might break layout on very small screens.
+           Let's compromise: Keep padding standard, but maybe still hide text for non-critical buttons?
+           The user said "don't cut height and sides". 
+           Let's restore the padding and font size.
+        */
     }
     
-    .btn svg {
-        width: 12px;
-        height: 12px;
+    .btn:not(.btn-block) svg {
+        /* width: 16px; Inherit default */
+        /* height: 16px; Inherit default */
     }
     
     .page-title {
@@ -2929,4 +2960,26 @@ select optgroup {
     display: flex;
     align-items: center;
     font-weight: 500;
+}
+
+/* Dropdown Option Styles */
+.dropdown-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.2s;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.dropdown-option:hover {
+    background: var(--bg-card-hover);
+}
+
+.dropdown-option.selected {
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--primary);
 }

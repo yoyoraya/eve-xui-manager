@@ -3,7 +3,7 @@
 {% block page_title %}Subscription Page Manager{% endblock %}
 
 {% block header_actions %}
-<button class="btn btn-success" onclick="openAddModal()">
+<button class="btn btn-success btn-full-mobile" onclick="openAddModal()">
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
     <span class="btn-label">Add New App</span>
 </button>
@@ -32,13 +32,13 @@
                     <input type="text" id="edit-app-name" class="form-input" placeholder="Display Name">
                 </div>
 
-                <div class="form-group form-toggle-item" style="margin-bottom: 0; padding-bottom: 12px;">
-                    <label class="toggle-switch">
+                <label class="form-group form-toggle-item" style="margin-bottom: 0; padding-bottom: 12px; cursor: pointer;">
+                    <div class="toggle-switch">
                         <input type="checkbox" id="edit-enabled">
                         <span class="slider"></span>
-                    </label>
+                    </div>
                     <span>Show in Sub Page</span>
-                </div>
+                </label>
             </div>
 
             <div style="display: flex; gap: 20px; margin-bottom: 20px;">

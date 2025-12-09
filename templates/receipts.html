@@ -61,14 +61,14 @@
 
     <!-- Right Column: Receipts Table -->
     <div class="panel-card receipts-panel">
-        <div class="panel-card-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 35px;">
+        <div class="panel-card-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px;">
             <h2 style="margin: 0;">{% if is_superadmin %}All Receipts{% else %}My Receipts{% endif %}</h2>
             <button class="btn btn-icon" onclick="loadReceipts()" title="Refresh">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
             </button>
         </div>
         
-        <div class="status-chips" id="receipt-filters">
+        <div class="status-chips" id="receipt-filters" style="margin-bottom: 20px;">
             <button class="chip active" data-status="" onclick="setReceiptFilter(event, '')">All</button>
             <button class="chip" data-status="pending" onclick="setReceiptFilter(event, 'pending')">Pending</button>
             <button class="chip" data-status="approved" onclick="setReceiptFilter(event, 'approved')">Approved</button>
@@ -121,6 +121,50 @@
         .panel-card {
             width: 100%;
             box-sizing: border-box;
+        }
+
+        /* Mobile Table Card View */
+        .data-table thead {
+            display: none;
+        }
+        
+        .data-table, .data-table tbody, .data-table tr, .data-table td {
+            display: block;
+            width: 100%;
+        }
+        
+        .data-table tr {
+            margin-bottom: 16px;
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+        }
+        
+        .data-table td {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            text-align: right;
+            background: transparent;
+        }
+        
+        .data-table td:last-child {
+            border-bottom: none;
+        }
+        
+        .data-table td::before {
+            content: attr(data-label);
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-right: 16px;
+            text-align: left;
+        }
+
+        .action-btn-group {
+            justify-content: flex-end;
         }
     }
 
@@ -539,7 +583,7 @@
             
             let userCell = '';
             if (isSuperadmin) {
-                userCell = `<td>${r.admin ? r.admin.username : 'Unknown'}</td>`;
+                userCell = `<td data-label="User">${r.admin ? r.admin.username : 'Unknown'}</td>`;
             }
 
             // Shamsi Date Conversion
@@ -587,10 +631,10 @@
 
             tr.innerHTML = `
                 ${userCell}
-                <td><strong>${formatNumber(r.amount)}</strong> <span class="text-muted">IRT</span></td>
-                <td><span class="persian-font">${dateStr}</span></td>
-                <td>${statusBadge}</td>
-                <td>${actions}</td>
+                <td data-label="Amount"><strong>${formatNumber(r.amount)}</strong> <span class="text-muted">IRT</span></td>
+                <td data-label="Date"><span class="persian-font">${dateStr}</span></td>
+                <td data-label="Status">${statusBadge}</td>
+                <td data-label="Actions">${actions}</td>
             `;
             body.appendChild(tr);
         });
