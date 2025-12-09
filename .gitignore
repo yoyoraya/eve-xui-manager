@@ -61,5 +61,10 @@ instance/
 *.sqlite
 *.sqlite3
 
+# Uploads
+static/uploads/
+instance/receipts/
+instance/backups/
+
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
