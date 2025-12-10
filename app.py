@@ -4,6 +4,7 @@ import re
 import json
 import base64
 import requests
+import logging
 import qrcode
 import uuid
 import secrets
@@ -13,6 +14,7 @@ import glob
 import threading
 import time
 import concurrent.futures
+from collections import defaultdict
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from functools import wraps
@@ -24,7 +26,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from urllib.parse import urlparse, quote
 from jdatetime import datetime as jdatetime_class
-from sqlalchemy import or_, func, text, inspect
+from sqlalchemy import or_, func, text, inspect, case
 
 APP_VERSION = "1.3.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
@@ -74,6 +76,10 @@ limiter = Limiter(
 )
 
 db = SQLAlchemy(app)
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
 
 # --- MODELS ---
 
@@ -422,8 +428,10 @@ class Transaction(db.Model):
     server_id = db.Column(db.Integer, db.ForeignKey('servers.id'), nullable=True)
     card_id = db.Column(db.Integer, db.ForeignKey('bank_cards.id'), nullable=True)  # کارت مقصد (شما)
     sender_card = db.Column(db.String(32), nullable=True)  # شماره کارت مشتری
+    client_email = db.Column(db.String(100), nullable=True)  # ایمیل کلاینت مرتبط
     amount = db.Column(db.Integer, nullable=False)
     type = db.Column(db.String(20))
+    category = db.Column(db.String(16), default='usage', nullable=False)  # 'income', 'expense', 'usage'
     description = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -463,6 +471,7 @@ class Transaction(db.Model):
             'card_id': self.card_id,
             'card': card_info,
             'sender_card': self.sender_card,
+            'client_email': self.client_email,
             'amount': self.amount,
             'type': self.type,
             'description': self.description,
@@ -682,7 +691,11 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'admin_id' not in session:
-            if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            # For API endpoints, AJAX/XHR requests, or requests that accept JSON, return JSON errors
+            is_api_path = request.path.startswith('/api/')
+            accepts_json = 'application/json' in (request.headers.get('Accept') or '')
+            is_xhr = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json
+            if is_api_path or accepts_json or is_xhr:
                 return jsonify({"success": False, "error": "Unauthorized"}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
@@ -742,15 +755,17 @@ def get_config(key, default=0):
     conf = db.session.get(SystemConfig, key)
     return int(conf.value) if conf else default
 
-def log_transaction(user_id, amount, type, desc, server_id=None, card_id=None, sender_card=None):
+def log_transaction(user_id, amount, type, desc, server_id=None, card_id=None, sender_card=None, category='usage', client_email=None):
     trans = Transaction(
-        admin_id=user_id, 
-        amount=amount, 
-        type=type, 
-        description=desc, 
+        admin_id=user_id,
+        amount=amount,
+        type=type,
+        description=desc,
         server_id=server_id,
         card_id=card_id,
-        sender_card=sender_card
+        sender_card=sender_card,
+        category=category,
+        client_email=client_email
     )
     db.session.add(trans)
 
@@ -816,6 +831,12 @@ def parse_allowed_servers(raw_value):
         inner = normalized.strip('"')
         if inner == '*':
             return '*'
+        # Attempt to decode double-encoded JSON strings
+        try:
+            decoded_inner = json.loads(inner)
+            return decoded_inner if decoded_inner is not None else []
+        except Exception:
+            pass
     try:
         parsed = json.loads(normalized)
         if isinstance(parsed, str) and parsed.strip() == '*':
@@ -825,40 +846,186 @@ def parse_allowed_servers(raw_value):
         return []
 
 def serialize_allowed_servers(value):
+    """Serialize server/inbound permissions.
+
+    Supports legacy formats (list of server ids or '*') and new structured
+    payloads like [{'server_id': 1, 'inbounds': [10, 12]}, ...].
+    """
+
+    def _normalize_inbounds(val):
+        if val is None:
+            return '*'
+        if val == '*' or (isinstance(val, str) and val.strip() == '*'):
+            return '*'
+        if isinstance(val, list):
+            normalized = []
+            for v in val:
+                try:
+                    normalized.append(int(v))
+                except (TypeError, ValueError):
+                    continue
+            return normalized
+        try:
+            return [int(val)]
+        except (TypeError, ValueError):
+            return []
+
     if value == '*' or (isinstance(value, str) and value.strip() == '*'):
         return '*'
-    if isinstance(value, list):
-        cleaned = []
-        for item in value:
-            try:
-                cleaned.append(int(item))
-            except (TypeError, ValueError):
-                continue
-        return json.dumps(cleaned)
+
+    # Parse JSON strings if provided
     if isinstance(value, str):
         try:
             parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return serialize_allowed_servers(parsed)
-            if isinstance(parsed, str) and parsed.strip() == '*':
-                return '*'
+            return serialize_allowed_servers(parsed)
         except Exception:
-            pass
-    return json.dumps([])
+            # Fallback for simple comma-separated server IDs
+            parts = [p.strip() for p in value.split(',') if p.strip()]
+            try:
+                return serialize_allowed_servers([int(p) for p in parts])
+            except Exception:
+                return json.dumps([])
+
+    if isinstance(value, dict):
+        value = [value]
+
+    normalized = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                server_id = item.get('server_id') or item.get('server') or item.get('id')
+                try:
+                    server_id = int(server_id)
+                except (TypeError, ValueError):
+                    continue
+                inbounds = _normalize_inbounds(item.get('inbounds', '*'))
+                normalized.append({'server_id': server_id, 'inbounds': '*' if inbounds == '*' else inbounds})
+            else:
+                try:
+                    server_id = int(item)
+                    normalized.append({'server_id': server_id, 'inbounds': '*'})
+                except (TypeError, ValueError):
+                    continue
+
+    if not normalized:
+        return json.dumps([])
+
+    # Merge duplicates and keep unique inbound lists per server
+    merged = {}
+    for entry in normalized:
+        sid = entry['server_id']
+        inb = entry['inbounds']
+        if sid not in merged:
+            merged[sid] = inb
+            continue
+        existing = merged[sid]
+        if existing == '*' or inb == '*':
+            merged[sid] = '*'
+        else:
+            merged[sid] = sorted(list(set(existing) | set(inb)))
+
+    final_list = [{'server_id': sid, 'inbounds': val} for sid, val in merged.items()]
+    return json.dumps(final_list)
 
 def resolve_allowed_servers(raw_value):
+    """Backward-compatible resolver returning only server IDs or '*'."""
+    allowed_map = resolve_allowed_map(raw_value)
+    if allowed_map == '*':
+        return '*'
+    return list(allowed_map.keys())
+
+
+def resolve_allowed_map(raw_value):
+    """Return mapping of server_id -> inbound rule ('*' or set of ids)."""
     parsed = parse_allowed_servers(raw_value)
     if parsed == '*':
         return '*'
-    if isinstance(parsed, list):
-        cleaned = []
-        for item in parsed:
+
+    allowed_map = {}
+    items = parsed
+    if isinstance(items, dict):
+        items = [items]
+
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                server_id = item.get('server_id') or item.get('server') or item.get('id')
+                try:
+                    server_id = int(server_id)
+                except (TypeError, ValueError):
+                    continue
+                inbounds_raw = item.get('inbounds', '*')
+                inbounds = set()
+                if inbounds_raw == '*' or (isinstance(inbounds_raw, str) and inbounds_raw.strip() == '*'):
+                    allowed_map[server_id] = '*'
+                    continue
+                if isinstance(inbounds_raw, list):
+                    for v in inbounds_raw:
+                        try:
+                            inbounds.add(int(v))
+                        except (TypeError, ValueError):
+                            continue
+                else:
+                    try:
+                        inbounds.add(int(inbounds_raw))
+                    except (TypeError, ValueError):
+                        pass
+                allowed_map[server_id] = inbounds
+            else:
+                try:
+                    sid = int(item)
+                    allowed_map[sid] = '*'
+                except (TypeError, ValueError):
+                    continue
+    return allowed_map
+
+
+def get_reseller_access_maps(user):
+    """Return (allowed_map, assignment_map) for a reseller user."""
+    if not user or user.role != 'reseller':
+        return '*', {}
+
+    allowed_map = resolve_allowed_map(user.allowed_servers)
+    assignments = defaultdict(set)
+
+    ownerships = ClientOwnership.query.filter_by(reseller_id=user.id).all()
+    for own in ownerships:
+        try:
+            sid = int(own.server_id)
+        except (TypeError, ValueError):
+            continue
+        if own.inbound_id is not None:
             try:
-                cleaned.append(int(item))
+                assignments[sid].add(int(own.inbound_id))
             except (TypeError, ValueError):
                 continue
-        return cleaned
-    return []
+
+    return allowed_map, assignments
+
+
+def is_server_accessible(server_id, allowed_map, assignments):
+    if allowed_map == '*':
+        return True
+    if server_id in assignments:
+        return True
+    return server_id in allowed_map
+
+
+def is_inbound_accessible(server_id, inbound_id, allowed_map, assignments):
+    if allowed_map == '*':
+        return True
+
+    # Access via explicit assignment
+    assigned = assignments.get(server_id, set())
+    if '*' in assigned or inbound_id in assigned:
+        return True
+
+    server_rule = allowed_map.get(server_id)
+    if server_rule == '*':
+        return True
+    if isinstance(server_rule, (set, list, tuple)):
+        return inbound_id in server_rule
+    return False
 
 def parse_iso_datetime(value):
     if not value:
@@ -987,12 +1154,14 @@ def get_accessible_servers(user, include_disabled=False):
     if not include_disabled:
         query = query.filter_by(enabled=True)
     if user.role == 'reseller':
-        allowed_ids = resolve_allowed_servers(user.allowed_servers)
-        if allowed_ids == '*':
+        allowed_map, assignments = get_reseller_access_maps(user)
+        if allowed_map == '*':
             return query.all()
-        if not allowed_ids:
+
+        server_ids = set(allowed_map.keys()) | set(assignments.keys())
+        if not server_ids:
             return []
-        return query.filter(Server.id.in_(allowed_ids)).all()
+        return query.filter(Server.id.in_(server_ids)).all()
     return query.all()
 
 def get_xui_session(server):
@@ -1062,10 +1231,12 @@ def find_client(inbounds, inbound_id, email):
                 return client, inbound
     return None, None
 
-def process_inbounds(inbounds, server, user):
+def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None):
     processed = []
     stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
     
+    assignments = assignments or {}
+
     owned_emails = []
     if user.role == 'reseller':
         ownerships = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server.id).all()
@@ -1073,6 +1244,18 @@ def process_inbounds(inbounds, server, user):
 
     for inbound in inbounds:
         try:
+            inbound_id_raw = inbound.get('id')
+            try:
+                inbound_id = int(inbound_id_raw)
+            except (TypeError, ValueError):
+                inbound_id = inbound_id_raw
+
+            if user.role == 'reseller':
+                accessible = is_inbound_accessible(server.id, inbound_id, allowed_map, assignments)
+                app.logger.info(f"Reseller check: server={server.id}, inbound={inbound_id}, accessible={accessible}, allowed_map={allowed_map}, assignments={assignments}")
+                if not accessible:
+                    continue
+
             settings = json.loads(inbound.get('settings', '{}'))
             clients = settings.get('clients', [])
             client_stats = inbound.get('clientStats', [])
@@ -1148,9 +1331,6 @@ def process_inbounds(inbounds, server, user):
                 stats["upload_raw"] += client_up
                 stats["download_raw"] += client_down
             
-            if user.role == 'reseller' and not processed_clients:
-                continue
-
             # استخراج network و security از settings
             streamSettings = settings.get('streamSettings', {})
             network = streamSettings.get('network', 'tcp')
@@ -1273,6 +1453,7 @@ def fetch_worker(server_dict):
 def api_refresh():
     user = db.session.get(Admin, session['admin_id'])
     servers = get_accessible_servers(user)
+    allowed_map, assignments = get_reseller_access_maps(user) if user.role == 'reseller' else ('*', {})
     
     all_inbounds = []
     total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
@@ -1306,7 +1487,7 @@ def api_refresh():
             server_results.append({"server_id": server.id, "server_name": server.name, "success": False, "error": error})
             continue
         
-        processed_inbounds, stats = process_inbounds(inbounds, server, user)
+        processed_inbounds, stats = process_inbounds(inbounds, server, user, allowed_map, assignments)
         all_inbounds.extend(processed_inbounds)
         
         total_stats["total_inbounds"] += stats["total_inbounds"]
@@ -1569,13 +1750,14 @@ def reset_client_traffic(server_id, inbound_id):
                 except ValueError:
                     pass
                 
-                if user.role == 'reseller' and charge_amount > 0:
-                    user.credit -= charge_amount
-                
                 if charge_amount > 0:
                     sender_card = data.get('sender_card', '') or ''
                     card_id = data.get('card_id')
-                    log_transaction(user.id, -charge_amount, 'reset_traffic', f"Reset traffic {volume_gb}GB - {email}", server_id=server.id, sender_card=sender_card, card_id=card_id)
+                    if user.role == 'reseller':
+                        user.credit -= charge_amount
+                        log_transaction(user.id, -charge_amount, 'reset_traffic', "Reset traffic (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage')
+                    else:
+                        log_transaction(user.id, charge_amount, 'reset_traffic', "Reset traffic (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income')
                     db.session.commit()
 
                 response = {"success": True}
@@ -1934,13 +2116,14 @@ def renew_client(server_id, inbound_id, email):
                         except:
                             pass
 
-                if user.role == 'reseller' and price > 0:
-                    user.credit -= price
-                
                 if price > 0:
                     sender_card = data.get('sender_card', '') or ''
                     card_id = data.get('card_id')
-                    log_transaction(user.id, -price, 'renew', description, server_id=server.id, sender_card=sender_card, card_id=card_id)
+                    if user.role == 'reseller':
+                        user.credit -= price
+                        log_transaction(user.id, -price, 'renew', "User Renewal (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage')
+                    else:
+                        log_transaction(user.id, price, 'renew', "User Renewal (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income')
                     db.session.commit()
 
                 return jsonify({"success": True})
@@ -2158,6 +2341,7 @@ def client_qrcode():
 def add_client(server_id, inbound_id):
     user = db.session.get(Admin, session['admin_id'])
     server = Server.query.get_or_404(server_id)
+    allowed_map, assignments = get_reseller_access_maps(user) if user.role == 'reseller' else ('*', {})
     
     data = request.json or {}
     email = data.get('email', '').strip()
@@ -2195,9 +2379,10 @@ def add_client(server_id, inbound_id):
         description = f"Custom Plan: {days} Days, {volume_gb} GB - {email}"
 
     if user.role == 'reseller':
-        allowed = resolve_allowed_servers(user.allowed_servers)
-        if allowed != '*' and server_id not in allowed:
+        if not is_server_accessible(server_id, allowed_map, assignments):
             return jsonify({"success": False, "error": "Access to this server is denied"}), 403
+        if not is_inbound_accessible(server_id, inbound_id, allowed_map, assignments):
+            return jsonify({"success": False, "error": "Access to this inbound is denied"}), 403
         
         if user.credit < price:
             return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
@@ -2258,13 +2443,14 @@ def add_client(server_id, inbound_id):
         
         if up_resp.status_code == 200 and up_resp.json().get('success'):
             
-            if user.role == 'reseller' and price > 0:
-                user.credit -= price
-            
             if price > 0:
                 sender_card = data.get('sender_card', '') or ''
                 card_id = data.get('card_id')
-                log_transaction(user.id, -price, 'purchase', description, server_id=server.id, sender_card=sender_card, card_id=card_id)
+                if user.role == 'reseller':
+                    user.credit -= price
+                    log_transaction(user.id, -price, 'purchase', "Add User (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
+                else:
+                    log_transaction(user.id, price, 'purchase', "Add User (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
             
             ownership = ClientOwnership(
                 reseller_id=user.id,
@@ -2397,12 +2583,15 @@ def charge_admin():
     admin.credit += amount
     
     transaction_type = 'deposit' if amount >= 0 else 'manual_debit'
+    # Set category to 'income' for deposits (positive) so it counts in stats, 'expense' for debits (negative)
+    category = 'income' if amount >= 0 else 'expense'
 
     transaction = Transaction(
         admin_id=admin_id,
         amount=amount,
         type=transaction_type,
-        description=description
+        description=description,
+        category=category
     )
     db.session.add(transaction)
     db.session.commit()
@@ -2411,43 +2600,51 @@ def charge_admin():
 @app.route('/api/transactions', methods=['GET'])
 @login_required
 def get_transactions():
-    user = db.session.get(Admin, session['admin_id'])
-    if not user:
-        return jsonify({"success": False, "error": "User not found"}), 401
+    try:
+        user = db.session.get(Admin, session['admin_id'])
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 401
 
-    query = Transaction.query.join(Admin)
+        query = Transaction.query.join(Admin)
 
-    if user.role == 'reseller':
-        query = query.filter(Transaction.admin_id == user.id)
-    else:
-        target_user_id = request.args.get('user_id', type=int)
-        if target_user_id:
-            query = query.filter(Transaction.admin_id == target_user_id)
+        if user.role == 'reseller':
+            query = query.filter(Transaction.admin_id == user.id)
+        else:
+            target_user_id = request.args.get('user_id', type=int)
+            if target_user_id:
+                query = query.filter(Transaction.admin_id == target_user_id)
 
-    # Filter by Server (using new column)
-    server_filter = request.args.get('server_id', type=int)
-    if server_filter:
-        accessible_ids = {s.id for s in get_accessible_servers(user, include_disabled=True)}
-        if user.role == 'reseller' and server_filter not in accessible_ids:
-            return jsonify({"success": False, "error": "Access denied to requested server"}), 403
-        query = query.filter(Transaction.server_id == server_filter)
+        # Filter by Server (using new column)
+        server_filter = request.args.get('server_id', type=int)
+        if server_filter:
+            accessible_ids = {s.id for s in get_accessible_servers(user, include_disabled=True)}
+            if user.role == 'reseller' and server_filter not in accessible_ids:
+                return jsonify({"success": False, "error": "Access denied to requested server"}), 403
+            query = query.filter(Transaction.server_id == server_filter)
 
-    search_term = (request.args.get('search') or '').strip()
-    if search_term:
-        pattern = f"%{search_term}%"
-        query = query.filter(or_(
-            Transaction.description.ilike(pattern),
-            Transaction.type.ilike(pattern),
-            Admin.username.ilike(pattern)
-        ))
+        search_term = (request.args.get('search') or '').strip()
+        if search_term:
+            pattern = f"%{search_term}%"
+            query = query.filter(or_(
+                Transaction.description.ilike(pattern),
+                Transaction.type.ilike(pattern),
+                Admin.username.ilike(pattern)
+            ))
 
-    start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
-    if start_dt:
-        query = query.filter(Transaction.created_at >= start_dt)
+        start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
+        if start_dt:
+            query = query.filter(Transaction.created_at >= start_dt)
 
-    end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
-    if end_dt:
-        query = query.filter(Transaction.created_at <= end_dt)
+        end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
+        if end_dt:
+            query = query.filter(Transaction.created_at <= end_dt)
+
+        # ...existing code...
+        # (rest of the function remains unchanged)
+        # ...existing code...
+    except Exception as ex:
+        import traceback
+        return jsonify({"success": False, "error": str(ex), "trace": traceback.format_exc()}), 500
 
     # Pagination
     page = request.args.get('page', 1, type=int)
@@ -2519,84 +2716,124 @@ def get_transactions():
 def finance_page():
     user = db.session.get(Admin, session['admin_id'])
     cards = BankCard.query.filter_by(is_active=True).all()
+    servers = Server.query.order_by(Server.name).all()
     
-    # Get admins list for superadmin filter
+    # Always show user column, but for reseller only their own username
     admin_options = []
-    if user.is_superadmin:
+    is_superadmin_view = (user.role == 'superadmin')
+    if is_superadmin_view:
         admin_options = Admin.query.order_by(Admin.username).all()
-    
+    else:
+        admin_options = [user]
     return render_template('finance.html', 
                            cards=cards, 
                            is_superadmin=user.is_superadmin,
-                           admin_options=admin_options)
+                           admin_username=user.username,
+                           role=user.role,
+                           wallet_credit=user.credit,
+                           admin_options=admin_options,
+                           servers=servers)
 
 
 @app.route('/api/payments', methods=['GET'])
 @login_required
 def get_payments():
     """Get payment transactions (transactions that have card info)"""
-    user = db.session.get(Admin, session['admin_id'])
-    if not user:
-        return jsonify({"success": False, "error": "User not found"}), 401
-    
-    # Use Transaction table, filter for transactions with card info
-    query = Transaction.query
-    
-    # Role-based filtering
+    try:
+        user = db.session.get(Admin, session['admin_id'])
+        if not user:
+            return jsonify({"success": False, "error": "User not found"}), 401
+        
+        # Payments
+        payment_query = Payment.query
+        if user.role == 'reseller':
+            payment_query = payment_query.filter(Payment.admin_id == user.id)
+        else:
+            target_user_id = request.args.get('user_id', type=int)
+            if target_user_id:
+                payment_query = payment_query.filter(Payment.admin_id == target_user_id)
+        card_id = request.args.get('card_id', type=int)
+        if card_id:
+            payment_query = payment_query.filter(Payment.card_id == card_id)
+        search_term = (request.args.get('search') or '').strip()
+        if search_term:
+            pattern = f"%{search_term}%"
+            payment_query = payment_query.filter(or_(
+                Payment.description.ilike(pattern),
+                Payment.sender_card.ilike(pattern),
+                Payment.sender_name.ilike(pattern),
+                func.lower(Payment.client_email).ilike(pattern)
+            ))
+        start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
+        if start_dt:
+            payment_query = payment_query.filter(Payment.payment_date >= start_dt)
+        end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
+        if end_dt:
+            payment_query = payment_query.filter(Payment.payment_date <= end_dt)
+        payments_list = payment_query.order_by(Payment.payment_date.desc()).all()
+
+        # ...existing code...
+        # (rest of the function remains unchanged)
+        # ...existing code...
+    except Exception as ex:
+        import traceback
+        return jsonify({"success": False, "error": str(ex), "trace": traceback.format_exc()}), 500
+    tx_query = Transaction.query
     if user.role == 'reseller':
-        query = query.filter(Transaction.admin_id == user.id)
+        tx_query = tx_query.filter(Transaction.admin_id == user.id)
     else:
-        # Superadmin can filter by user
         target_user_id = request.args.get('user_id', type=int)
         if target_user_id:
-            query = query.filter(Transaction.admin_id == target_user_id)
-    
-    # Filter by card
-    card_id = request.args.get('card_id', type=int)
+            tx_query = tx_query.filter(Transaction.admin_id == target_user_id)
     if card_id:
-        query = query.filter(Transaction.card_id == card_id)
-    
-    # Only show transactions with card info (actual payments)
-    show_all = request.args.get('show_all', 'false') == 'true'
-    if not show_all:
-        query = query.filter(or_(
-            Transaction.card_id.isnot(None),
-            Transaction.sender_card.isnot(None),
-            Transaction.sender_card != ''
-        ))
-    
-    # Search
-    search_term = (request.args.get('search') or '').strip()
+        tx_query = tx_query.filter(Transaction.card_id == card_id)
     if search_term:
         pattern = f"%{search_term}%"
-        query = query.filter(or_(
+        tx_query = tx_query.filter(or_(
             Transaction.description.ilike(pattern),
             Transaction.sender_card.ilike(pattern)
         ))
-    
-    # Date filters
-    start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
     if start_dt:
-        query = query.filter(Transaction.created_at >= start_dt)
-    
-    end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
+        tx_query = tx_query.filter(Transaction.created_at >= start_dt)
     if end_dt:
-        query = query.filter(Transaction.created_at <= end_dt)
-    
-    # Pagination
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('limit', 20, type=int)
-    per_page = max(1, min(per_page, 100))
-    
-    pagination = query.order_by(Transaction.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
-    
-    # Convert to payment-like format
-    payments = []
-    for t in pagination.items:
+        tx_query = tx_query.filter(Transaction.created_at <= end_dt)
+    transactions_list = tx_query.order_by(Transaction.created_at.desc()).all()
+
+    # ManualReceipts
+    receipt_query = ManualReceipt.query
+    if user.role == 'reseller':
+        receipt_query = receipt_query.filter(ManualReceipt.admin_id == user.id)
+    else:
+        target_user_id = request.args.get('user_id', type=int)
+        if target_user_id:
+            receipt_query = receipt_query.filter(ManualReceipt.admin_id == target_user_id)
+    if card_id:
+        receipt_query = receipt_query.filter(ManualReceipt.card_id == card_id)
+    if search_term:
+        pattern = f"%{search_term}%"
+        receipt_query = receipt_query.filter(or_(
+            ManualReceipt.reference_code.ilike(pattern),
+            ManualReceipt.notes.ilike(pattern)
+        ))
+    if start_dt:
+        receipt_query = receipt_query.filter(ManualReceipt.deposit_at >= start_dt)
+    if end_dt:
+        receipt_query = receipt_query.filter(ManualReceipt.deposit_at <= end_dt)
+    receipts_list = receipt_query.order_by(ManualReceipt.deposit_at.desc()).all()
+
+    # Map payments
+    mapped_payments = []
+    for p in payments_list:
+        d = p.to_dict()
+        d['type'] = 'payment'
+        mapped_payments.append(d)
+
+    # Map transactions
+    mapped_transactions = []
+    for t in transactions_list:
         admin = db.session.get(Admin, t.admin_id)
         card = db.session.get(BankCard, t.card_id) if t.card_id else None
-        
-        # Convert to Jalali date
+        server = db.session.get(Server, t.server_id) if getattr(t, 'server_id', None) else None
         jalali_date = ''
         if t.created_at:
             try:
@@ -2605,35 +2842,79 @@ def get_payments():
                 jalali_date = jdt.strftime('%Y/%m/%d %H:%M')
             except:
                 jalali_date = t.created_at.strftime('%Y-%m-%d %H:%M')
-        
-        payments.append({
-            'id': t.id,
+        mapped_transactions.append({
+            'id': f"tx-{t.id}",
             'admin_id': t.admin_id,
             'admin': {
                 'id': admin.id,
-                'username': admin.username
+                'username': admin.username,
+                'role': admin.role
             } if admin else None,
             'sender_card': t.sender_card or '',
+            'sender_name': None,
             'card_id': t.card_id,
             'card': {
                 'id': card.id,
                 'label': card.label,
                 'bank_name': card.bank_name
             } if card else None,
-            'amount': abs(t.amount),  # Show as positive
-            'type': t.type,
+            'server': {
+                'id': server.id,
+                'name': server.name
+            } if server else None,
+            'amount': int(t.amount),
+            'type': t.type or 'transaction',
             'description': t.description,
-            'client_email': t.description.split(' - ')[-1] if ' - ' in t.description else '',
+            'client_email': t.client_email or (t.description.split(' - ')[-1] if t.description and ' - ' in t.description else ''),
             'payment_date': t.created_at.isoformat() if t.created_at else None,
             'payment_date_jalali': jalali_date,
-            'verified': True,  # Transactions are already verified actions
-            'status': 'verified'
+            'verified': True,
+            'created_at': t.created_at.isoformat() if t.created_at else None,
         })
-    
+
+    # Map receipts
+    mapped_receipts = []
+    for r in receipts_list:
+        d = r.to_dict()
+        d['type'] = 'receipt'
+        d['payment_date'] = d.get('deposit_at') or d.get('created_at')
+        d['payment_date_jalali'] = ''
+        if d['payment_date']:
+            try:
+                import jdatetime
+                dt = datetime.fromisoformat(d['payment_date'])
+                jdt = jdatetime.datetime.fromgregorian(datetime=dt)
+                d['payment_date_jalali'] = jdt.strftime('%Y/%m/%d %H:%M')
+            except:
+                pass
+        mapped_receipts.append(d)
+
+    # Combine all
+    combined = mapped_payments + mapped_transactions + mapped_receipts
+    def get_date(item):
+        date_str = item.get('payment_date') or item.get('created_at')
+        if not date_str:
+            return datetime.min
+        try:
+            return datetime.fromisoformat(date_str)
+        except:
+            try:
+                return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            except:
+                return datetime.min
+    combined.sort(key=lambda x: get_date(x), reverse=True)
+    total = len(combined)
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('limit', 20, type=int)
+    per_page = max(1, min(per_page, 100))
+    pages = (total + per_page - 1) // per_page
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = combined[start:end]
     return jsonify({
-        'payments': payments,
-        'total': pagination.total,
-        'pages': pagination.pages,
+        'payments': page_items,
+        'total': total,
+        'pages': pages,
         'current_page': page,
         'per_page': per_page
     })
@@ -2648,18 +2929,63 @@ def add_payment():
     
     try:
         data = request.get_json() or {}
-    except:
+    except Exception as ex:
+        logger.exception('Invalid JSON in add_payment')
         return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    # Log incoming request for debugging
+    try:
+        logger.info('add_payment request by user %s: %s', user.id, json.dumps(data, ensure_ascii=False))
+    except Exception:
+        logger.info('add_payment request: (unserializable data)')
     
     amount = data.get('amount')
     if not amount or int(amount) <= 0:
         return jsonify({"success": False, "error": "Amount is required and must be positive"}), 400
     
     payment_date_str = data.get('payment_date')
+    payment_time_str = data.get('payment_time')
     payment_date = parse_jalali_date(payment_date_str, end_of_day=False)
+    # اگر ساعت و دقیقه هم ارسال شده بود، به datetime اضافه کن
+    if payment_date and payment_time_str:
+        try:
+            hh, mm = map(int, payment_time_str.split(':'))
+            payment_date = payment_date.replace(hour=hh, minute=mm)
+        except Exception:
+            pass
     if not payment_date:
         payment_date = datetime.utcnow()
     
+    # Expense flow: create a Transaction with category='expense' (amount negative)
+    is_expense = bool(data.get('is_expense'))
+    if is_expense:
+        cost_type = (data.get('cost_type') or 'server_cost').strip()
+        server_id = data.get('server_id') or None
+        try:
+            amount_val = -abs(int(amount))
+        except Exception:
+            return jsonify({"success": False, "error": "Invalid amount"}), 400
+
+        tx = Transaction(
+            admin_id=user.id,
+            server_id=server_id,
+            amount=amount_val,
+            type=cost_type,
+            description=data.get('description', '').strip() or None,
+            category='expense',
+            created_at=payment_date
+        )
+        db.session.add(tx)
+        try:
+            db.session.commit()
+            logger.info('Expense saved as transaction id=%s admin=%s amount=%s server=%s type=%s', tx.id, tx.admin_id, tx.amount, server_id, cost_type)
+        except Exception:
+            logger.exception('Failed to commit expense transaction')
+            db.session.rollback()
+            return jsonify({"success": False, "error": "Failed to save expense"}), 500
+        return jsonify({"success": True, "id": tx.id, "mode": "expense"})
+
+    # Income (payment) flow
     payment = Payment(
         admin_id=user.id,
         card_id=data.get('card_id') or None,
@@ -2669,11 +2995,17 @@ def add_payment():
         payment_date=payment_date,
         client_email=data.get('client_email', '').strip() or None,
         description=data.get('description', '').strip() or None,
-        verified=False
+        verified=True if user.is_superadmin else False
     )
     
     db.session.add(payment)
-    db.session.commit()
+    try:
+        db.session.commit()
+        logger.info('Payment saved id=%s admin=%s amount=%s', payment.id, payment.admin_id, payment.amount)
+    except Exception as e:
+        logger.exception('Failed to commit payment')
+        db.session.rollback()
+        return jsonify({"success": False, "error": "Failed to save payment"}), 500
     
     return jsonify({"success": True, "payment": payment.to_dict()})
 
@@ -2745,93 +3077,117 @@ def get_finance_stats():
     if not user:
         return jsonify({"success": False, "error": "User not found"}), 401
     
-    # Use Transaction table - filter for transactions with card info (actual payments)
-    query = Transaction.query.filter(or_(
-        Transaction.card_id.isnot(None),
-        Transaction.sender_card.isnot(None),
-        Transaction.sender_card != ''
-    ))
-    
-    # Role-based filtering
-    if user.role == 'reseller':
-        query = query.filter(Transaction.admin_id == user.id)
-    else:
-        target_user_id = request.args.get('user_id', type=int)
-        if target_user_id:
-            query = query.filter(Transaction.admin_id == target_user_id)
-    
-    # Filter by card if specified
-    card_id = request.args.get('card_id', type=int)
-    if card_id:
-        query = query.filter(Transaction.card_id == card_id)
-    
     now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = today_start - timedelta(days=now.weekday())  # Monday
     month_start = today_start.replace(day=1)
-    
-    # Today's income (absolute value of negative amounts = purchases)
-    today_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
-        Transaction.id.in_(query.with_entities(Transaction.id)),
-        Transaction.created_at >= today_start,
-        Transaction.amount < 0  # Purchases are negative
-    ).scalar() or 0
-    
-    # This week's income
-    week_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
-        Transaction.id.in_(query.with_entities(Transaction.id)),
-        Transaction.created_at >= week_start,
-        Transaction.amount < 0
-    ).scalar() or 0
-    
-    # This month's income
-    month_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
-        Transaction.id.in_(query.with_entities(Transaction.id)),
-        Transaction.created_at >= month_start,
-        Transaction.amount < 0
-    ).scalar() or 0
-    
-    # Total income
-    total_income = db.session.query(func.sum(func.abs(Transaction.amount))).filter(
-        Transaction.id.in_(query.with_entities(Transaction.id)),
-        Transaction.amount < 0
-    ).scalar() or 0
-    
-    # Payment count
-    payment_count = query.filter(Transaction.amount < 0).count()
-    
-    # Income by card
-    income_by_card = []
-    if user.is_superadmin or user.role == 'reseller':
-        card_stats = db.session.query(
-            BankCard.id,
-            BankCard.label,
-            BankCard.bank_name,
-            func.sum(func.abs(Transaction.amount)).label('total')
-        ).join(Transaction, Transaction.card_id == BankCard.id).filter(
-            Transaction.id.in_(query.with_entities(Transaction.id)),
-            Transaction.amount < 0
-        ).group_by(BankCard.id).all()
-        
-        for card_id, label, bank_name, total in card_stats:
-            income_by_card.append({
-                'card_id': card_id,
-                'label': label,
-                'bank_name': bank_name,
-                'total': total or 0
-            })
-    
-    return jsonify({
-        'success': True,
-        'stats': {
-            'today': today_income,
-            'week': week_income,
-            'month': month_income,
-            'total': total_income,
-            'payment_count': payment_count,
-            'by_card': income_by_card
-        }
-    })
+
+    card_id = request.args.get('card_id', type=int)
+    target_user_id = request.args.get('user_id', type=int)
+
+    if user.role == 'reseller':
+        # Charge: مجموع تراکنش‌های مثبت (واریزها)
+        charge_query = Transaction.query.filter(Transaction.admin_id == user.id, Transaction.amount > 0)
+        usage_query = Transaction.query.filter(Transaction.admin_id == user.id, Transaction.amount < 0)
+        if card_id:
+            charge_query = charge_query.filter(Transaction.card_id == card_id)
+            usage_query = usage_query.filter(Transaction.card_id == card_id)
+
+        def sum_amount(q, start_time=None):
+            if start_time:
+                q = q.filter(Transaction.created_at >= start_time)
+            return db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(Transaction.id.in_(q.with_entities(Transaction.id))).scalar() or 0
+
+        today_charge = sum_amount(charge_query, today_start)
+        month_charge = sum_amount(charge_query, month_start)
+        total_charge = sum_amount(charge_query)
+
+        month_usage = abs(sum_amount(usage_query, month_start))
+        total_usage = abs(sum_amount(usage_query))
+
+        remain = total_charge - total_usage
+
+        return jsonify({
+            'success': True,
+            'stats': {
+                'today': today_charge,
+                'month': month_charge,
+                'month_expense': month_usage,
+                'total': remain,
+                'payment_count': charge_query.count(),
+                'total_charge': total_charge,
+                'total_usage': total_usage
+            }
+        })
+    else:
+        # Base query - filter only 'income' transactions for stats
+        query = Transaction.query.filter(Transaction.category == 'income')
+        if target_user_id:
+            query = query.filter(Transaction.admin_id == target_user_id)
+        if card_id:
+            query = query.filter(Transaction.card_id == card_id)
+
+        def sum_income(start_time=None):
+            q = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+                Transaction.id.in_(query.with_entities(Transaction.id))
+            )
+            if start_time:
+                q = q.filter(Transaction.created_at >= start_time)
+            return q.scalar() or 0
+
+        today_income = sum_income(today_start)
+        month_income = sum_income(month_start)
+        total_income = sum_income()
+
+        # For net profit: get expense transactions separately
+        expense_query = Transaction.query.filter(Transaction.category == 'expense')
+        if target_user_id:
+            expense_query = expense_query.filter(Transaction.admin_id == target_user_id)
+        if card_id:
+            expense_query = expense_query.filter(Transaction.card_id == card_id)
+
+        total_expense = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+            Transaction.id.in_(expense_query.with_entities(Transaction.id))
+        ).scalar() or 0
+
+        month_expense = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+            Transaction.id.in_(expense_query.with_entities(Transaction.id)),
+            Transaction.created_at >= month_start
+        ).scalar() or 0
+
+        payment_count = query.count()
+
+        income_by_card = []
+        if user.is_superadmin or user.role == 'reseller':
+            card_stats = db.session.query(
+                BankCard.id,
+                BankCard.label,
+                BankCard.bank_name,
+                func.sum(Transaction.amount).label('total')
+            ).join(Transaction, Transaction.card_id == BankCard.id).filter(
+                Transaction.id.in_(query.with_entities(Transaction.id)),
+                Transaction.category.in_(['income', 'expense'])
+            ).group_by(BankCard.id).all()
+
+            for card_id, label, bank_name, total in card_stats:
+                income_by_card.append({
+                    'card_id': card_id,
+                    'label': label,
+                    'bank_name': bank_name,
+                    'total': total or 0
+                })
+        return jsonify({
+            'success': True,
+            'stats': {
+                'today': today_income,
+                'month': month_income,
+                'month_expense': abs(month_expense),
+                'total': total_income,
+                'payment_count': payment_count,
+                'by_card': income_by_card,
+                'total_income': total_income,
+                'total_expense': total_expense
+            }
+        })
 
 
 @app.route('/s/<int:server_id>/<sub_id>')

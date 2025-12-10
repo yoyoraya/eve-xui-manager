@@ -14,6 +14,352 @@
 {% endblock %}
 
 {% block content %}
+<style>
+    /* Server Selection Styles */
+    .server-selection-wrapper {
+        width: 100%;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Checkbox Styling - Using project standard */
+    .checkbox-label {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        gap: 10px;
+        font-size: 0.95rem;
+        color: var(--text-primary);
+        position: relative;
+        padding-left: 0;
+        user-select: none;
+        margin: 0 !important; 
+        margin-bottom: 5px !important; 
+        min-height: 32px;
+        line-height: 1.5;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+        position: absolute;
+        opacity: 0;
+        cursor: pointer;
+        height: 0;
+        width: 0;
+    }
+
+    .checkmark {
+        position: relative;
+        display: inline-block;
+        vertical-align: middle;
+        height: 20px;
+        width: 20px;
+        background-color: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        transition: all 0.2s ease;
+        margin-right: 12px;
+    }
+
+    .checkbox-label:hover input ~ .checkmark {
+        border-color: var(--primary);
+    }
+
+    .checkbox-label input:checked ~ .checkmark {
+        background-color: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .checkmark:after {
+        content: "";
+        position: absolute;
+        display: none;
+    }
+
+    .checkbox-label input:checked ~ .checkmark:after {
+        display: block;
+    }
+
+    .checkbox-label .checkmark:after {
+        left: 7px;
+        top: 3px;
+        width: 4px;
+        height: 9px;
+        border: solid white;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+    }
+
+    /* Indeterminate State */
+    .checkbox-label input:indeterminate ~ .checkmark {
+        background-color: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .checkbox-label input:indeterminate ~ .checkmark:after {
+        display: block;
+        left: 5px;
+        top: 8px;
+        width: 8px;
+        height: 2px;
+        border: none;
+        background-color: white;
+        transform: none;
+    }
+
+    /* Header Area */
+    .select-all-container {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        padding-left: 26px;
+        border-bottom: 1px solid var(--border-color);
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    .select-all-container .checkbox-label {
+        margin-right: 12px;
+        margin-left: -4px;
+        padding-left: 0;
+    }
+
+    .server-list-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        margin-left: 0;
+        gap: 12px;
+    }
+
+    .meta-title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: var(--text-primary);
+    }
+
+    .count-pill {
+        background: #312e81;
+        color: #a5b4fc;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+
+    /* Accordion Styles */
+    .server-accordion {
+        border-bottom: 1px solid var(--border-color);
+        background: var(--bg-card);
+    }
+
+    .server-accordion:last-child {
+        border-bottom: none;
+    }
+
+    .server-accordion-header {
+        padding: 16px;
+        padding-left: 30px;
+        display: flex;
+        align-items: center;
+        gap: 0;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .server-accordion-header .checkbox-label {
+        min-width: fit-content;
+        margin-right: 12px;
+        margin-left: -4px;
+        padding-left: 0;
+    }
+
+    .server-accordion-header:hover {
+        background-color: rgba(255, 255, 255, 0.03);
+    }
+
+    /* Main Content Layout within Header */
+    .header-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-grow: 1;
+        margin-left: 6px;
+        gap: 12px;
+    }
+
+    .server-info-block {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .server-name {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 2px;
+    }
+
+    .server-host {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        margin-top: 0;
+        font-family: monospace;
+    }
+
+    .chevron {
+        color: var(--text-secondary);
+        transition: transform 0.3s ease;
+        font-size: 1.2rem;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 12px;
+    }
+
+    .server-accordion.open .chevron {
+        transform: rotate(180deg);
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        background-color: var(--success);
+        border-radius: 50%;
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+    }
+    
+    .status-dot.disabled {
+        background-color: var(--text-secondary);
+        box-shadow: none;
+    }
+
+    /* Inbound List */
+    .inbound-list {
+        display: none;
+        background-color: rgba(0, 0, 0, 0.3);
+        padding: 8px 16px 16px 16px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .server-accordion.open .inbound-list {
+        display: block;
+        animation: fadeIn 0.2s ease;
+    }
+
+    .inbound-list-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 15px;
+        margin-bottom: 4px;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-secondary);
+        /* padding-left removed as requested */
+    }
+
+    .inbound-list-header .checkbox-label {
+        min-width: fit-content;
+        margin-right: 12px;
+        margin-left: -6px;
+        padding-left: 0;
+    }
+
+    .inbound-header-text {
+        font-size: 0.85rem;
+        margin-left: 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        gap: 12px;
+    }
+
+    .inbound-item {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px;
+        padding: 10px 15px;
+        margin-top: 6px;
+        border-radius: 8px;
+        background: var(--bg-card);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 1px solid transparent;
+        white-space: nowrap;
+        flex-wrap: nowrap;
+        padding-left: 44px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .inbound-item.checkbox-label {
+        padding-left: 0;
+    }
+
+    .inbound-item:hover {
+        border-color: var(--border-color);
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .inbound-item .checkmark {
+        margin-left: 12px;
+    }
+
+    .inbound-details {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-left: 0;
+        flex-grow: 1;
+        min-height: 32px;
+        line-height: 1.5;
+        min-width: 0;
+        justify-content: space-between;
+    }
+
+    .inbound-name {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: var(--text-primary);
+        min-width: 60px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: inline-block;
+            max-width: calc(100% - 140px);
+    }
+
+    .protocol-badge {
+        background: #334155;
+        color: #cbd5e1;
+        font-size: 0.7rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        margin-left: 8px;
+    }
+
+    .port-number {
+        font-family: monospace;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        margin-left: auto;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-5px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+</style>
 <div class="admins-section">
     <div class="admins-grid" id="admins-container">
     </div>
@@ -63,9 +409,26 @@
                 </div>
                 
                 <div class="form-group">
-                    <label>Allowed Servers (IDs separated by comma or *)</label>
-                    <input type="text" id="admin-allowed-servers" placeholder="e.g. 1, 2 or *" value="*">
-                    <small style="color: var(--text-secondary); font-size: 0.7rem;">Use * for all servers</small>
+                    <label>Allowed Servers</label>
+                    <div class="server-selection-wrapper">
+                        <!-- Main Header -->
+                        <div class="select-all-container">
+                            <!-- Global Checkbox on LEFT -->
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="server-all" onchange="toggleAllServers(this)">
+                                <span class="checkmark"></span>
+                            </label>
+                            <div class="server-list-meta">
+                                <span class="meta-title">Allowed Servers</span>
+                                <span class="count-pill" id="global-counter">0 / 0</span>
+                            </div>
+                        </div>
+
+                        <div id="server-list">
+                            <!-- Servers will be loaded here -->
+                        </div>
+                    </div>
+                    <input type="hidden" id="admin-allowed-servers">
                 </div>
 
                 <div class="form-group">
@@ -134,8 +497,16 @@
 {% block scripts %}
 <script>
     let admins = [];
+    let allServers = [];
+    let serverInbounds = {};
+    let serversLoaded = false;
+    let inboundsLoaded = false;
     
-    document.addEventListener('DOMContentLoaded', loadAdmins);
+    document.addEventListener('DOMContentLoaded', () => {
+        loadAdmins();
+        loadServers();
+        loadInbounds();
+    });
     
     function toggleResellerFields() {
         const role = document.getElementById('admin-role').value;
@@ -145,6 +516,315 @@
         } else {
             fields.style.display = 'none';
         }
+    }
+
+    async function loadServers() {
+        try {
+            const response = await fetch('/api/servers');
+            allServers = await response.json();
+            serversLoaded = true;
+            renderServerList();
+        } catch (error) {
+            console.error('Error loading servers:', error);
+        }
+    }
+
+    async function loadInbounds() {
+        try {
+            const response = await fetch('/api/refresh');
+            const data = await response.json();
+            if (data && data.inbounds) {
+                serverInbounds = data.inbounds.reduce((acc, inbound) => {
+                    const sid = inbound.server_id;
+                    if (!acc[sid]) acc[sid] = [];
+                    acc[sid].push(inbound);
+                    return acc;
+                }, {});
+                inboundsLoaded = true;
+                renderServerList();
+            }
+        } catch (error) {
+            console.error('Error loading inbounds:', error);
+        }
+    }
+
+    function renderServerList() {
+        const list = document.getElementById('server-list');
+        if (!serversLoaded) {
+            list.innerHTML = '<div class="inbound-empty">Loading servers...</div>';
+            return;
+        }
+
+        list.innerHTML = allServers.map(s => {
+            const statusClass = s.enabled ? '' : 'disabled';
+            const inbounds = serverInbounds[s.id] || [];
+
+            const inboundItems = inbounds.length > 0 ? inbounds.map(inb => {
+                return `
+                    <label class="inbound-item checkbox-label">
+                        <input type="checkbox" class="inbound-checkbox" data-server="${s.id}" value="${inb.id}" onchange="updateCounts(${s.id})">
+                        <span class="checkmark"></span>
+                        <div class="inbound-details">
+                            <span class="inbound-name">${inb.remark || 'Inbound'}</span>
+                            <span class="protocol-badge">${inb.protocol}</span>
+                            <span class="port-number">:${inb.port}</span>
+                        </div>
+                    </label>
+                `;
+            }).join('') : '<div class="inbound-empty">No inbounds found</div>';
+
+            return `
+                <div class="server-accordion ${s.id === allServers[0].id ? 'open' : ''}" id="server-${s.id}" data-server-id="${s.id}">
+                    <div class="server-accordion-header" onclick="toggleServerAccordion(event, ${s.id})">
+                        <!-- Server Checkbox on LEFT -->
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" class="server-checkbox" value="${s.id}" data-server="${s.id}" onchange="toggleServerInbounds(${s.id}, this)">
+                            <span class="checkmark"></span>
+                        </label>
+
+                        <div class="header-content">
+                            <div class="server-info-block">
+                                <span class="server-name">${s.name}</span>
+                                <span class="server-host">${s.host}</span>
+                            </div>
+                            <div style="display: flex; align-items: center;">
+                                <span class="status-dot ${statusClass}" title="${s.enabled ? 'Online' : 'Disabled'}"></span>
+                                <span class="chevron">▾</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="inbound-list" id="inbound-list-${s.id}">
+                        <!-- Inner Select All -->
+                        <div class="inbound-list-header">
+                            <label class="checkbox-label">
+                                <input type="checkbox" class="inbound-select-all" data-server="${s.id}" onchange="toggleAllInboundsInServer(${s.id}, this)">
+                                <span class="checkmark"></span>
+                            </label>
+                            <div class="inbound-header-text">
+                                <span>Select All Inbounds</span>
+                                <span class="count-pill inbound-counter" id="inbound-count-${s.id}">0 / 0</span>
+                            </div>
+                        </div>
+                        ${inboundItems}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        syncSelectionsToUi();
+        // Initial count update for all servers
+        allServers.forEach(s => updateCounts(s.id));
+    }
+
+    function normalizeAllowedInput(raw) {
+        if (!raw) return [];
+        if (raw === '*') return '*';
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            if (trimmed === '*') return '*';
+            try {
+                const parsed = JSON.parse(trimmed);
+                return normalizeAllowedInput(parsed);
+            } catch (e) {
+                const ids = trimmed.split(',').map(v => parseInt(v.trim())).filter(v => !isNaN(v));
+                return ids.map(id => ({ server_id: id, inbounds: '*' }));
+            }
+        }
+
+        const entries = Array.isArray(raw) ? raw : [raw];
+        const merged = new Map();
+
+        entries.forEach(item => {
+            let serverId;
+            let inboundRules = '*';
+
+            if (typeof item === 'number' || (typeof item === 'string' && item.trim() !== '*')) {
+                serverId = parseInt(item);
+                inboundRules = '*';
+            } else if (item && typeof item === 'object') {
+                serverId = parseInt(item.server_id || item.server || item.id);
+                const inb = item.inbounds;
+                if (Array.isArray(inb)) {
+                    inboundRules = inb.map(v => parseInt(v)).filter(v => !isNaN(v));
+                } else if (inb === '*' || (typeof inb === 'string' && inb.trim() === '*') || typeof inb === 'undefined') {
+                    inboundRules = '*';
+                } else {
+                    const num = parseInt(inb);
+                    inboundRules = isNaN(num) ? [] : [num];
+                }
+            }
+
+            if (!serverId || isNaN(serverId)) return;
+
+            if (!merged.has(serverId)) {
+                merged.set(serverId, inboundRules === '*' ? '*' : new Set(inboundRules));
+            } else {
+                const existing = merged.get(serverId);
+                if (existing === '*' || inboundRules === '*') {
+                    merged.set(serverId, '*');
+                } else {
+                    inboundRules.forEach(v => merged.get(serverId).add(v));
+                }
+            }
+        });
+
+        return Array.from(merged.entries()).map(([sid, inb]) => ({
+            server_id: sid,
+            inbounds: inb === '*' ? '*' : Array.from(inb)
+        }));
+    }
+
+    function stringifyAllowedForInput(value) {
+        if (value === '*') return '*';
+        try {
+            return JSON.stringify(value || []);
+        } catch (e) {
+            return '[]';
+        }
+    }
+
+    function syncSelectionsToUi() {
+        const raw = document.getElementById('admin-allowed-servers').value.trim();
+        const normalized = normalizeAllowedInput(raw);
+        applyAllowedServers(normalized);
+    }
+
+    function toggleServerAccordion(event, serverId) {
+        // Prevent toggle if clicking directly on checkbox container
+        if (event.target.closest('.checkbox-container')) return;
+        
+        const accordion = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!accordion) return;
+        accordion.classList.toggle('open');
+    }
+
+    function toggleAllInboundsInServer(serverId, sourceCheckbox) {
+        const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!container) return;
+        const checkboxes = container.querySelectorAll('.inbound-checkbox');
+        
+        checkboxes.forEach(cb => {
+            cb.checked = sourceCheckbox.checked;
+        });
+        updateCounts(serverId);
+    }
+
+    function toggleServerInbounds(serverId, sourceCheckbox) {
+        const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!container) return;
+        const selectAllInbound = container.querySelector('.inbound-select-all');
+        
+        // Sync the "Select All" inside the list
+        if (selectAllInbound) selectAllInbound.checked = sourceCheckbox.checked;
+        
+        // Trigger the select all logic
+        toggleAllInboundsInServer(serverId, sourceCheckbox);
+    }
+
+    function updateCounts(serverId) {
+        const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!container) return;
+
+        const checkboxes = container.querySelectorAll('.inbound-checkbox');
+        const checked = container.querySelectorAll('.inbound-checkbox:checked');
+        
+        // Update Counter Text
+        const counterEl = container.querySelector('.inbound-counter');
+        if(counterEl) {
+            counterEl.innerText = `${checked.length} / ${checkboxes.length}`;
+        }
+
+        // Handle Indeterminate state for "Select All" inside
+        const selectAllInbound = container.querySelector('.inbound-select-all');
+        const serverMainCheckbox = container.querySelector('.server-checkbox');
+
+        if (checked.length === 0) {
+            if(selectAllInbound) {
+                selectAllInbound.checked = false;
+                selectAllInbound.indeterminate = false;
+            }
+            if(serverMainCheckbox) {
+                serverMainCheckbox.checked = false;
+                serverMainCheckbox.indeterminate = false;
+            }
+        } else if (checked.length === checkboxes.length && checkboxes.length > 0) {
+            if(selectAllInbound) {
+                selectAllInbound.checked = true;
+                selectAllInbound.indeterminate = false;
+            }
+            if(serverMainCheckbox) {
+                serverMainCheckbox.checked = true;
+                serverMainCheckbox.indeterminate = false;
+            }
+        } else {
+            if(selectAllInbound) {
+                selectAllInbound.checked = false;
+                selectAllInbound.indeterminate = true;
+            }
+            if(serverMainCheckbox) {
+                serverMainCheckbox.checked = false;
+                serverMainCheckbox.indeterminate = true;
+            }
+        }
+        
+        updateGlobalSelectionState();
+    }
+
+    function toggleAllServers(sourceCheckbox) {
+        const allServerChecks = document.querySelectorAll('.server-checkbox');
+        allServerChecks.forEach(cb => {
+            cb.checked = sourceCheckbox.checked;
+            const serverId = cb.dataset.server;
+            toggleServerInbounds(serverId, cb);
+        });
+    }
+
+    function updateGlobalSelectionState() {
+        const serverCheckboxes = document.querySelectorAll('.server-checkbox');
+        const checkedServers = Array.from(serverCheckboxes).filter(cb => cb.checked);
+        const indeterminateServers = Array.from(serverCheckboxes).filter(cb => cb.indeterminate);
+        
+        const allCheckbox = document.getElementById('server-all');
+        const globalCounter = document.getElementById('global-counter');
+        
+        if (globalCounter) {
+            globalCounter.innerText = `${checkedServers.length} / ${serverCheckboxes.length}`;
+        }
+
+        // Build payload with per-server inbound selections
+        const payload = [];
+        serverCheckboxes.forEach(cb => {
+            const serverId = parseInt(cb.dataset.server);
+            const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+            if (!container) return;
+            const inboundCheckboxes = container.querySelectorAll('.inbound-checkbox');
+            const checkedInbounds = container.querySelectorAll('.inbound-checkbox:checked');
+            if (checkedInbounds.length === 0) return;
+
+            if (inboundCheckboxes.length > 0 && checkedInbounds.length === inboundCheckboxes.length) {
+                payload.push({ server_id: serverId, inbounds: '*' });
+            } else {
+                const ids = Array.from(checkedInbounds)
+                    .map(inb => parseInt(inb.value))
+                    .filter(v => !isNaN(v));
+                if (ids.length > 0) {
+                    payload.push({ server_id: serverId, inbounds: Array.from(new Set(ids)) });
+                }
+            }
+        });
+
+        const allFullySelected = payload.length === serverCheckboxes.length && payload.length > 0 && payload.every(p => p.inbounds === '*');
+
+        if (checkedServers.length === serverCheckboxes.length && serverCheckboxes.length > 0 && indeterminateServers.length === 0) {
+            allCheckbox.checked = true;
+            allCheckbox.indeterminate = false;
+        } else {
+            allCheckbox.checked = false;
+            allCheckbox.indeterminate = (checkedServers.length > 0 || indeterminateServers.length > 0);
+        }
+
+        document.getElementById('admin-allowed-servers').value = allFullySelected ? '*' : stringifyAllowedForInput(payload);
     }
 
     async function loadAdmins() {
@@ -270,6 +950,8 @@
         document.getElementById('admin-cost-gb').value = '';
         document.getElementById('admin-enabled').checked = true;
         
+        resetServerSelections(true);
+        
         toggleResellerFields();
         document.getElementById('admin-modal').classList.remove('hidden');
     }
@@ -286,12 +968,12 @@
         document.getElementById('admin-role').value = admin.role || 'admin';
         document.getElementById('admin-telegram-id').value = admin.telegram_id || '';
         document.getElementById('admin-credit').value = (admin.credit || 0).toLocaleString();
-        
-        let servers = admin.allowed_servers;
-        if (Array.isArray(servers)) {
-            servers = servers.length > 0 ? servers.join(', ') : '*';
+        const normalizedAllowed = normalizeAllowedInput(admin.allowed_servers);
+        applyAllowedServers(normalizedAllowed);
+        const allowedHidden = document.getElementById('admin-allowed-servers');
+        if (allowedHidden) {
+            allowedHidden.value = normalizedAllowed === '*' ? '*' : stringifyAllowedForInput(normalizedAllowed);
         }
-        document.getElementById('admin-allowed-servers').value = servers || '*';
         
         document.getElementById('admin-discount').value = admin.discount_percent || 0;
         document.getElementById('admin-cost-day').value = admin.custom_cost_per_day ? admin.custom_cost_per_day.toLocaleString() : '';
@@ -306,6 +988,55 @@
     function closeAdminModal() {
         document.getElementById('admin-modal').classList.add('hidden');
     }
+
+    function resetServerSelections(selectAll = false) {
+        const serverAll = document.getElementById('server-all');
+        if (serverAll) serverAll.checked = selectAll;
+        document.querySelectorAll('.server-checkbox').forEach(cb => cb.checked = selectAll);
+        document.querySelectorAll('.inbound-checkbox').forEach(cb => cb.checked = selectAll);
+        document.querySelectorAll('.inbound-all-checkbox').forEach(cb => cb.checked = selectAll);
+        // Update all counts and selection states
+        if (typeof allServers !== 'undefined') {
+            allServers.forEach(s => updateCounts(s.id));
+        }
+        updateGlobalSelectionState();
+    }
+
+    function applyAllowedServers(rawAllowed) {
+        const allowed = normalizeAllowedInput(rawAllowed);
+        resetServerSelections(false);
+
+        if (allowed === '*') {
+            resetServerSelections(true);
+            return;
+        }
+
+        allowed.forEach(rule => {
+            const serverId = rule.server_id;
+            const inbounds = rule.inbounds;
+            const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+            if (!container) return;
+
+            const inboundCheckboxes = container.querySelectorAll('.inbound-checkbox');
+            if (inbounds === '*' || (Array.isArray(inbounds) && inbounds.length === 0)) {
+                inboundCheckboxes.forEach(cb => cb.checked = true);
+            } else {
+                const inboundSet = new Set((inbounds || []).map(v => parseInt(v)).filter(v => !isNaN(v)));
+                inboundCheckboxes.forEach(cb => {
+                    const inbId = parseInt(cb.value);
+                    if (!isNaN(inbId) && inboundSet.has(inbId)) {
+                        cb.checked = true;
+                    }
+                });
+            }
+            updateCounts(serverId);
+        });
+
+        if (typeof allServers !== 'undefined') {
+            allServers.forEach(s => updateCounts(s.id));
+        }
+        updateGlobalSelectionState();
+    }
     
     async function saveAdmin() {
         const id = document.getElementById('edit-admin-id').value;
@@ -316,7 +1047,12 @@
         if (allowedServersRaw === '*') {
             allowedServers = '*';
         } else {
-            allowedServers = allowedServersRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+            try {
+                allowedServers = JSON.parse(allowedServersRaw || '[]');
+            } catch (e) {
+                allowedServers = [];
+            }
+            allowedServers = normalizeAllowedInput(allowedServers);
         }
 
         const creditRaw = document.getElementById('admin-credit').value.replace(/,/g, '');

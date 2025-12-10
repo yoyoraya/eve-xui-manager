@@ -1364,6 +1364,23 @@ input:checked + .slider:before {
     }
 }
 
+/* Responsive: make header action buttons full width on small screens */
+@media (max-width: 600px) {
+    .server-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    .server-actions {
+        display: flex;
+        justify-content: flex-end;
+    }
+    .server-actions .btn {
+        width: 100%;
+        justify-content: center; /* center label */
+    }
+}
+
 @keyframes slideDown {
     from { opacity: 0; transform: translateY(-10px); }
     to { opacity: 1; transform: translateY(0); }
@@ -1672,7 +1689,7 @@ input:checked + .slider:before {
     margin-bottom: 16px;
 }
 
-.form-group label {
+.form-group label:not(.checkbox-label) {
     display: block;
     font-size: 0.8rem;
     color: var(--text-secondary);
@@ -1798,6 +1815,22 @@ select optgroup {
     gap: 12px;
     margin-top: 20px;
     justify-content: flex-end;
+}
+
+/* Modal specific actions: add padding so buttons don't stick to modal edges */
+.modal .form-actions {
+    padding: 12px 24px;
+    border-top: 1px solid var(--border-color);
+    margin-top: 0; /* handled by padding */
+    justify-content: flex-end;
+}
+
+/* Ensure inside small modal the buttons don't stick to right/bottom edges */
+@media (max-width: 600px) {
+    .modal .form-actions {
+        padding: 12px; /* more compact */
+        justify-content: center; /* center on mobile */
+    }
 }
 
 .server-list-section {

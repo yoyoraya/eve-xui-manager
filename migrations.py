@@ -8,8 +8,9 @@ import sqlite3
 import os
 import sys
 
-# مسیر دیتابیس (معمولا در پوشه instance است)
+# Path to DB (usually in instance)
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'servers.db')
+
 
 def fix_database():
     if not os.path.exists(DB_PATH):
@@ -22,27 +23,43 @@ def fix_database():
     c = conn.cursor()
 
     try:
-        # 1. افزودن ستون telegram_id به جدول admins
-        try:
-            c.execute("ALTER TABLE admins ADD COLUMN telegram_id VARCHAR(100)")
-            print("✅ Added 'telegram_id' to admins table.")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" in str(e).lower():
-                print("ℹ️  'telegram_id' already exists in admins.")
-            else:
-                print(f"⚠️  Error adding telegram_id: {e}")
+        # helper
+        def column_exists(table, column):
+            try:
+                c.execute(f"PRAGMA table_info({table})")
+                return any(row[1] == column for row in c.fetchall())
+            except Exception:
+                return False
 
-        # 2. افزودن ستون os_type به جدول sub_app_configs (مشکل اصلی کرش شما)
-        try:
-            c.execute("ALTER TABLE sub_app_configs ADD COLUMN os_type VARCHAR(20) DEFAULT 'android'")
-            print("✅ Added 'os_type' to sub_app_configs table.")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" in str(e).lower():
-                print("ℹ️  'os_type' already exists in sub_app_configs.")
+        # 1) Ensure admin columns
+        admin_columns = [
+            ('telegram_id', 'VARCHAR(100)'),
+            ('discount_percent', 'INTEGER DEFAULT 0'),
+            ('custom_cost_per_day', 'INTEGER'),
+            ('custom_cost_per_gb', 'INTEGER')
+        ]
+        c.execute("PRAGMA table_info(admins)")
+        for col_name, col_type in admin_columns:
+            if not column_exists('admins', col_name):
+                try:
+                    c.execute(f"ALTER TABLE admins ADD COLUMN {col_name} {col_type}")
+                    print(f"✅ Added '{col_name}' to admins table.")
+                except Exception as e:
+                    print(f"⚠️  Error adding {col_name}: {e}")
             else:
+                print(f"ℹ️  '{col_name}' already exists in admins.")
+
+        # 2) Ensure os_type on sub_app_configs
+        if not column_exists('sub_app_configs', 'os_type'):
+            try:
+                c.execute("ALTER TABLE sub_app_configs ADD COLUMN os_type VARCHAR(20) DEFAULT 'android'")
+                print("✅ Added 'os_type' to sub_app_configs table.")
+            except Exception as e:
                 print(f"⚠️  Error adding os_type: {e}")
+        else:
+            print("ℹ️  'os_type' already exists in sub_app_configs.")
 
-        # 3. ساخت جدول faqs (اگر وجود ندارد)
+        # 3) Create faqs table if missing
         try:
             c.execute('''
             CREATE TABLE IF NOT EXISTS faqs (
@@ -60,7 +77,7 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating faqs table: {e}")
 
-        # 4. ساخت جدول system_settings (اگر وجود ندارد)
+        # 4) Create system_settings table if missing
         try:
             c.execute('''
             CREATE TABLE IF NOT EXISTS system_settings (
@@ -72,37 +89,7 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating system_settings table: {e}")
 
-        # 5. افزودن ستون server_id به جدول transactions
-        try:
-            c.execute("ALTER TABLE transactions ADD COLUMN server_id INTEGER REFERENCES servers(id)")
-            print("✅ Added 'server_id' to transactions table.")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" in str(e).lower():
-                print("ℹ️  'server_id' already exists in transactions.")
-            else:
-                print(f"⚠️  Error adding server_id: {e}")
-
-        # 6. افزودن ستون card_id به جدول transactions
-        try:
-            c.execute("ALTER TABLE transactions ADD COLUMN card_id INTEGER REFERENCES bank_cards(id)")
-            print("✅ Added 'card_id' to transactions table.")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" in str(e).lower():
-                print("ℹ️  'card_id' already exists in transactions.")
-            else:
-                print(f"⚠️  Error adding card_id: {e}")
-
-        # 7. افزودن ستون sender_card به جدول transactions
-        try:
-            c.execute("ALTER TABLE transactions ADD COLUMN sender_card VARCHAR(32)")
-            print("✅ Added 'sender_card' to transactions table.")
-        except sqlite3.OperationalError as e:
-            if "duplicate column" in str(e).lower():
-                print("ℹ️  'sender_card' already exists in transactions.")
-            else:
-                print(f"⚠️  Error adding sender_card: {e}")
-
-        # 8. ساخت جدول payments (پرداخت‌های دریافتی)
+        # 5) Create payments table if missing
         try:
             c.execute('''
             CREATE TABLE IF NOT EXISTS payments (
@@ -123,6 +110,24 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating payments table: {e}")
 
+        # 6) Ensure transactions columns
+        transaction_columns = [
+            ('server_id', 'INTEGER REFERENCES servers(id)'),
+            ('card_id', 'INTEGER REFERENCES bank_cards(id)'),
+            ('sender_card', 'VARCHAR(32)'),
+            ('client_email', 'VARCHAR(100)'),
+            ('category', "VARCHAR(16) NOT NULL DEFAULT 'usage'")
+        ]
+        for col_name, col_type in transaction_columns:
+            if not column_exists('transactions', col_name):
+                try:
+                    c.execute(f"ALTER TABLE transactions ADD COLUMN {col_name} {col_type}")
+                    print(f"✅ Added '{col_name}' to transactions table.")
+                except Exception as e:
+                    print(f"⚠️  Error adding {col_name}: {e}")
+            else:
+                print(f"ℹ️  '{col_name}' already exists in transactions.")
+
         conn.commit()
         conn.close()
         print("\n🚀 Database repair completed! You can now restart your app.")
@@ -130,9 +135,13 @@ def fix_database():
 
     except Exception as e:
         print(f"\n❌ Migration error: {e}")
-        conn.rollback()
-        conn.close()
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:
+            pass
         return False
+
 
 if __name__ == "__main__":
     print("\n🔄 Eve X-UI Manager - Database Migration")
