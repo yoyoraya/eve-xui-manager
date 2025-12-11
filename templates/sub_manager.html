@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import 'components/dropdown_macro.html' as elcomp %}
 {% block title %}Sub Manager{% endblock %}
 {% block page_title %}Subscription Page Manager{% endblock %}
 
@@ -226,12 +225,11 @@
             <div style="display: flex; gap: 15px; align-items: flex-end; margin-bottom: 20px;">
                 <div class="form-group" style="flex: 0 0 150px;">
                     <label style="color: var(--primary); font-weight: bold; margin-bottom: 5px; display: block;">OS Type</label>
-                    <select id="edit-os-type" class="form-input" style="display:none;">
+                    <select id="edit-os-type" class="form-input">
                         <option value="android">Android</option>
                         <option value="ios">iOS</option>
                         <option value="windows">Windows</option>
                     </select>
-                    {{ elcomp.el_dropdown_for_select('edit-os-type') }}
                 </div>
 
                 <div class="form-group" style="flex: 1;">

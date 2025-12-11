@@ -2,7 +2,6 @@
 
 {% block title %}Servers - Eve Manager{% endblock %}
 {% block page_title %}Server Management{% endblock %}
-{% import 'components/dropdown_macro.html' as elcomp %}
 
 {% block header_actions %}
 {% if is_superadmin %}
@@ -64,12 +63,11 @@
 
             <div class="form-group">
                 <label>Panel Type</label>
-                <select id="server-panel-type" class="form-select" style="display:none;">
+                <select id="server-panel-type" class="form-select">
                     <option value="auto">Auto Detect</option>
                     <option value="sanaei">3X-UI (Sanaei)</option>
                     <option value="alireza">X-UI (Alireza)</option>
                 </select>
-                {{ elcomp.el_dropdown_for_select('server-panel-type') }}
             </div>
 
             <label class="form-group form-toggle-item" style="cursor: pointer;">
