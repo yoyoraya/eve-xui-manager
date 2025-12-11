@@ -941,8 +941,10 @@
                                                 : `<span class="client-status inactive">Disabled</span>`}
                                         </td>
                                         <td>
-                                            <span class="expiry-badge ${getExpiryClass(client.expiryType)}">${client.expiryTime}</span>
-                                            ${client.expiryTimestamp ? `<span style=\"color: var(--text-secondary); font-size: 0.65rem; direction: rtl; display: inline-block; text-align: right; margin-right: 4px;\">${formatTehranTime(client.expiryTimestamp)}</span>` : ''}
+                                            <span class="expiry-badge ${getExpiryClass(client.expiryType)}">
+                                                <span class="expiry-time">${client.expiryTime}</span>
+                                                ${client.expiryTimestamp ? `<span class=\"expiry-time\">${formatTehranTime(client.expiryTimestamp)}</span>` : ''}
+                                            </span>
                                         </td>
                                         <td class="traffic-cell">
                                             <div class="traffic-combined-cell">

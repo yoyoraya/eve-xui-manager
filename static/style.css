@@ -1,3 +1,6 @@
+.expiry-badge, .expiry-time {
+    font-size: 0.7rem !important;
+}
 :root {
     --primary: #6366f1;
     --primary-dark: #4f46e5;
@@ -2650,7 +2653,7 @@ select optgroup {
     }
     
     .expiry-badge {
-        font-size: 0.6rem;
+        font-size: 0.7rem;
         padding: 3px 6px;
     }
     
