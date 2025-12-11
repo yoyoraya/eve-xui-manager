@@ -306,6 +306,7 @@ User=${APP_USER}
 Group=${APP_USER}
 WorkingDirectory=${APP_DIR}
 Environment="PATH=${APP_DIR}/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=${ENV_FILE}
 ExecStart=${APP_DIR}/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:${APP_PORT} app:app
 Restart=always
 
