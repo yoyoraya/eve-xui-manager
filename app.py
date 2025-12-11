@@ -592,9 +592,9 @@ def build_panel_url(host, template, replacements):
         endpoint = endpoint.replace(f":{key}", safe_value).replace(f"{{{key}}}", safe_value)
     if endpoint.startswith('http://') or endpoint.startswith('https://'):
         return endpoint
-    host_clean = host.rstrip('/')
+    base, webpath = extract_base_and_webpath(host)
     endpoint_clean = endpoint if endpoint.startswith('/') else f"/{endpoint}"
-    return f"{host_clean}{endpoint_clean}"
+    return f"{base}{webpath}{endpoint_clean}"
 
 with app.app_context():
     db.create_all()
@@ -1164,10 +1164,22 @@ def get_accessible_servers(user, include_disabled=False):
         return query.filter(Server.id.in_(server_ids)).all()
     return query.all()
 
+def extract_base_and_webpath(host_url):
+    """Extract base URL and webpath from panel URL.
+    Example: http://1.2.3.4:8080/webpath/ -> (http://1.2.3.4:8080, /webpath)
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(host_url.rstrip('/'))
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    webpath = parsed.path.rstrip('/') if parsed.path and parsed.path != '/' else ''
+    return base, webpath
+
 def get_xui_session(server):
     session_obj = requests.Session()
     try:
-        login_resp = session_obj.post(f"{server.host}/login", data={"username": server.username, "password": server.password}, verify=False, timeout=10)
+        base, webpath = extract_base_and_webpath(server.host)
+        login_url = f"{base}{webpath}/login"
+        login_resp = session_obj.post(login_url, data={"username": server.username, "password": server.password}, verify=False, timeout=10)
         if login_resp.status_code == 200 and login_resp.json().get('success'):
             return session_obj, None
         return None, f"Login failed: {login_resp.status_code}"
@@ -1175,6 +1187,7 @@ def get_xui_session(server):
         return None, f"Error: {str(e)}"
 
 def fetch_inbounds(session_obj, host, panel_type='auto'):
+    base, webpath = extract_base_and_webpath(host)
     panel_api = get_panel_api(panel_type)
     endpoints = []
     if panel_api and panel_api.inbounds_list:
@@ -1185,7 +1198,7 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
         if not ep:
             continue
         try:
-            url = ep if ep.startswith('http') else f"{host}{ep}"
+            url = ep if ep.startswith('http') else f"{base}{webpath}{ep}"
             if '/xui/' in ep.lower() and 'api' in ep.lower():
                 resp = session_obj.get(url, verify=False, timeout=10)
             elif '/xui/' in ep.lower():
@@ -2415,10 +2428,11 @@ def add_client(server_id, inbound_id):
             "reset": 0
         }
         
+        base, webpath = extract_base_and_webpath(server.host)
         if server.panel_type == 'alireza':
-             get_url = f"{server.host}/xui/inbound/get/{inbound_id}"
+             get_url = f"{base}{webpath}/xui/inbound/get/{inbound_id}"
         else:
-             get_url = f"{server.host}/panel/api/inbounds/get/{inbound_id}"
+             get_url = f"{base}{webpath}/panel/api/inbounds/get/{inbound_id}"
              
         get_resp = session_obj.get(get_url, verify=False, timeout=10)
         if get_resp.status_code != 200: raise Exception("Failed to fetch inbound data from panel")
@@ -2437,9 +2451,9 @@ def add_client(server_id, inbound_id):
         update_data['settings'] = json.dumps(settings)
         
         if server.panel_type == 'alireza':
-            up_url = f"{server.host}/xui/inbound/update/{inbound_id}"
+            up_url = f"{base}{webpath}/xui/inbound/update/{inbound_id}"
         else:
-            up_url = f"{server.host}/panel/api/inbounds/update/{inbound_id}"
+            up_url = f"{base}{webpath}/panel/api/inbounds/update/{inbound_id}"
             
         up_resp = session_obj.post(up_url, json=update_data, verify=False, timeout=10)
         
