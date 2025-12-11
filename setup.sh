@@ -142,10 +142,21 @@ ensure_python_pkg() {
         return
     fi
     print_warning "python${PYTHON_VERSION} not found, installing..."
-    apt-get install -y -qq software-properties-common
-    add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 || true
-    apt-get update -qq
-    apt-get install -y -qq "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"
+    
+    # Install prerequisites
+    apt-get install -y software-properties-common
+    
+    # Add PPA
+    print_warning "Adding deadsnakes PPA..."
+    add-apt-repository -y ppa:deadsnakes/ppa
+    
+    # Update package lists
+    print_warning "Updating package lists..."
+    apt-get update
+    
+    # Install Python
+    print_warning "Installing Python ${PYTHON_VERSION}..."
+    apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"
 }
 
 # -------------------- Installation Steps -------------------
