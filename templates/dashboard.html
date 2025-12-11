@@ -997,7 +997,7 @@
                                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                                     </svg>
                                                 </button>` : ''}
-                                                <button class="action-btn danger" onclick="openDeleteClientModal(${client.server_id}, '${client.inbound_id}', '${client.email}', '${client.id}', ${client.enable}, '${client.expiryTime}', '${client.up}', '${client.down}', '${client.totalGB_formatted}', '${client.remaining_formatted}')" title="Delete Client">
+                                                <button class="action-btn danger" onclick="openDeleteClientModal(${client.server_id}, '${client.inbound_id}', '${client.email}', '${client.id}', ${client.enable}, '${client.expiryTime}', ${client.expiryTimestamp || 0}, '${client.up}', '${client.down}', '${client.totalGB_formatted}', '${client.remaining_formatted}')" title="Delete Client">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <polyline points="3 6 5 6 21 6"></polyline>
                                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -2248,7 +2248,7 @@
                                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                                     </svg>
                                                 </button>` : ''}
-                                                <button class="action-btn danger" onclick="openDeleteClientModal(${inbound.server_id}, '${inbound.id}', '${client.email}', '${client.id}', ${client.enable}, '${client.expiryTime}', '${client.up}', '${client.down}', '${client.totalGB_formatted}', '${client.remaining_formatted}')" title="Delete Client">
+                                                <button class="action-btn danger" onclick="openDeleteClientModal(${inbound.server_id}, '${inbound.id}', '${client.email}', '${client.id}', ${client.enable}, '${client.expiryTime}', ${client.expiryTimestamp || 0}, '${client.up}', '${client.down}', '${client.totalGB_formatted}', '${client.remaining_formatted}')" title="Delete Client">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <polyline points="3 6 5 6 21 6"></polyline>
                                                         <path d="M19 6v14a2 2 0 0 1-2-2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -2420,7 +2420,14 @@
         toggle.classList.toggle('active');
     }
 
-    function openDeleteClientModal(serverId, inboundId, email, uuid, enable, expiry, up, down, total, remaining) {
+    function formatTehranTime(ts) {
+        if (!ts || ts <= 0) return '';
+        const d = new Date(Number(ts));
+        if (Number.isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Tehran', hour12: false });
+    }
+
+    function openDeleteClientModal(serverId, inboundId, email, uuid, enable, expiry, expiryTs, up, down, total, remaining) {
         document.getElementById('delete-client-server-id').value = serverId;
         document.getElementById('delete-client-inbound-id').value = inboundId;
         document.getElementById('delete-client-email-hidden').value = email;
@@ -2432,8 +2439,11 @@
         statusEl.innerHTML = enable 
             ? '<span class="client-status active">Enabled</span>' 
             : '<span class="client-status inactive">Disabled</span>';
-            
-        document.getElementById('delete-client-expiry').textContent = expiry;
+
+        const expiryTimeText = formatTehranTime(expiryTs);
+        document.getElementById('delete-client-expiry').innerHTML = expiryTimeText
+            ? `${expiry}<div style="color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px;">${expiryTimeText} (Asia/Tehran)</div>`
+            : expiry;
         document.getElementById('delete-client-traffic').innerHTML = `<span class="up">↑${up}</span> <span class="down">↓${down}</span>`;
         document.getElementById('delete-client-volume').innerHTML = `<span class="remaining">${remaining}</span> <span class="total">/ ${total}</span>`;
         

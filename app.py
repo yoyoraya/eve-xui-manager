@@ -28,7 +28,7 @@ from urllib.parse import urlparse, quote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 # Simple in-memory cache for update checks
@@ -1302,7 +1302,8 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None):
                 total_formatted = format_bytes(total_bytes) if total_bytes > 0 else "Unlimited"
                 remaining_formatted = format_bytes(remaining_bytes) if remaining_bytes is not None else "Unlimited"
 
-                expiry_info = format_remaining_days(client.get('expiryTime', 0))
+                expiry_raw = client.get('expiryTime', 0)
+                expiry_info = format_remaining_days(expiry_raw)
 
                 client_data = {
                     "email": email,
@@ -1314,6 +1315,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None):
                     "remaining_bytes": remaining_bytes if remaining_bytes is not None else -1,
                     "remaining_formatted": remaining_formatted,
                     "expiryTime": expiry_info['text'],
+                    "expiryTimestamp": expiry_raw,
                     "expiryType": expiry_info['type'],
                     "up": format_bytes(client_up),
                     "down": format_bytes(client_down),
