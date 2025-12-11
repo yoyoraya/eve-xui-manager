@@ -2,6 +2,17 @@
 
 All notable changes to Eve - Xui Manager are documented in this file.
 
+## [1.4.1] - 2025-12-11
+
+### ✨ Protocol Link Support
+- Full support for direct client links for all 3x-ui protocols (vmess, vless, trojan, shadowsocks) with proper ws/grpc/tcp, TLS/Reality, and plugin parameters.
+- Improved link generation logic for all supported protocols.
+
+### 🐛 Bug Fixes & Improvements
+- Webpath fixes for custom panel paths (login, API, panel URLs).
+- Expiry display and UI tweaks.
+- Version and tag update logic improvements.
+
 ## [1.3.0] - 2025-12-09
 
 ### ✨ New Features

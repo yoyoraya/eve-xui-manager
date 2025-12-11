@@ -24,11 +24,11 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, urlencode
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 # Simple in-memory cache for update checks
@@ -1219,17 +1219,174 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
     return None, "Failed to fetch inbounds"
 
 def generate_client_link(client, inbound, server_host):
+    """Generate share links for vmess / vless / trojan / shadowsocks."""
+
+    def _as_json(obj, default=None):
+        if default is None:
+            default = {}
+        if isinstance(obj, dict):
+            return obj
+        if isinstance(obj, str):
+            try:
+                return json.loads(obj)
+            except Exception:
+                return default
+        return default
+
+    def _parse_host(server_host, inbound_port):
+        host_value = server_host or ''
+        if host_value and not host_value.startswith(('http://', 'https://')):
+            host_value = f"http://{host_value}"
+        parsed = urlparse(host_value)
+        host = parsed.hostname or parsed.path or ''
+        port_val = inbound_port or parsed.port
+        return host, port_val
+
+    def _extract_stream_parts(stream_settings):
+        network = (stream_settings.get('network') or 'tcp').lower()
+        security = (stream_settings.get('security') or 'none').lower()
+
+        ws = stream_settings.get('wsSettings') or {}
+        grpc = stream_settings.get('grpcSettings') or {}
+        tcp = stream_settings.get('tcpSettings') or {}
+        h2 = stream_settings.get('httpSettings') or {}
+
+        path = ws.get('path') or h2.get('path') or ''
+        host_header = (ws.get('headers') or {}).get('Host') or (ws.get('headers') or {}).get('host') or ''
+        if not host_header:
+            host_header = h2.get('host') or ''
+
+        service_name = grpc.get('serviceName') or grpc.get('service_name') or ''
+        mode = grpc.get('multiMode') and 'multi' or 'gun'
+
+        header = (tcp.get('header') or {})
+        header_type = header.get('type') or ''
+        if header_type == 'http':
+            hosts = header.get('request', {}).get('headers', {}).get('Host') or []
+            host_header = ','.join(hosts) if isinstance(hosts, list) else hosts
+
+        tls_settings = stream_settings.get('tlsSettings') or {}
+        reality_settings = stream_settings.get('realitySettings') or {}
+        sni = tls_settings.get('serverName') or (reality_settings.get('serverNames') or [None])[0]
+        alpn_list = tls_settings.get('alpn') or []
+        alpn = ','.join(alpn_list) if isinstance(alpn_list, list) else alpn_list
+
+        fp = reality_settings.get('fingerprint') or stream_settings.get('fingerprint')
+        pbk = reality_settings.get('publicKey')
+        sid = reality_settings.get('shortId') or reality_settings.get('shortIds') or ''
+
+        return {
+            "network": network,
+            "security": security,
+            "path": path,
+            "host_header": host_header,
+            "service_name": service_name,
+            "grpc_mode": mode,
+            "header_type": header_type,
+            "sni": sni,
+            "alpn": alpn,
+            "fp": fp,
+            "pbk": pbk,
+            "sid": sid,
+        }
+
     try:
-        protocol = inbound.get('protocol', '').lower()
-        uuid = client.get('id', '')
-        remark = client.get('email', 'client')
-        port = inbound.get('port')
-        parsed = urlparse(server_host)
-        host = parsed.hostname
+        protocol = (inbound.get('protocol') or '').lower()
+        settings = _as_json(inbound.get('settings'))
+        stream_settings = _as_json(inbound.get('streamSettings'))
+        stream = _extract_stream_parts(stream_settings)
+
+        host, port = _parse_host(server_host, inbound.get('port'))
+        remark = quote(client.get('email') or inbound.get('remark') or 'client')
+        uuid = client.get('id') or client.get('uuid') or client.get('password') or ''
+        flow = client.get('flow') or settings.get('flow') or ''
+
         if protocol == 'vless':
-            return f"vless://{uuid}@{host}:{port}?type=tcp&security=none#{remark}"
-        return f"{protocol}://..."
-    except: return None
+            query = {
+                "encryption": "none",
+                "type": stream["network"],
+                "security": None if stream["security"] == 'none' else stream["security"],
+                "sni": stream["sni"],
+                "alpn": stream["alpn"],
+                "fp": stream["fp"],
+                "pbk": stream["pbk"],
+                "sid": stream["sid"],
+                "flow": flow or None,
+            }
+            if stream["network"] == 'ws':
+                query.update({"path": stream["path"], "host": stream["host_header"]})
+            elif stream["network"] == 'grpc':
+                query.update({"type": "grpc", "serviceName": stream["service_name"], "mode": stream["grpc_mode"]})
+            elif stream["network"] == 'tcp' and stream["header_type"] == 'http':
+                query.update({"type": "http", "host": stream["host_header"]})
+
+            q = {k: v for k, v in query.items() if v not in (None, '', [])}
+            return f"vless://{uuid}@{host}:{port}?{urlencode(q)}#{remark}"
+
+        if protocol == 'vmess':
+            aid = client.get('alterId', client.get('aid', 0)) or 0
+            vmess_obj = {
+                "v": "2",
+                "ps": client.get('email') or inbound.get('remark') or host,
+                "add": host,
+                "port": str(port),
+                "id": uuid,
+                "aid": str(aid),
+                "scy": "auto",
+                "net": stream["network"],
+                "type": stream["header_type"] or "none",
+                "host": stream["host_header"],
+                "path": stream["path"] if stream["network"] == 'ws' else '',
+                "tls": "" if stream["security"] == 'none' else stream["security"],
+                "sni": stream["sni"] or "",
+                "alpn": stream["alpn"] or "",
+                "fp": stream["fp"] or "",
+                "pbk": stream["pbk"] or "",
+                "sid": stream["sid"] or "",
+                "serviceName": stream["service_name"] if stream["network"] == 'grpc' else "",
+            }
+            payload = base64.b64encode(json.dumps(vmess_obj, ensure_ascii=False).encode()).decode()
+            return f"vmess://{payload}"
+
+        if protocol == 'trojan':
+            password = client.get('password') or uuid
+            query = {
+                "type": stream["network"],
+                "security": None if stream["security"] == 'none' else stream["security"],
+                "sni": stream["sni"],
+                "alpn": stream["alpn"],
+                "host": stream["host_header"],
+            }
+            if stream["network"] == 'ws':
+                query.update({"path": stream["path"]})
+            elif stream["network"] == 'grpc':
+                query.update({"serviceName": stream["service_name"], "mode": stream["grpc_mode"]})
+            q = {k: v for k, v in query.items() if v not in (None, '', [])}
+            q_str = f"?{urlencode(q)}" if q else ''
+            return f"trojan://{password}@{host}:{port}{q_str}#{remark}"
+
+        if protocol == 'shadowsocks':
+            method = settings.get('method') or client.get('method')
+            password = client.get('password') or uuid
+            if method and password:
+                userinfo = base64.b64encode(f"{method}:{password}".encode()).decode()
+                query = {}
+                if stream["network"] == 'ws':
+                    plugin = f"v2ray-plugin;path={stream['path'] or '/'};host={stream['host_header'] or host}"
+                    if stream["security"] != 'none':
+                        plugin += ";tls"
+                    query["plugin"] = plugin
+                elif stream["network"] == 'grpc':
+                    plugin = f"grpc;serviceName={stream['service_name']}"
+                    query["plugin"] = plugin
+                q = f"?{urlencode(query)}" if query else ''
+                return f"ss://{userinfo}@{host}:{port}{q}#{remark}"
+            return None
+
+        return None
+    except Exception as exc:
+        app.logger.debug(f"Link gen failed: {exc}")
+        return None
 
 def find_client(inbounds, inbound_id, email):
     for inbound in inbounds:

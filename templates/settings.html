@@ -2,6 +2,7 @@
 
 {% block title %}Settings - Eve Manager{% endblock %}
 {% block page_title %}Settings{% endblock %}
+{% import 'components/dropdown_macro.html' as elcomp %}
 
 {% block content %}
 <div class="settings-layout">
@@ -56,12 +57,13 @@
                 <div style="display: flex; gap: 16px; align-items: center;">
                     <div class="form-group" style="margin-bottom: 0; flex: 1; max-width: 300px;">
                         <label>Backup Frequency</label>
-                        <select id="backup-frequency" class="form-select" onchange="saveBackupSettings()">
+                        <select id="backup-frequency" class="form-select" onchange="saveBackupSettings()" style="display:none;">
                             <option value="disabled">Disabled</option>
                             <option value="daily">Daily</option>
                             <option value="weekly">Weekly</option>
                             <option value="monthly">Monthly</option>
                         </select>
+                        {{ elcomp.el_dropdown_for_select('backup-frequency') }}
                     </div>
                 </div>
             </div>
