@@ -1,0 +1,21 @@
+{% macro render_dropdown(id, options, selected_value, placeholder="Select an option", onchange="") %}
+<div class="custom-select-wrapper" id="{{ id }}-wrapper">
+    <div class="custom-select">
+        <div class="custom-select__trigger">
+            <span>{{ placeholder }}</span>
+            <div class="arrow"></div>
+        </div>
+        <div class="custom-options">
+            {% for value, label, icon in options %}
+            <span class="custom-option {% if value == selected_value %}selected{% endif %}" data-value="{{ value }}">
+                {% if icon %}
+                <span class="icon">{{ icon|safe }}</span>
+                {% endif %}
+                {{ label }}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    <input type="hidden" id="{{ id }}" name="{{ id }}" value="{{ selected_value }}" {% if onchange %}onchange="{{ onchange }}"{% endif %}>
+</div>
+{% endmacro %}
