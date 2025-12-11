@@ -360,7 +360,8 @@ show_menu() {
     echo "2) Update Application Code"
     echo "3) Configure SSL (Certbot)"
     echo "4) Update this script"
-    echo "5) Exit"
+    echo "5) Uninstall Project"
+    echo "6) Exit"
     read -rp "Select an option: " choice
     case $choice in
         1)
@@ -393,9 +394,27 @@ show_menu() {
             ;;
         3) require_root; setup_certbot_ssl ;;
         4) update_self ;;
-        5) exit 0 ;;
+        5)
+            require_root
+            uninstall_project
+            ;;
+        6) exit 0 ;;
         *) print_error "Invalid option" ;;
     esac
+}
+uninstall_project() {
+    print_header "Uninstalling Eve X-UI Manager"
+    systemctl stop ${SERVICE_NAME} || true
+    systemctl disable ${SERVICE_NAME} || true
+    rm -f /etc/systemd/system/${SERVICE_NAME}.service
+    systemctl daemon-reload
+    rm -rf "$APP_DIR"
+    rm -rf "$LOG_DIR"
+    rm -f /etc/nginx/sites-enabled/${SERVICE_NAME}
+    rm -f /etc/nginx/sites-available/${SERVICE_NAME}
+    nginx -t && systemctl restart nginx
+    userdel -r ${APP_USER} 2>/dev/null || true
+    print_success "Eve X-UI Manager and related files removed."
 }
 
 if [ $# -gt 0 ]; then
