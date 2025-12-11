@@ -2,7 +2,7 @@
 
 #############################################################
 # Eve X-UI Manager | Quick Install Script
-# Supports Ubuntu 20.04 / 22.04 / 24.04
+# Fixed for Ubuntu 20.04/22.04 Python installation issues
 #############################################################
 
 set -euo pipefail
@@ -28,7 +28,6 @@ generate_secret() {
     local length="$1"
     local mode="${2:-alnum}"
     if ! command -v python3 >/dev/null 2>&1; then
-        # Fallback to openssl if python3 unavailable
         if [ "$mode" = "hex" ]; then
             openssl rand -hex $((length/2 + 1)) | cut -c1-${length}
         else
@@ -60,7 +59,7 @@ PYTHON_VERSION="3.11"
 APP_PORT="5000"
 ENV_FILE="$APP_DIR/.env"
 LOG_DIR="/var/log/$SERVICE_NAME"
-DOMAIN="${1:-}"   # optional arg1
+DOMAIN="${1:-}"
 ENVIRONMENT="${2:-production}"
 
 DB_NAME="eve_manager_db"
@@ -138,36 +137,46 @@ detect_os() {
 }
 
 ensure_python_pkg() {
+    # Check if python is already present
     if command -v "python${PYTHON_VERSION}" >/dev/null 2>&1; then
         return
     fi
     print_warning "python${PYTHON_VERSION} not found, installing..."
     
-    # Install prerequisites
-    print_warning "Installing prerequisites (software-properties-common)..."
+    # 1. Install prerequisites and enable universe
+    print_warning "Installing prerequisites..."
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y software-properties-common gnupg
-    
-    # Add PPA
+    apt-get install -y software-properties-common gnupg ca-certificates curl lsb-release ubuntu-keyring
+    add-apt-repository universe -y
+
+    # 2. Add PPA (Robust method)
     print_warning "Adding deadsnakes PPA..."
+    # Clean old potential bad lists
+    rm -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.list
+    
     if ! add-apt-repository -y ppa:deadsnakes/ppa; then
-        print_error "Failed to add PPA via command. Trying manual method..."
-        # Fallback for manual PPA addition
-        echo "deb http://ppa.launchpad.net/deadsnakes/ppa/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/deadsnakes-ppa.list
-        apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776
+        print_warning "Standard PPA add failed, switching to manual method..."
     fi
     
-    # Update package lists
-    print_warning "Updating package lists..."
+    # Update lists
     apt-get update
     
-    # Install Python
+    # 3. Check if package is actually available, if not force manual entry
+    if ! apt-cache show "python${PYTHON_VERSION}" >/dev/null 2>&1; then
+        print_warning "Package python${PYTHON_VERSION} not found in PPA. Forcing manual entry..."
+        echo "deb http://ppa.launchpad.net/deadsnakes/ppa/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/deadsnakes-manual.list
+        apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776
+        apt-get update
+    fi
+    
+    # 4. Install Python
     print_warning "Installing Python ${PYTHON_VERSION}..."
     if ! apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"; then
-        print_warning "python${PYTHON_VERSION} packages not found. Falling back to python3.10."
+        print_warning "Failed to install ${PYTHON_VERSION}. Trying Python 3.10 as fallback..."
         PYTHON_VERSION="3.10"
         if ! apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"; then
-            print_error "Failed to install python${PYTHON_VERSION}. Please install Python manually and re-run."
+            print_error "Failed to install Python automatically. Please install python3.11 manually."
             exit 1
         fi
     fi
@@ -177,8 +186,8 @@ ensure_python_pkg() {
 update_system() {
     print_header "Step 1: Update system"
     apt-get update -qq
-    apt-get upgrade -y -qq
-    print_success "Packages updated"
+    # apt-get upgrade -y -qq # Optional: skipping full upgrade to save time
+    print_success "Packages list updated"
 }
 
 install_dependencies() {
@@ -193,7 +202,6 @@ install_dependencies() {
         supervisor \
         ufw \
         openssl \
-        software-properties-common \
         certbot \
         python3-certbot-nginx
     print_success "Dependencies installed"
@@ -226,12 +234,10 @@ clone_or_update_repo() {
     elif [ -d "$APP_DIR" ] && [ "$(ls -A $APP_DIR)" ]; then
         print_warning "Directory $APP_DIR exists but is not a git repo. Backing up..."
         mv "$APP_DIR" "${APP_DIR}.bak.$(date +%s)"
-        # Create directory and set permissions before cloning
         mkdir -p "$APP_DIR"
         chown "$APP_USER:$APP_USER" "$APP_DIR"
         sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
     else
-        # Create directory and set permissions before cloning
         mkdir -p "$APP_DIR"
         chown "$APP_USER:$APP_USER" "$APP_DIR"
         sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
@@ -241,20 +247,14 @@ clone_or_update_repo() {
 
 run_migrations() {
     print_header "Running Database Initialization & Migrations"
-    
-    # Initialize DB (Create tables if missing)
     if [ -f "$APP_DIR/init_db.py" ]; then
         print_header "Initializing Database Tables..."
         sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate 2>/dev/null || true && cd $APP_DIR && INITIAL_ADMIN_USERNAME='${ADMIN_USERNAME}' INITIAL_ADMIN_PASSWORD='${ADMIN_PASS}' python3 init_db.py"
     fi
-
-    # Run Migrations (Update schema if needed)
     if [ -f "$APP_DIR/migrations.py" ]; then
         print_header "Checking for Schema Updates..."
         sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate 2>/dev/null || true && cd $APP_DIR && python3 migrations.py"
         print_success "Database check completed"
-    else
-        print_warning "No migrations file found, skipping"
     fi
 }
 
@@ -266,14 +266,9 @@ setup_python_env() {
     fi
     sudo -u "$APP_USER" "$PY_BIN" -m venv "$APP_DIR/venv"
     sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install --upgrade pip setuptools wheel >/dev/null"
-
     sudo -u "$APP_USER" bash -c "cd $APP_DIR && source venv/bin/activate && if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install .; fi >/dev/null"
-
-    # Ensure gunicorn and psycopg2-binary even if pyproject changes
     sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install gunicorn psycopg2-binary >/dev/null"
     print_success "Virtual environment configured"
-    
-    # Run database migrations after venv is ready
     run_migrations
 }
 
@@ -313,7 +308,6 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
-
     systemctl daemon-reload
     systemctl enable ${SERVICE_NAME}
     systemctl restart ${SERVICE_NAME}
@@ -322,14 +316,11 @@ EOF
 
 setup_nginx() {
     print_header "Step 10: Nginx configuration"
-    # Remove default if exists
     rm -f /etc/nginx/sites-enabled/default
-
     cat > /etc/nginx/sites-available/${SERVICE_NAME} <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
-
     location / {
         proxy_pass http://127.0.0.1:${APP_PORT};
         proxy_set_header Host \$host;
@@ -339,48 +330,32 @@ server {
     }
 }
 EOF
-
     ln -sf /etc/nginx/sites-available/${SERVICE_NAME} /etc/nginx/sites-enabled/
     nginx -t && systemctl restart nginx
     print_success "Nginx configured"
 }
 
 setup_certbot_ssl() {
-    print_header "Step 11: SSL Configuration (Certbot)"
-    
-    # Ensure certbot is installed
-    if ! command -v certbot >/dev/null 2>&1; then
-        print_warning "Certbot not found. Installing..."
-        apt-get update -qq
-        apt-get install -y -qq certbot python3-certbot-nginx
-    fi
-
+    print_header "Step 11: SSL Configuration"
     if [ -z "$DOMAIN" ]; then
         ask_domain
     fi
-    
-    print_warning "Requesting SSL certificate for $DOMAIN..."
-    
-    # Stop Nginx temporarily to allow certbot standalone or use nginx plugin
-    # We use --nginx plugin which is safer
+    print_warning "Requesting SSL for $DOMAIN..."
     certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@$DOMAIN" --redirect
-    
     print_success "SSL Certificate installed!"
 }
 
 update_self() {
     print_header "Updating Installer Script..."
-    # Download the script from the repo and replace the current file
     curl -o "$0" -fsSL "${REPO_URL%.git}/raw/main/setup.sh"
     chmod +x "$0"
-    print_success "Script updated! Please re-run it."
+    print_success "Script updated! Please re-run."
     exit 0
 }
 
-# ------------------------- Main ----------------------------
 show_menu() {
     echo
-    echo -e "${BLUE}Eve X-UI Manager Installer${NC}"
+    echo -e "${BLUE}Eve X-UI Manager Installer (Fixed)${NC}"
     echo "1) Install / Re-install (Full)"
     echo "2) Update Application Code"
     echo "3) Configure SSL (Certbot)"
@@ -403,7 +378,6 @@ show_menu() {
             create_env_file
             setup_systemd
             setup_nginx
-            
             print_header "Installation Complete!"
             echo -e "URL:      http://${DOMAIN}"
             echo -e "Admin:    ${ADMIN_USERNAME}"
@@ -415,29 +389,18 @@ show_menu() {
             clone_or_update_repo
             setup_python_env
             systemctl restart ${SERVICE_NAME}
-            print_success "Application updated and restarted"
+            print_success "Updated and restarted"
             ;;
-        3)
-            require_root
-            setup_certbot_ssl
-            ;;
-        4)
-            update_self
-            ;;
-        5)
-            exit 0
-            ;;
-        *)
-            print_error "Invalid option"
-            ;;
+        3) require_root; setup_certbot_ssl ;;
+        4) update_self ;;
+        5) exit 0 ;;
+        *) print_error "Invalid option" ;;
     esac
 }
 
-# If arguments are passed, run non-interactive install
 if [ $# -gt 0 ]; then
     require_root
     detect_os
-    # DOMAIN is already set from arg1
     reset_admin_defaults
     update_system
     ensure_python_pkg
@@ -449,7 +412,6 @@ if [ $# -gt 0 ]; then
     create_env_file
     setup_systemd
     setup_nginx
-    
     print_header "Installation Complete!"
     echo -e "URL:      http://${DOMAIN}"
     echo -e "Admin:    ${ADMIN_USERNAME}"
