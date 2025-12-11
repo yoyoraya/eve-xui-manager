@@ -220,7 +220,7 @@ run_migrations() {
     # Initialize DB (Create tables if missing)
     if [ -f "$APP_DIR/init_db.py" ]; then
         print_header "Initializing Database Tables..."
-        sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate 2>/dev/null || true && cd $APP_DIR && python3 init_db.py"
+        sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate 2>/dev/null || true && cd $APP_DIR && INITIAL_ADMIN_USERNAME='${ADMIN_USERNAME}' INITIAL_ADMIN_PASSWORD='${ADMIN_PASS}' python3 init_db.py"
     fi
 
     # Run Migrations (Update schema if needed)
