@@ -144,11 +144,18 @@ ensure_python_pkg() {
     print_warning "python${PYTHON_VERSION} not found, installing..."
     
     # Install prerequisites
-    apt-get install -y software-properties-common
+    print_warning "Installing prerequisites (software-properties-common)..."
+    apt-get update -qq
+    apt-get install -y software-properties-common gnupg
     
     # Add PPA
     print_warning "Adding deadsnakes PPA..."
-    add-apt-repository -y ppa:deadsnakes/ppa
+    if ! add-apt-repository -y ppa:deadsnakes/ppa; then
+        print_error "Failed to add PPA via command. Trying manual method..."
+        # Fallback for manual PPA addition
+        echo "deb http://ppa.launchpad.net/deadsnakes/ppa/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/deadsnakes-ppa.list
+        apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776
+    fi
     
     # Update package lists
     print_warning "Updating package lists..."
