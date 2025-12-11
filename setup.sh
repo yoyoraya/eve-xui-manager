@@ -227,6 +227,10 @@ prepare_directories() {
 
 clone_or_update_repo() {
     print_header "Step 6: Fetch application"
+    
+    # Fix git dubious ownership
+    git config --global --add safe.directory "$APP_DIR" || true
+    
     if [ -d "$APP_DIR/.git" ]; then
         print_warning "Repository exists, pulling latest changes"
         sudo -u "$APP_USER" git -C "$APP_DIR" fetch --all
