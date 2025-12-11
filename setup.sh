@@ -231,6 +231,9 @@ clone_or_update_repo() {
     # Fix git dubious ownership
     git config --global --add safe.directory "$APP_DIR" || true
     
+    # Ensure correct permissions before git operations
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+
     if [ -d "$APP_DIR/.git" ]; then
         print_warning "Repository exists, pulling latest changes"
         sudo -u "$APP_USER" git -C "$APP_DIR" fetch --all
