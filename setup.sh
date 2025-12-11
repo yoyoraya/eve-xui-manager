@@ -163,7 +163,14 @@ ensure_python_pkg() {
     
     # Install Python
     print_warning "Installing Python ${PYTHON_VERSION}..."
-    apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"
+    if ! apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"; then
+        print_warning "python${PYTHON_VERSION} packages not found. Falling back to python3.10."
+        PYTHON_VERSION="3.10"
+        if ! apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"; then
+            print_error "Failed to install python${PYTHON_VERSION}. Please install Python manually and re-run."
+            exit 1
+        fi
+    fi
 }
 
 # -------------------- Installation Steps -------------------
