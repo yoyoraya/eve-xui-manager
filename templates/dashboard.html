@@ -942,7 +942,7 @@
                                         </td>
                                         <td>
                                             <span class="expiry-badge ${getExpiryClass(client.expiryType)}">${client.expiryTime}</span>
-                                            ${client.expiryTimestamp ? `<div style=\"color: var(--text-secondary); font-size: 0.65rem; margin-top: 4px;\">${formatTehranTime(client.expiryTimestamp)}</div>` : ''}
+                                            ${client.expiryTimestamp ? `<span style=\"color: var(--text-secondary); font-size: 0.65rem; direction: rtl; display: inline-block; text-align: right; margin-right: 4px;\">${formatTehranTime(client.expiryTimestamp)}</span>` : ''}
                                         </td>
                                         <td class="traffic-cell">
                                             <div class="traffic-combined-cell">
