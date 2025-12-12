@@ -1,3 +1,12 @@
+# Eve - Xui Manager v1.4.2
+
+## 🐛 Bug Fixes & Improvements
+- **Reseller Visibility**: Fixed issue where clients were hidden from resellers due to missing inbound IDs (implemented loose matching).
+- **Traffic Formatting**: Improved traffic display to dynamically show KB/MB/GB/TB units.
+- **UI Alignment**: Fixed action button alignment on desktop (right-aligned) and mobile (left-aligned).
+- **Server List**: Fixed bug where server list in modals would be empty after status updates.
+- **Search Autofill**: Implemented fix to prevent browser autofill on the search input.
+
 # Eve - Xui Manager v1.0.0
 
 ## 🎉 First Official Release

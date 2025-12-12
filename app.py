@@ -49,6 +49,9 @@ GLOBAL_SERVER_DATA = {
     'is_updating': False
 }
 
+# Guard to avoid starting background threads multiple times (important for gunicorn workers / dev reload)
+BACKGROUND_THREADS_STARTED = False
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
 
@@ -1656,11 +1659,24 @@ def fetch_worker(server_dict):
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
+    # Make sure background threads are running (covers gunicorn/uwsgi workers)
+    if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
+        ensure_background_threads_started()
+
     # 1. بررسی وضعیت کش
     if not GLOBAL_SERVER_DATA.get('last_update') and not GLOBAL_SERVER_DATA.get('is_updating'):
         pass
 
     data = copy.deepcopy(GLOBAL_SERVER_DATA)
+    
+    # If cache is empty, try a synchronous fetch once to avoid blank screen for superadmin
+    if not data.get('inbounds') and not GLOBAL_SERVER_DATA.get('is_updating'):
+        try:
+            fetch_and_update_global_data()
+            data = copy.deepcopy(GLOBAL_SERVER_DATA)
+        except Exception:
+            # fall back to empty response below
+            pass
     
     if not data.get('inbounds'):
         return jsonify({
@@ -4602,77 +4618,70 @@ def background_data_fetcher():
     این تابع در پس‌زمینه اجرا می‌شود و هر ۳۰ ثانیه اطلاعات را در RAM بروز می‌کند.
     """
     with app.app_context():
+        ensure_background_threads_started()
         while True:
-            try:
-                GLOBAL_SERVER_DATA['is_updating'] = True
-                # دریافت لیست ادمین‌ها و سرورها
-                servers = Server.query.filter_by(enabled=True).all()
-                
-                server_dicts = [{
-                    'id': s.id, 'name': s.name, 'host': s.host, 
-                    'username': s.username, 'password': s.password, 
-                    'panel_type': s.panel_type, 'sub_port': s.sub_port,
-                    'sub_path': s.sub_path, 'json_path': s.json_path
-                } for s in servers]
-                
-                # اجرای درخواست‌های موازی
-                results = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-                    future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
-                    for future in concurrent.futures.as_completed(future_to_id):
-                        results.append(future.result())
-                
-                # پردازش نتایج
-                all_inbounds = []
-                total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
-                server_statuses = []
-                
-                # یک یوزر ادمین فیک یا واقعی برای پردازش نیاز داریم
-                # اینجا فرض می‌کنیم یک سوپرادمین داریم یا اولین ادمین فعال
-                admin_user = Admin.query.filter(or_(Admin.is_superadmin == True, Admin.role == 'superadmin')).first()
-                
-                if not admin_user:
-                    # If no superadmin found, create a dummy one to ensure we get all data
-                    admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
-
-                if admin_user:
-                    for srv in servers:
-                        # پیدا کردن نتیجه مربوط به این سرور
-                        res = next((r for r in results if r[0] == srv.id), (srv.id, None, "Timeout"))
-                        _, inbounds, error = res
-                        
-                        if error:
-                            server_statuses.append({"server_id": srv.id, "success": False, "error": error})
-                            continue
-                            
-                        processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {})
-                        all_inbounds.extend(processed)
-                        
-                        # تجمیع آمار
-                        for k in total_stats:
-                            if k in stats and isinstance(total_stats[k], int):
-                                total_stats[k] += stats[k]
-                                
-                        server_statuses.append({"server_id": srv.id, "success": True, "stats": stats, "panel_type": srv.panel_type})
-
-                    # فرمت کردن نهایی آمار
-                    total_stats["total_upload"] = format_bytes(total_stats["upload_raw"])
-                    total_stats["total_download"] = format_bytes(total_stats["download_raw"])
-                    total_stats["total_traffic"] = format_bytes(total_stats["upload_raw"] + total_stats["download_raw"])
-
-                    # ذخیره در متغیر گلوبال (RAM)
-                    GLOBAL_SERVER_DATA['inbounds'] = all_inbounds
-                    GLOBAL_SERVER_DATA['stats'] = total_stats
-                    GLOBAL_SERVER_DATA['servers_status'] = server_statuses
-                    GLOBAL_SERVER_DATA['last_update'] = datetime.utcnow().isoformat()
-                
-            except Exception as e:
-                print(f"Background fetch error: {e}")
-            finally:
-                GLOBAL_SERVER_DATA['is_updating'] = False
-            
-            # صبر برای ۳۰ ثانیه
+            fetch_and_update_global_data()
             time.sleep(30)
+
+
+def fetch_and_update_global_data():
+    """یک بار داده‌ها را از سرورها واکشی و در RAM به‌روزرسانی می‌کند."""
+    try:
+        GLOBAL_SERVER_DATA['is_updating'] = True
+
+        servers = Server.query.filter_by(enabled=True).all()
+
+        server_dicts = [{
+            'id': s.id, 'name': s.name, 'host': s.host,
+            'username': s.username, 'password': s.password,
+            'panel_type': s.panel_type, 'sub_port': s.sub_port,
+            'sub_path': s.sub_path, 'json_path': s.json_path
+        } for s in servers]
+
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
+            for future in concurrent.futures.as_completed(future_to_id):
+                results.append(future.result())
+
+        all_inbounds = []
+        total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
+        server_statuses = []
+
+        admin_user = Admin.query.filter(or_(Admin.is_superadmin == True, Admin.role == 'superadmin')).first()
+        if not admin_user:
+            admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
+
+        for srv in servers:
+            res = next((r for r in results if r[0] == srv.id), (srv.id, None, "Timeout"))
+            _, inbounds, error = res
+
+            if error:
+                server_statuses.append({"server_id": srv.id, "success": False, "error": error})
+                continue
+
+            processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {})
+            all_inbounds.extend(processed)
+
+            for k in total_stats:
+                if k in stats and isinstance(total_stats[k], int):
+                    total_stats[k] += stats[k]
+
+            server_statuses.append({"server_id": srv.id, "success": True, "stats": stats, "panel_type": srv.panel_type})
+
+        total_stats["total_upload"] = format_bytes(total_stats["upload_raw"])
+        total_stats["total_download"] = format_bytes(total_stats["download_raw"])
+        total_stats["total_traffic"] = format_bytes(total_stats["upload_raw"] + total_stats["download_raw"])
+
+        GLOBAL_SERVER_DATA['inbounds'] = all_inbounds
+        GLOBAL_SERVER_DATA['stats'] = total_stats
+        GLOBAL_SERVER_DATA['servers_status'] = server_statuses
+        GLOBAL_SERVER_DATA['last_update'] = datetime.utcnow().isoformat()
+
+    except Exception as e:
+        print(f"Background fetch error: {e}")
+    finally:
+        GLOBAL_SERVER_DATA['is_updating'] = False
 
 def run_scheduler():
     with app.app_context():
@@ -4732,19 +4741,41 @@ def update_session_lifetime():
         except Exception as e:
             print(f"Error updating session lifetime: {e}")
 
+
+def ensure_background_threads_started():
+    """Start background threads (scheduler + fetcher) once per process."""
+    global BACKGROUND_THREADS_STARTED
+    if BACKGROUND_THREADS_STARTED:
+        return
+
+    BACKGROUND_THREADS_STARTED = True
+
+    try:
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+    except Exception as e:
+        print(f"Failed to start scheduler thread: {e}")
+
+    try:
+        data_thread = threading.Thread(target=background_data_fetcher, daemon=True)
+        data_thread.start()
+    except Exception as e:
+        print(f"Failed to start data fetcher thread: {e}")
+
+if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
+    # Start threads on module import (works under gunicorn as well)
+    ensure_background_threads_started()
+
+
 if __name__ == '__main__':
     # Create tables if not exist
     with app.app_context():
         db.create_all()
     
     update_session_lifetime()
-        
-    # Start scheduler in background
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-    
-    # Start background data fetcher
-    data_thread = threading.Thread(target=background_data_fetcher, daemon=True)
-    data_thread.start()
+
+    # Ensure background threads are running
+    if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
+        ensure_background_threads_started()
     
     app.run(host='0.0.0.0', port=5000, debug=True)
