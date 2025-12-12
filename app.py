@@ -4629,9 +4629,11 @@ def background_data_fetcher():
                 
                 # یک یوزر ادمین فیک یا واقعی برای پردازش نیاز داریم
                 # اینجا فرض می‌کنیم یک سوپرادمین داریم یا اولین ادمین فعال
-                admin_user = Admin.query.filter_by(is_superadmin=True).first()
+                admin_user = Admin.query.filter(or_(Admin.is_superadmin == True, Admin.role == 'superadmin')).first()
+                
                 if not admin_user:
-                    admin_user = Admin.query.first()
+                    # If no superadmin found, create a dummy one to ensure we get all data
+                    admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
 
                 if admin_user:
                     for srv in servers:
