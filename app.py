@@ -38,6 +38,16 @@ UPDATE_CACHE = {
     'ttl': 3600  # 1 hour cache
 }
 
+# کش برای نگهداری وضعیت سرورها در RAM
+# این دیتا با هر بار ریستارت برنامه پاک می‌شود (امنیت بالا)
+GLOBAL_SERVER_DATA = {
+    'last_update': None,
+    'inbounds': [],
+    'stats': {},
+    'servers_status': [],
+    'is_updating': False
+}
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
 
@@ -1401,7 +1411,7 @@ def find_client(inbounds, inbound_id, email):
                 return client, inbound
     return None, None
 
-def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None):
+def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, app_base_url=None):
     processed = []
     stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
     
@@ -1453,8 +1463,15 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None):
                     base_sub = f"{scheme}://{hostname}{port_str}"
                     s_path = server.sub_path.strip('/')
                     j_path = server.json_path.strip('/')
-                    app_base = request.url_root.rstrip('/')
                     
+                    if app_base_url:
+                        app_base = app_base_url
+                    else:
+                        try:
+                            app_base = request.url_root.rstrip('/')
+                        except RuntimeError:
+                            app_base = "" # Fallback for background thread
+
                     sub_url = f"{base_sub}/{s_path}/{final_id}"
                     json_url = f"{base_sub}/{j_path}/{final_id}"
                     dash_sub_url = f"{app_base}/s/{server.id}/{final_id}"
@@ -1623,60 +1640,121 @@ def fetch_worker(server_dict):
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
+    # اگر کش خالی است (مثلاً ثانیه اول بالا آمدن سرور)، سریع یک بار اجرا کن
+    if not GLOBAL_SERVER_DATA['last_update'] and not GLOBAL_SERVER_DATA['is_updating']:
+         return jsonify({"success": False, "error": "System is starting up, please wait..."})
+
+    user = db.session.get(Admin, session['admin_id'])
+    
+    # کپی کردن دیتا برای جلوگیری از تغییر همزمان
+    data_inbounds = GLOBAL_SERVER_DATA['inbounds']
+    data_stats = GLOBAL_SERVER_DATA['stats']
+    data_servers = GLOBAL_SERVER_DATA['servers_status']
+    
+    if user.role == 'reseller':
+        # فیلتر کردن دیتا برای ریسلرها
+        allowed_map, assignments = get_reseller_access_maps(user)
+        ownerships = ClientOwnership.query.filter_by(reseller_id=user.id).all()
+        owned_emails = {o.client_email for o in ownerships}
+        
+        filtered_inbounds = []
+        # محاسبه مجدد آمار برای ریسلر
+        reseller_stats = {
+            "total_inbounds": 0, "active_inbounds": 0, 
+            "total_clients": 0, "active_clients": 0, "inactive_clients": 0, 
+            "upload_raw": 0, "download_raw": 0,
+            "total_traffic": "0 B", "total_upload": "0 B", "total_download": "0 B"
+        }
+
+        for inbound in data_inbounds:
+            # دسترسی به اینباند
+            if not is_inbound_accessible(inbound['server_id'], inbound['id'], allowed_map, assignments):
+                continue
+            
+            # فیلتر کلاینت‌ها
+            visible_clients = [c for c in inbound['clients'] if c['email'] in owned_emails]
+            
+            if visible_clients:
+                new_inbound = inbound.copy()
+                new_inbound['clients'] = visible_clients
+                new_inbound['client_count'] = len(visible_clients)
+                filtered_inbounds.append(new_inbound)
+                
+                reseller_stats['total_clients'] += len(visible_clients)
+                reseller_stats['active_clients'] += sum(1 for c in visible_clients if c['enable'])
+                reseller_stats['inactive_clients'] += sum(1 for c in visible_clients if not c['enable'])
+        
+        reseller_stats['total_inbounds'] = len(filtered_inbounds)
+        reseller_stats['active_inbounds'] = len(filtered_inbounds) # فرض ساده
+        
+        return jsonify({
+            "success": True, 
+            "inbounds": filtered_inbounds, 
+            "stats": reseller_stats, 
+            "servers": data_servers,
+            "last_update": GLOBAL_SERVER_DATA['last_update']
+        })
+
+    return jsonify({
+        "success": True, 
+        "inbounds": data_inbounds, 
+        "stats": data_stats, 
+        "servers": data_servers,
+        "last_update": GLOBAL_SERVER_DATA['last_update']
+    })
+
+@app.route('/api/servers/list')
+@login_required
+def api_servers_list():
     user = db.session.get(Admin, session['admin_id'])
     servers = get_accessible_servers(user)
+    return jsonify([{
+        'id': s.id,
+        'name': s.name,
+        'panel_type': s.panel_type
+    } for s in servers])
+
+@app.route('/api/server/<int:server_id>/refresh')
+@login_required
+def api_refresh_single_server(server_id):
+    user = db.session.get(Admin, session['admin_id'])
+    server = Server.query.get_or_404(server_id)
+    
+    # Check access
+    if user.role != 'superadmin':
+        if user.allowed_servers != '*' and str(server.id) not in user.allowed_servers.split(','):
+             return jsonify({"success": False, "error": "Access denied"}), 403
+
     allowed_map, assignments = get_reseller_access_maps(user) if user.role == 'reseller' else ('*', {})
+
+    # Fetch data
+    server_dict = {
+        'id': server.id, 
+        'name': server.name, 
+        'host': server.host, 
+        'username': server.username, 
+        'password': server.password, 
+        'panel_type': server.panel_type,
+        'sub_port': server.sub_port,
+        'sub_path': server.sub_path,
+        'json_path': server.json_path
+    }
     
-    all_inbounds = []
-    total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
-    server_results = []
+    _, inbounds, error = fetch_worker(server_dict)
     
-    # Prepare data for threads
-    server_dicts = [{
-        'id': s.id, 
-        'name': s.name, 
-        'host': s.host, 
-        'username': s.username, 
-        'password': s.password, 
-        'panel_type': s.panel_type,
-        'sub_port': s.sub_port,
-        'sub_path': s.sub_path,
-        'json_path': s.json_path
-    } for s in servers]
+    if error:
+        return jsonify({"success": False, "server_id": server.id, "server_name": server.name, "error": error})
+
+    processed_inbounds, stats = process_inbounds(inbounds, server, user, allowed_map, assignments)
     
-    # Parallel fetch
-    fetched_data = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
-        for future in concurrent.futures.as_completed(future_to_id):
-            srv_id, inbounds, error = future.result()
-            fetched_data[srv_id] = (inbounds, error)
-            
-    for server in servers:
-        inbounds, error = fetched_data.get(server.id, (None, "Unknown error"))
-        
-        if error:
-            server_results.append({"server_id": server.id, "server_name": server.name, "success": False, "error": error})
-            continue
-        
-        processed_inbounds, stats = process_inbounds(inbounds, server, user, allowed_map, assignments)
-        all_inbounds.extend(processed_inbounds)
-        
-        total_stats["total_inbounds"] += stats["total_inbounds"]
-        total_stats["active_inbounds"] += stats["active_inbounds"]
-        total_stats["total_clients"] += stats["total_clients"]
-        total_stats["active_clients"] += stats["active_clients"]
-        total_stats["inactive_clients"] += stats["inactive_clients"]
-        total_stats["upload_raw"] += stats["upload_raw"]
-        total_stats["download_raw"] += stats["download_raw"]
-        
-        server_results.append({"server_id": server.id, "server_name": server.name, "success": True, "stats": stats, "panel_type": server.panel_type})
-    
-    total_stats["total_upload"] = format_bytes(total_stats["upload_raw"])
-    total_stats["total_download"] = format_bytes(total_stats["download_raw"])
-    total_stats["total_traffic"] = format_bytes(total_stats["upload_raw"] + total_stats["download_raw"])
-    
-    return jsonify({"success": True, "inbounds": all_inbounds, "stats": total_stats, "servers": server_results, "server_count": len(servers)})
+    return jsonify({
+        "success": True, 
+        "server_id": server.id, 
+        "server_name": server.name,
+        "inbounds": processed_inbounds, 
+        "stats": stats,
+        "panel_type": server.panel_type
+    })
 
 
 @app.route('/settings')
@@ -4348,8 +4426,18 @@ def restore_backup(filename):
         if os.path.exists(db_path):
             shutil.copy2(db_path, safety_backup)
             
+        # 1. بازگردانی دیتابیس
         shutil.copy2(backup_path, db_path)
-        return jsonify({'success': True, 'message': 'Database restored successfully'})
+        
+        # 2. پاک کردن سشن برای امنیت (Log out current user)
+        session.clear()
+        
+        # 3. برگرداندن پاسخ موفقیت + ریدارکت سمت کلاینت
+        return jsonify({
+            'success': True, 
+            'message': 'Database restored successfully. Please login again.',
+            'redirect': url_for('login')
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -4414,6 +4502,81 @@ def check_update():
         if UPDATE_CACHE['data']:
             return jsonify(UPDATE_CACHE['data'])
         return jsonify({'success': False, 'error': str(e)})
+
+def background_data_fetcher():
+    """
+    این تابع در پس‌زمینه اجرا می‌شود و هر ۳۰ ثانیه اطلاعات را در RAM بروز می‌کند.
+    """
+    with app.app_context():
+        while True:
+            try:
+                GLOBAL_SERVER_DATA['is_updating'] = True
+                # دریافت لیست ادمین‌ها و سرورها
+                servers = Server.query.filter_by(enabled=True).all()
+                
+                server_dicts = [{
+                    'id': s.id, 'name': s.name, 'host': s.host, 
+                    'username': s.username, 'password': s.password, 
+                    'panel_type': s.panel_type, 'sub_port': s.sub_port,
+                    'sub_path': s.sub_path, 'json_path': s.json_path
+                } for s in servers]
+                
+                # اجرای درخواست‌های موازی
+                results = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                    future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
+                    for future in concurrent.futures.as_completed(future_to_id):
+                        results.append(future.result())
+                
+                # پردازش نتایج
+                all_inbounds = []
+                total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
+                server_statuses = []
+                
+                # یک یوزر ادمین فیک یا واقعی برای پردازش نیاز داریم
+                # اینجا فرض می‌کنیم یک سوپرادمین داریم یا اولین ادمین فعال
+                admin_user = Admin.query.filter_by(is_superadmin=True).first()
+                if not admin_user:
+                    admin_user = Admin.query.first()
+
+                if admin_user:
+                    for srv in servers:
+                        # پیدا کردن نتیجه مربوط به این سرور
+                        res = next((r for r in results if r[0] == srv.id), (srv.id, None, "Timeout"))
+                        _, inbounds, error = res
+                        
+                        if error:
+                            server_statuses.append({"server_id": srv.id, "success": False, "error": error})
+                            continue
+                            
+                        processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {})
+                        all_inbounds.extend(processed)
+                        
+                        # تجمیع آمار
+                        for k in total_stats:
+                            if k in stats and isinstance(total_stats[k], int):
+                                total_stats[k] += stats[k]
+                                
+                        server_statuses.append({"server_id": srv.id, "success": True, "stats": stats, "panel_type": srv.panel_type})
+
+                    # فرمت کردن نهایی آمار
+                    total_stats["total_upload"] = format_bytes(total_stats["upload_raw"])
+                    total_stats["total_download"] = format_bytes(total_stats["download_raw"])
+                    total_stats["total_traffic"] = format_bytes(total_stats["upload_raw"] + total_stats["download_raw"])
+
+                    # ذخیره در متغیر گلوبال (RAM)
+                    GLOBAL_SERVER_DATA['inbounds'] = all_inbounds
+                    GLOBAL_SERVER_DATA['stats'] = total_stats
+                    GLOBAL_SERVER_DATA['servers_status'] = server_statuses
+                    GLOBAL_SERVER_DATA['last_update'] = datetime.utcnow().isoformat()
+                
+            except Exception as e:
+                print(f"Background fetch error: {e}")
+            finally:
+                GLOBAL_SERVER_DATA['is_updating'] = False
+            
+            # صبر برای ۳۰ ثانیه
+            time.sleep(30)
 
 def run_scheduler():
     with app.app_context():
@@ -4483,5 +4646,9 @@ if __name__ == '__main__':
     # Start scheduler in background
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
+    
+    # Start background data fetcher
+    data_thread = threading.Thread(target=background_data_fetcher, daemon=True)
+    data_thread.start()
     
     app.run(host='0.0.0.0', port=5000, debug=True)

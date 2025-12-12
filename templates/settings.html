@@ -795,15 +795,20 @@
     }
 
     async function restoreBackup(filename) {
-        if (!confirm('Are you sure you want to restore this backup? Current data will be overwritten!')) return;
+        if (!confirm('Are you sure you want to restore this backup? Current data will be overwritten and you will be logged out!')) return;
         
         try {
             const res = await fetch(`/api/backups/${filename}/restore`, { method: 'POST' });
             const data = await res.json();
             
             if (data.success) {
-                showToast('Database restored successfully');
-                setTimeout(() => window.location.reload(), 1500);
+                showToast(data.message || 'Database restored successfully');
+                // Redirect to login page if provided, otherwise reload
+                if (data.redirect) {
+                    setTimeout(() => window.location.href = data.redirect, 1500);
+                } else {
+                    setTimeout(() => window.location.reload(), 1500);
+                }
             } else {
                 showToast(data.error || 'Error restoring backup', 'error');
             }

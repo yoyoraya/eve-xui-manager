@@ -109,7 +109,7 @@
                 <circle cx="11" cy="11" r="8"></circle>
                 <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="global-search-input" placeholder="Search clients..." class="search-input">
+            <input type="text" id="global-search-input" name="search_query_custom" autocomplete="off" data-lpignore="true" placeholder="Search clients..." class="search-input">
             <button class="search-clear hidden" onclick="clearSearch()" id="clear-search-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
@@ -704,6 +704,7 @@
     let currentLink = '';
     let inboundsData = [];
     let allInboundsData = [];
+    let pendingServers = [];
     let refreshController = null;
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
@@ -779,36 +780,29 @@
             const data = await response.json();
             
             if (data.success) {
-                updateStats(data.stats, data.server_count);
-                
-                // Store all data
                 allInboundsData = data.inbounds;
-                inboundsData = data.inbounds; // Keep for compatibility if used elsewhere
+                inboundsData = data.inbounds;
+                allServers = data.servers || []; // Update server status list if needed
                 
-                // Apply filters to update view
+                // Clear pending servers since we have full data
+                pendingServers = [];
+
+                updateStats(data.stats, data.servers ? data.servers.length : 0);
                 applyFilters();
                 
-                const failedServers = data.servers?.filter(s => !s.success) || [];
-                if (failedServers.length > 0) {
-                    const errors = failedServers.map(s => `${s.server_name}: ${s.error}`).join(', ');
-                    showToast('Server errors: ' + errors, 'error');
-                }
                 if (!isSilent) showToast('Data updated successfully');
-
-                // If there is an active search, re-run it to update the results view
+                
+                // If there is an active search, re-run it
                 const searchInput = document.getElementById('global-search-input');
                 if (searchInput && searchInput.value.trim().length > 0) {
                     performGlobalSearch();
                 }
             } else {
-                if (!isSilent) showToast('Error loading data', 'error');
+                if (!isSilent) showToast(data.error || 'Error updating data', 'error');
                 handleRefreshError();
             }
         } catch (error) {
-            if (error.name === 'AbortError') {
-                console.log('Refresh aborted');
-                return;
-            }
+            if (error.name === 'AbortError') return;
             console.error('Refresh error:', error);
             if (!isSilent) showToast('Error updating: ' + error.message, 'error');
             handleRefreshError();
@@ -824,6 +818,15 @@
             hideLoading();
             refreshController = null;
         }
+    }
+
+    function formatBytes(bytes, decimals = 2) {
+        if (!+bytes) return '0 B';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
     }
 
     function handleRefreshError() {
@@ -873,7 +876,9 @@
         const container = document.getElementById('inbounds-container');
         document.getElementById('inbounds-count').textContent = `${inbounds.length} total`;
         
-        if (inbounds.length === 0) {
+        let html = '';
+
+        if (inbounds.length === 0 && (!pendingServers || pendingServers.length === 0)) {
             container.innerHTML = `
                 <div class="empty-state">
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -887,7 +892,7 @@
             return;
         }
         
-        container.innerHTML = inbounds.map(inbound => `
+        html += inbounds.map(inbound => `
             <div class="inbound-card ${!inbound.enable ? 'disabled' : ''}">
                 <div class="inbound-header">
                     <div class="inbound-title">
@@ -1018,6 +1023,22 @@
                 ` : ''}
             </div>
         `).join('');
+
+        // Add placeholders for pending servers
+        if (typeof pendingServers !== 'undefined' && pendingServers.length > 0) {
+             html += pendingServers.map(s => `
+                <div class="inbound-card loading-placeholder" style="opacity: 0.7; border-style: dashed;">
+                    <div class="inbound-header">
+                        <div class="inbound-title">
+                            <div class="spinner" style="width: 16px; height: 16px; border-width: 2px; margin-right: 10px;"></div>
+                            <h3>Loading ${s.name}...</h3>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        container.innerHTML = html;
     }
 
     function toggleClients(btn) {
@@ -1050,7 +1071,13 @@
         document.getElementById('input-sub').value = subUrl || '';
         document.getElementById('input-json').value = jsonUrl || '';
         document.getElementById('input-config').value = link || '';
-        document.getElementById('input-dash').value = dashSubUrl || '';
+        
+        // Fix relative URL for dashSubUrl if needed
+        let finalDashUrl = dashSubUrl || '';
+        if (finalDashUrl && finalDashUrl.startsWith('/')) {
+            finalDashUrl = window.location.origin + finalDashUrl;
+        }
+        document.getElementById('input-dash').value = finalDashUrl;
         
         try {
             // Generate Config QR
@@ -1088,8 +1115,8 @@
             }
 
             // Generate Dash Sub QR
-            if (dashSubUrl && dashSubUrl !== 'undefined' && dashSubUrl !== 'null' && dashSubUrl !== '') {
-                const dashResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(dashSubUrl)}`);
+            if (finalDashUrl && finalDashUrl !== 'undefined' && finalDashUrl !== 'null' && finalDashUrl !== '') {
+                const dashResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(finalDashUrl)}`);
                 const dashData = await dashResp.json();
                 if (dashData.success) {
                     document.getElementById('img-dash').src = dashData.qrcode;
@@ -1834,10 +1861,11 @@
         }
 
         // Otherwise filter the main list
+        let filteredInbounds = [];
         if (allInboundsData && allInboundsData.length > 0) {
-             const filteredInbounds = filterInbounds(allInboundsData);
-             updateInbounds(filteredInbounds);
+             filteredInbounds = filterInbounds(allInboundsData);
         }
+        updateInbounds(filteredInbounds);
     }
     
     function filterInbounds(inbounds) {
