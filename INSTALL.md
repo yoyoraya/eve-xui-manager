@@ -153,7 +153,7 @@ User=root
 WorkingDirectory=/opt/eve-xui-manager
 Environment="PATH=/opt/eve-xui-manager/venv/bin"
 EnvironmentFile=/opt/eve-xui-manager/.env
-ExecStart=/opt/eve-xui-manager/venv/bin/python app.py
+ExecStart=/opt/eve-xui-manager/venv/bin/gunicorn --workers 1 --threads 4 --worker-class gthread --bind 0.0.0.0:5000 app:app
 
 # Restart on failure
 Restart=always
