@@ -1708,54 +1708,86 @@ def global_client_search():
     limit = max(1, min(limit, 5000))
 
     search_term = query.lower()
+    # دریافت لیست سرورها
     servers = get_accessible_servers(user)
     if not servers:
         return jsonify({"success": True, "results": [], "errors": ["No accessible servers"]})
 
     matches = []
     errors = []
-    for server in servers:
-        session_obj, error = get_xui_session(server)
-        if error:
-            errors.append({"server_id": server.id, "server_name": server.name, "error": error})
-            continue
 
-        inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
-        if fetch_error:
-            errors.append({"server_id": server.id, "server_name": server.name, "error": fetch_error})
-            continue
+    # تبدیل آبجکت‌های سرور به دیکشنری برای ارسال به thread
+    server_dicts = [{
+        'id': s.id, 
+        'name': s.name, 
+        'host': s.host, 
+        'username': s.username, 
+        'password': s.password, 
+        'panel_type': s.panel_type,
+        'sub_port': s.sub_port,
+        'sub_path': s.sub_path,
+        'json_path': s.json_path
+    } for s in servers]
 
-        processed_inbounds, _ = process_inbounds(inbounds or [], server, user)
-        for inbound in processed_inbounds:
-            inbound_clients = inbound.get('clients', [])
-            for client in inbound_clients:
-                client_email = client.get('email', '')
-                if not client_email:
+    # --- شروع تغییرات: استفاده از ThreadPoolExecutor برای سرعت بالا ---
+    import concurrent.futures
+    
+    # دیکشنری برای دسترسی سریع به آبجکت سرور بر اساس ID
+    server_map = {s.id: s for s in servers}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        # ارسال درخواست‌ها به صورت همزمان (از تابع fetch_worker که قبلا داشتید استفاده می‌کنیم)
+        future_to_server = {executor.submit(fetch_worker, s_dict): s_dict for s_dict in server_dicts}
+        
+        for future in concurrent.futures.as_completed(future_to_server):
+            s_dict = future_to_server[future]
+            try:
+                # دریافت نتیجه از هر سرور به محض آماده شدن
+                server_id, inbounds, fetch_error = future.result()
+                
+                # پیدا کردن آبجکت سرور اصلی
+                server_obj = server_map.get(server_id)
+                if not server_obj:
                     continue
-                if search_term not in client_email.lower():
-                    continue
-                matches.append({
-                    "server_id": server.id,
-                    "server_name": server.name,
-                    "panel_type": server.panel_type,
-                    "inbound_id": inbound.get('id'),
-                    "inbound": {
-                        "id": inbound.get('id'),
-                        "remark": inbound.get('remark', ''),
-                        "port": inbound.get('port', ''),
-                        "protocol": inbound.get('protocol', ''),
-                        "enable": inbound.get('enable', False)
-                    },
-                    "client": client
-                })
-                if len(matches) >= limit:
-                    break
-            if len(matches) >= limit:
-                break
-        if len(matches) >= limit:
-            break
 
-    return jsonify({"success": True, "results": matches, "errors": errors})
+                if fetch_error:
+                    errors.append({"server_id": server_obj.id, "server_name": server_obj.name, "error": fetch_error})
+                    continue
+
+                # پردازش و جستجو در لیست دریافتی
+                processed_inbounds, _ = process_inbounds(inbounds or [], server_obj, user)
+                
+                for inbound in processed_inbounds:
+                    inbound_clients = inbound.get('clients', [])
+                    for client in inbound_clients:
+                        client_email = client.get('email', '')
+                        if not client_email:
+                            continue
+                        
+                        # شرط جستجو
+                        if search_term in client_email.lower():
+                            matches.append({
+                                "server_id": server_obj.id,
+                                "server_name": server_obj.name,
+                                "panel_type": server_obj.panel_type,
+                                "inbound_id": inbound.get('id'),
+                                "inbound": {
+                                    "id": inbound.get('id'),
+                                    "remark": inbound.get('remark', ''),
+                                    "port": inbound.get('port', ''),
+                                    "protocol": inbound.get('protocol', ''),
+                                    "enable": inbound.get('enable', False)
+                                },
+                                "client": client
+                            })
+            except Exception as e:
+                errors.append({"server_id": s_dict['id'], "server_name": s_dict['name'], "error": str(e)})
+
+    # سورت کردن نتایج (اختیاری)
+    # matches.sort(key=lambda x: x['client']['email'])
+
+    # محدود کردن تعداد نتایج نهایی
+    return jsonify({"success": True, "results": matches[:limit], "errors": errors})
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/toggle', methods=['POST'])
 @login_required
