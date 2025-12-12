@@ -18,6 +18,7 @@ from collections import defaultdict
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from functools import wraps
+import copy
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
@@ -1538,7 +1539,9 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 "server_id": server.id,
                 "server_name": server.name,
                 "total_up": format_bytes(inbound.get('up', 0)),
-                "total_down": format_bytes(inbound.get('down', 0))
+                "total_down": format_bytes(inbound.get('down', 0)),
+                "up_raw": inbound.get('up', 0),
+                "down_raw": inbound.get('down', 0)
             })
             
             stats["total_clients"] += len(processed_clients)
@@ -1640,67 +1643,115 @@ def fetch_worker(server_dict):
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
-    # اگر کش خالی است (مثلاً ثانیه اول بالا آمدن سرور)، سریع یک بار اجرا کن
-    if not GLOBAL_SERVER_DATA['last_update'] and not GLOBAL_SERVER_DATA['is_updating']:
-         return jsonify({"success": False, "error": "System is starting up, please wait..."})
+    # 1. بررسی وضعیت کش
+    # اگر کش خالی است و در حال آپدیت هم نیست (مثلاً بلافاصله بعد از ریستارت)،
+    # یک بار ترد را بیدار میکنیم یا دیتای خالی میدهیم.
+    if not GLOBAL_SERVER_DATA.get('last_update') and not GLOBAL_SERVER_DATA.get('is_updating'):
+        # اختیاری: میتوانید اینجا منتظر بمانید یا دیتای خالی برگردانید
+        pass
+
+    # 2. کپی گرفتن از دیتا برای جلوگیری از تغییر همزمان (Thread-safety)
+    # از deepcopy استفاده میکنیم تا تغییرات ما روی دیکشنری اصلی تاثیر نگذارد
+    data = copy.deepcopy(GLOBAL_SERVER_DATA)
+    
+    # اگر دیتایی هنوز آماده نیست
+    if not data.get('inbounds'):
+        return jsonify({
+            "success": True, 
+            "inbounds": [], 
+            "stats": {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, 
+                      "active_clients": 0, "inactive_clients": 0, "total_traffic": "0 B", 
+                      "total_upload": "0 B", "total_download": "0 B"}, 
+            "servers": [],
+            "server_count": 0
+        })
 
     user = db.session.get(Admin, session['admin_id'])
     
-    # کپی کردن دیتا برای جلوگیری از تغییر همزمان
-    data_inbounds = GLOBAL_SERVER_DATA['inbounds']
-    data_stats = GLOBAL_SERVER_DATA['stats']
-    data_servers = GLOBAL_SERVER_DATA['servers_status']
-    
-    if user.role == 'reseller':
-        # فیلتر کردن دیتا برای ریسلرها
-        allowed_map, assignments = get_reseller_access_maps(user)
-        ownerships = ClientOwnership.query.filter_by(reseller_id=user.id).all()
-        owned_emails = {o.client_email for o in ownerships}
-        
-        filtered_inbounds = []
-        # محاسبه مجدد آمار برای ریسلر
-        reseller_stats = {
-            "total_inbounds": 0, "active_inbounds": 0, 
-            "total_clients": 0, "active_clients": 0, "inactive_clients": 0, 
-            "upload_raw": 0, "download_raw": 0,
-            "total_traffic": "0 B", "total_upload": "0 B", "total_download": "0 B"
-        }
-
-        for inbound in data_inbounds:
-            # دسترسی به اینباند
-            if not is_inbound_accessible(inbound['server_id'], inbound['id'], allowed_map, assignments):
-                continue
-            
-            # فیلتر کلاینت‌ها
-            visible_clients = [c for c in inbound['clients'] if c['email'] in owned_emails]
-            
-            if visible_clients:
-                new_inbound = inbound.copy()
-                new_inbound['clients'] = visible_clients
-                new_inbound['client_count'] = len(visible_clients)
-                filtered_inbounds.append(new_inbound)
-                
-                reseller_stats['total_clients'] += len(visible_clients)
-                reseller_stats['active_clients'] += sum(1 for c in visible_clients if c['enable'])
-                reseller_stats['inactive_clients'] += sum(1 for c in visible_clients if not c['enable'])
-        
-        reseller_stats['total_inbounds'] = len(filtered_inbounds)
-        reseller_stats['active_inbounds'] = len(filtered_inbounds) # فرض ساده
-        
+    # 3. اگر کاربر سوپرادمین است، همه چیز را ببیند
+    if user.role != 'reseller':
         return jsonify({
             "success": True, 
-            "inbounds": filtered_inbounds, 
-            "stats": reseller_stats, 
-            "servers": data_servers,
-            "last_update": GLOBAL_SERVER_DATA['last_update']
+            "inbounds": data['inbounds'], 
+            "stats": data['stats'], 
+            "servers": data['servers_status'],
+            "server_count": len(data['servers_status']),
+            "last_update": data['last_update']
         })
+
+    # 4. لاجیک فیلترینگ برای ریسلرها (بخش مهم امنیتی)
+    # دریافت سرورهای مجاز برای این ریسلر
+    allowed_servers = get_accessible_servers(user)
+    allowed_server_ids = [s.id for s in allowed_servers]
+    
+    # اگر دسترسی به اینباندها هم محدود شده باشد، باید مپ دقیق را بگیریم
+    allowed_map, assignments = get_reseller_access_maps(user)
+
+    # الف) فیلتر کردن لیست Inboundها
+    filtered_inbounds = []
+    for inbound in data['inbounds']:
+        # شرط اول: سرور باید مجاز باشد
+        if inbound['server_id'] not in allowed_server_ids:
+            continue
+            
+        # شرط دوم: بررسی دسترسی به خود اینباند (اگر محدودیت اینباند دارید)
+        if not is_inbound_accessible(inbound['server_id'], inbound['id'], allowed_map, assignments):
+            continue
+        
+        # شرط سوم (اختیاری): فیلتر کردن کلاینت‌ها داخل اینباند
+        # اگر می‌خواهید ریسلر فقط کلاینت‌های خودش را ببیند:
+        # (این بخش بسته به بیزنس لاجیک شماست. اگر ریسلر صاحب کل اینباند است، لازم نیست)
+        # filtered_clients = [c for c in inbound['clients'] if c['email'] in my_owned_emails]
+        # inbound['clients'] = filtered_clients
+        
+        filtered_inbounds.append(inbound)
+
+    # ب) فیلتر کردن وضعیت سرورها
+    filtered_servers_status = [
+        s for s in data['servers_status'] 
+        if s['server_id'] in allowed_server_ids
+    ]
+
+    # ج) محاسبه مجدد آمار (Stats) برای ریسلر
+    # چون `data['stats']` آمار کل سیستم است، باید آمار ریسلر را از نو حساب کنیم
+    reseller_stats = {
+        "total_inbounds": len(filtered_inbounds),
+        "active_inbounds": 0,
+        "total_clients": 0,
+        "active_clients": 0,
+        "inactive_clients": 0,
+        "upload_raw": 0,
+        "download_raw": 0
+    }
+    
+    for inbound in filtered_inbounds:
+        if inbound.get('enable'):
+            reseller_stats['active_inbounds'] += 1
+            
+        clients = inbound.get('clients', [])
+        reseller_stats['total_clients'] += len(clients)
+        
+        for c in clients:
+            if c.get('enable'):
+                reseller_stats['active_clients'] += 1
+            else:
+                reseller_stats['inactive_clients'] += 1
+            
+        # حالا میتوانید دقیق جمع بزنید
+        reseller_stats['upload_raw'] += inbound.get('up_raw', 0)
+        reseller_stats['download_raw'] += inbound.get('down_raw', 0)
+
+    reseller_stats["total_upload"] = format_bytes(reseller_stats['upload_raw'])
+    reseller_stats["total_download"] = format_bytes(reseller_stats['download_raw'])
+    reseller_stats["total_traffic"] = format_bytes(reseller_stats['upload_raw'] + reseller_stats['download_raw'])
 
     return jsonify({
         "success": True, 
-        "inbounds": data_inbounds, 
-        "stats": data_stats, 
-        "servers": data_servers,
-        "last_update": GLOBAL_SERVER_DATA['last_update']
+        "inbounds": filtered_inbounds, 
+        "stats": reseller_stats, 
+        "servers": filtered_servers_status,
+        "server_count": len(filtered_servers_status),
+        "last_update": data['last_update']
     })
 
 @app.route('/api/servers/list')
