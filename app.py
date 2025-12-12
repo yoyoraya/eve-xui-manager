@@ -1882,7 +1882,7 @@ def settings_page():
 @limiter.limit("60 per minute")
 def global_client_search():
     user = db.session.get(Admin, session['admin_id'])
-    query = (request.args.get('email') or '').strip()
+    query = (request.args.get('email') or '').strip().lower()
     if not query:
         return jsonify({"success": False, "error": "Query parameter 'email' is required"}), 400
 
@@ -1892,87 +1892,67 @@ def global_client_search():
         limit = 500
     limit = max(1, min(limit, 5000))
 
-    search_term = query.lower()
-    # دریافت لیست سرورها
-    servers = get_accessible_servers(user)
-    if not servers:
-        return jsonify({"success": True, "results": [], "errors": ["No accessible servers"]})
+    # --- اصلاح حرفه‌ای: جستجو در کش (RAM) به جای درخواست مجدد ---
+    
+    # اگر کش خالی است (برنامه تازه اجرا شده)، پیام مناسب بدهد
+    if not GLOBAL_SERVER_DATA.get('inbounds'):
+        return jsonify({"success": True, "results": [], "errors": ["System is starting up, please wait..."]})
 
     matches = []
-    errors = []
-
-    # تبدیل آبجکت‌های سرور به دیکشنری برای ارسال به thread
-    server_dicts = [{
-        'id': s.id, 
-        'name': s.name, 
-        'host': s.host, 
-        'username': s.username, 
-        'password': s.password, 
-        'panel_type': s.panel_type,
-        'sub_port': s.sub_port,
-        'sub_path': s.sub_path,
-        'json_path': s.json_path
-    } for s in servers]
-
-    # --- شروع تغییرات: استفاده از ThreadPoolExecutor برای سرعت بالا ---
-    import concurrent.futures
     
-    # دیکشنری برای دسترسی سریع به آبجکت سرور بر اساس ID
-    server_map = {s.id: s for s in servers}
+    # دریافت دسترسی‌های کاربر برای فیلتر کردن نتایج
+    accessible_servers = get_accessible_servers(user)
+    accessible_server_ids = {s.id for s in accessible_servers}
+    
+    # تنظیمات دسترسی ریسلر
+    allowed_map = '*'
+    assignments = {}
+    if user.role == 'reseller':
+        allowed_map, assignments = get_reseller_access_maps(user)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        # ارسال درخواست‌ها به صورت همزمان (از تابع fetch_worker که قبلا داشتید استفاده می‌کنیم)
-        future_to_server = {executor.submit(fetch_worker, s_dict): s_dict for s_dict in server_dicts}
+    # جستجو در داده‌های موجود در رم
+    for inbound in GLOBAL_SERVER_DATA['inbounds']:
+        sid = inbound.get('server_id')
+        iid = inbound.get('id')
+
+        # 1. بررسی دسترسی به سرور
+        if sid not in accessible_server_ids:
+            continue
+
+        # 2. بررسی دسترسی به اینباند (مخصوص ریسلرها)
+        if user.role == 'reseller':
+            if not is_inbound_accessible(sid, iid, allowed_map, assignments):
+                continue
+
+        # 3. جستجو در کلاینت‌های این اینباند
+        clients = inbound.get('clients', [])
+        for client in clients:
+            c_email = client.get('email', '')
+            if c_email and query in c_email.lower():
+                # کلاینت پیدا شد
+                matches.append({
+                    "server_id": sid,
+                    "server_name": inbound.get('server_name'),
+                    # پنل تایپ را از روی سرور پیدا می‌کنیم (چون در کش اینباند نیست)
+                    "panel_type": next((s.panel_type for s in accessible_servers if s.id == sid), 'auto'),
+                    "inbound_id": iid,
+                    "inbound": {
+                        "id": iid,
+                        "remark": inbound.get('remark', ''),
+                        "port": inbound.get('port', ''),
+                        "protocol": inbound.get('protocol', ''),
+                        "enable": inbound.get('enable', False)
+                    },
+                    "client": client
+                })
+
+                if len(matches) >= limit:
+                    break
         
-        for future in concurrent.futures.as_completed(future_to_server):
-            s_dict = future_to_server[future]
-            try:
-                # دریافت نتیجه از هر سرور به محض آماده شدن
-                server_id, inbounds, fetch_error = future.result()
-                
-                # پیدا کردن آبجکت سرور اصلی
-                server_obj = server_map.get(server_id)
-                if not server_obj:
-                    continue
+        if len(matches) >= limit:
+            break
 
-                if fetch_error:
-                    errors.append({"server_id": server_obj.id, "server_name": server_obj.name, "error": fetch_error})
-                    continue
-
-                # پردازش و جستجو در لیست دریافتی
-                processed_inbounds, _ = process_inbounds(inbounds or [], server_obj, user)
-                
-                for inbound in processed_inbounds:
-                    inbound_clients = inbound.get('clients', [])
-                    for client in inbound_clients:
-                        client_email = client.get('email', '')
-                        if not client_email:
-                            continue
-                        
-                        # شرط جستجو
-                        if search_term in client_email.lower():
-                            matches.append({
-                                "server_id": server_obj.id,
-                                "server_name": server_obj.name,
-                                "panel_type": server_obj.panel_type,
-                                "inbound_id": inbound.get('id'),
-                                "inbound": {
-                                    "id": inbound.get('id'),
-                                    "remark": inbound.get('remark', ''),
-                                    "port": inbound.get('port', ''),
-                                    "protocol": inbound.get('protocol', ''),
-                                    "enable": inbound.get('enable', False)
-                                },
-                                "client": client
-                            })
-            except Exception as e:
-                errors.append({"server_id": s_dict['id'], "server_name": s_dict['name'], "error": str(e)})
-
-    # سورت کردن نتایج (اختیاری)
-    # matches.sort(key=lambda x: x['client']['email'])
-
-    # محدود کردن تعداد نتایج نهایی
-    return jsonify({"success": True, "results": matches[:limit], "errors": errors})
+    return jsonify({"success": True, "results": matches, "errors": []})
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/toggle', methods=['POST'])
 @login_required
