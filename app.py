@@ -668,8 +668,8 @@ with app.app_context():
         ]
         db.session.add_all(panel_apis)
     
-    initial_username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
-    if not Admin.query.filter_by(username=initial_username).first():
+    if Admin.query.count() == 0:
+        initial_username = os.environ.get("INITIAL_ADMIN_USERNAME", "admin")
         default_admin = Admin(
             username=initial_username,
             is_superadmin=True,
@@ -1130,10 +1130,21 @@ def format_bytes(size):
     power = 2**10
     n = 0
     power_labels = {0: '', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
-    while size > power and n < 4:
+    while size >= power and n < 4:
         size /= power
         n += 1
     return f"{size:.2f} {power_labels[n]}B"
+
+def format_bytes_gb_tb(size):
+    """Formats bytes to GB or TB only."""
+    if size is None or size == 0: return "0 GB"
+    
+    gb_val = size / (1024**3)
+    if gb_val >= 1024:
+        tb_val = gb_val / 1024
+        return f"{tb_val:.2f} TB"
+    else:
+        return f"{gb_val:.2f} GB"
 
 def format_remaining_days(timestamp):
     if timestamp == 0 or timestamp is None:
@@ -1418,10 +1429,10 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
     
     assignments = assignments or {}
 
-    owned_emails = []
+    owned_emails = set()
     if user.role == 'reseller':
         ownerships = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server.id).all()
-        owned_emails = [o.client_email for o in ownerships]
+        owned_emails = {o.client_email.lower() for o in ownerships if o.client_email}
 
     for inbound in inbounds:
         try:
@@ -1445,7 +1456,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
             for client in clients:
                 email = client.get('email', '')
                 
-                if user.role == 'reseller' and email not in owned_emails:
+                if user.role == 'reseller' and email.lower() not in owned_emails:
                     continue 
                 
                 sub_id = client.get('subId', '')
@@ -1487,8 +1498,8 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
 
                 total_bytes = client.get('totalGB', 0) or 0
                 remaining_bytes = max(total_bytes - (client_up + client_down), 0) if total_bytes > 0 else None
-                total_formatted = format_bytes(total_bytes) if total_bytes > 0 else "Unlimited"
-                remaining_formatted = format_bytes(remaining_bytes) if remaining_bytes is not None else "Unlimited"
+                total_formatted = format_bytes_gb_tb(total_bytes) if total_bytes > 0 else "Unlimited"
+                remaining_formatted = format_bytes_gb_tb(remaining_bytes) if remaining_bytes is not None else "Unlimited"
 
                 expiry_raw = client.get('expiryTime', 0)
                 expiry_info = format_remaining_days(expiry_raw)
@@ -1505,8 +1516,10 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                     "expiryTime": expiry_info['text'],
                     "expiryTimestamp": expiry_raw,
                     "expiryType": expiry_info['type'],
-                    "up": format_bytes(client_up),
-                    "down": format_bytes(client_down),
+                    "up": client_up,
+                    "down": client_down,
+                    "up_formatted": format_bytes(client_up),
+                    "down_formatted": format_bytes(client_down),
                     "sub_url": sub_url,
                     "json_url": json_url,
                     "dash_sub_url": dash_sub_url,
@@ -1644,17 +1657,11 @@ def fetch_worker(server_dict):
 @login_required
 def api_refresh():
     # 1. بررسی وضعیت کش
-    # اگر کش خالی است و در حال آپدیت هم نیست (مثلاً بلافاصله بعد از ریستارت)،
-    # یک بار ترد را بیدار میکنیم یا دیتای خالی میدهیم.
     if not GLOBAL_SERVER_DATA.get('last_update') and not GLOBAL_SERVER_DATA.get('is_updating'):
-        # اختیاری: میتوانید اینجا منتظر بمانید یا دیتای خالی برگردانید
         pass
 
-    # 2. کپی گرفتن از دیتا برای جلوگیری از تغییر همزمان (Thread-safety)
-    # از deepcopy استفاده میکنیم تا تغییرات ما روی دیکشنری اصلی تاثیر نگذارد
     data = copy.deepcopy(GLOBAL_SERVER_DATA)
     
-    # اگر دیتایی هنوز آماده نیست
     if not data.get('inbounds'):
         return jsonify({
             "success": True, 
@@ -1668,8 +1675,9 @@ def api_refresh():
 
     user = db.session.get(Admin, session['admin_id'])
     
-    # 3. اگر کاربر سوپرادمین است، همه چیز را ببیند
+    # === حالت سوپرادمین (یا ادمین معمولی غیر ریسلر) ===
     if user.role != 'reseller':
+        # سوپرادمین همه چیز را می‌بیند
         return jsonify({
             "success": True, 
             "inbounds": data['inbounds'], 
@@ -1679,78 +1687,110 @@ def api_refresh():
             "last_update": data['last_update']
         })
 
-    # 4. لاجیک فیلترینگ برای ریسلرها (بخش مهم امنیتی)
-    # دریافت سرورهای مجاز برای این ریسلر
-    allowed_servers = get_accessible_servers(user)
-    allowed_server_ids = [s.id for s in allowed_servers]
-    
-    # اگر دسترسی به اینباندها هم محدود شده باشد، باید مپ دقیق را بگیریم
+    # === حالت ریسلر ===
+    # 1. دریافت دسترسی‌های سرور و اینباند
     allowed_map, assignments = get_reseller_access_maps(user)
+    
+    # 2. دریافت لیست کلاینت‌های Assign شده به این ریسلر از دیتابیس
+    owned_ownerships = ClientOwnership.query.filter_by(reseller_id=user.id).all()
+    
+    exact_matches = set()
+    loose_matches = set()
+    
+    for o in owned_ownerships:
+        c_email = o.client_email.lower() if o.client_email else ''
+        sid = int(o.server_id)
+        
+        if o.inbound_id is not None:
+            exact_matches.add((sid, int(o.inbound_id), c_email))
+        else:
+            loose_matches.add((sid, c_email))
 
-    # الف) فیلتر کردن لیست Inboundها
     filtered_inbounds = []
-    for inbound in data['inbounds']:
-        # شرط اول: سرور باید مجاز باشد
-        if inbound['server_id'] not in allowed_server_ids:
-            continue
-            
-        # شرط دوم: بررسی دسترسی به خود اینباند (اگر محدودیت اینباند دارید)
-        if not is_inbound_accessible(inbound['server_id'], inbound['id'], allowed_map, assignments):
-            continue
-        
-        # شرط سوم (اختیاری): فیلتر کردن کلاینت‌ها داخل اینباند
-        # اگر می‌خواهید ریسلر فقط کلاینت‌های خودش را ببیند:
-        # (این بخش بسته به بیزنس لاجیک شماست. اگر ریسلر صاحب کل اینباند است، لازم نیست)
-        # filtered_clients = [c for c in inbound['clients'] if c['email'] in my_owned_emails]
-        # inbound['clients'] = filtered_clients
-        
-        filtered_inbounds.append(inbound)
-
-    # ب) فیلتر کردن وضعیت سرورها
-    filtered_servers_status = [
-        s for s in data['servers_status'] 
-        if s['server_id'] in allowed_server_ids
-    ]
-
-    # ج) محاسبه مجدد آمار (Stats) برای ریسلر
-    # چون `data['stats']` آمار کل سیستم است، باید آمار ریسلر را از نو حساب کنیم
+    unique_server_ids = set()
+    
+    # متغیرهای آمار مخصوص ریسلر
     reseller_stats = {
-        "total_inbounds": len(filtered_inbounds),
+        "total_inbounds": 0,
         "active_inbounds": 0,
-        "total_clients": 0,
-        "active_clients": 0,
-        "inactive_clients": 0,
-        "upload_raw": 0,
+        "total_clients": 0,     # فقط کلاینت‌های Assign شده
+        "active_clients": 0,    # فقط کلاینت‌های Assign شده فعال
+        "inactive_clients": 0,  # فقط کلاینت‌های Assign شده غیرفعال
+        "upload_raw": 0,        # فقط مصرف کلاینت‌های Assign شده
         "download_raw": 0
     }
-    
-    for inbound in filtered_inbounds:
-        if inbound.get('enable'):
-            reseller_stats['active_inbounds'] += 1
-            
-        clients = inbound.get('clients', [])
-        reseller_stats['total_clients'] += len(clients)
-        
-        for c in clients:
-            if c.get('enable'):
-                reseller_stats['active_clients'] += 1
-            else:
-                reseller_stats['inactive_clients'] += 1
-            
-        # حالا میتوانید دقیق جمع بزنید
-        reseller_stats['upload_raw'] += inbound.get('up_raw', 0)
-        reseller_stats['download_raw'] += inbound.get('down_raw', 0)
 
-    reseller_stats["total_upload"] = format_bytes(reseller_stats['upload_raw'])
-    reseller_stats["total_download"] = format_bytes(reseller_stats['download_raw'])
-    reseller_stats["total_traffic"] = format_bytes(reseller_stats['upload_raw'] + reseller_stats['download_raw'])
+    for inbound in data['inbounds']:
+        sid = inbound['server_id']
+        iid = inbound['id']
+        
+        # شرط ۱: دسترسی به اینباند (از طریق Allowed Server یا Assignment)
+        if not is_inbound_accessible(sid, iid, allowed_map, assignments):
+            continue
+            
+        # اینباند مجاز است
+        unique_server_ids.add(sid)
+        
+        # برای نمایش در لیست: آمار کل اینباند را برای ریسلر صفر می‌کنیم (طبق درخواست)
+        inbound['total_up'] = "---"
+        inbound['total_down'] = "---"
+        
+        # شمارش اینباند
+        reseller_stats["total_inbounds"] += 1
+        if inbound.get('enable'):
+            reseller_stats["active_inbounds"] += 1
+
+        # پردازش کلاینت‌ها برای آمار دقیق و فیلتر کردن لیست نمایش
+        clients_in_inbound = inbound.get('clients', [])
+        filtered_clients_list = []
+        
+        for client in clients_in_inbound:
+            c_email = client.get('email', '').lower()
+            
+            # چک می‌کنیم آیا این کلاینت به ریسلر Assign شده؟
+            # 1. تطابق دقیق (سرور، اینباند، ایمیل)
+            # 2. تطابق بدون اینباند (سرور، ایمیل) - برای رکوردهای قدیمی یا ناقص
+            is_assigned = (sid, iid, c_email) in exact_matches or (sid, c_email) in loose_matches
+            
+            if is_assigned:
+                # اضافه کردن به لیست فیلتر شده برای نمایش
+                filtered_clients_list.append(client)
+                
+                # محاسبه آمار
+                reseller_stats["total_clients"] += 1
+                if client.get('enable'):
+                    reseller_stats["active_clients"] += 1
+                else:
+                    reseller_stats["inactive_clients"] += 1
+                
+                # جمع زدن ترافیک کلاینت‌های خودش
+                reseller_stats["upload_raw"] += client.get('up', 0)
+                reseller_stats["download_raw"] += client.get('down', 0)
+
+        # جایگزینی لیست کلاینت‌های اینباند با لیست فیلتر شده
+        inbound['clients'] = filtered_clients_list
+        # آپدیت تعداد کلاینت‌های نمایش داده شده در اینباند
+        inbound['client_count'] = len(filtered_clients_list)
+
+        filtered_inbounds.append(inbound)
+
+    # فرمت کردن آمار نهایی
+    reseller_stats["total_traffic"] = format_bytes(reseller_stats["upload_raw"] + reseller_stats["download_raw"])
+    reseller_stats["total_upload"] = format_bytes(reseller_stats["upload_raw"])
+    reseller_stats["total_download"] = format_bytes(reseller_stats["download_raw"])
+    
+    # فیلتر کردن وضعیت سرورها
+    filtered_servers_status = [
+        s for s in data['servers_status'] 
+        if s['server_id'] in unique_server_ids
+    ]
 
     return jsonify({
         "success": True, 
         "inbounds": filtered_inbounds, 
         "stats": reseller_stats, 
         "servers": filtered_servers_status,
-        "server_count": len(filtered_servers_status),
+        "server_count": len(unique_server_ids),
         "last_update": data['last_update']
     })
 
@@ -1936,6 +1976,9 @@ def toggle_client(server_id, inbound_id):
     except:
         return jsonify({"success": False, "error": "Invalid JSON"}), 400
     
+    price = 0
+    description = f"Toggle client {email} to {enable}"
+
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
         if not ownership:
@@ -2088,9 +2131,9 @@ def reset_client_traffic(server_id, inbound_id):
                     card_id = data.get('card_id')
                     if user.role == 'reseller':
                         user.credit -= charge_amount
-                        log_transaction(user.id, -charge_amount, 'reset_traffic', "Reset traffic (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage')
+                        log_transaction(user.id, -charge_amount, 'reset_traffic', "Reset traffic (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
                     else:
-                        log_transaction(user.id, charge_amount, 'reset_traffic', "Reset traffic (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income')
+                        log_transaction(user.id, charge_amount, 'reset_traffic', "Reset traffic (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
                     db.session.commit()
 
                 response = {"success": True}
@@ -2274,7 +2317,7 @@ def delete_client(server_id, inbound_id, email):
             ClientOwnership.query.filter_by(server_id=server_id, client_email=email).delete()
             db.session.commit()
             
-            log_transaction(user.id, 0, 'delete_client', f"Deleted client {email}", server_id=server.id)
+            log_transaction(user.id, 0, 'delete_client', f"Deleted client {email}", server_id=server.id, client_email=email)
             
             return jsonify({"success": True})
         else:
@@ -2454,9 +2497,9 @@ def renew_client(server_id, inbound_id, email):
                     card_id = data.get('card_id')
                     if user.role == 'reseller':
                         user.credit -= price
-                        log_transaction(user.id, -price, 'renew', "User Renewal (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage')
+                        log_transaction(user.id, -price, 'renew', "User Renewal (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
                     else:
-                        log_transaction(user.id, price, 'renew', "User Renewal (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income')
+                        log_transaction(user.id, price, 'renew', "User Renewal (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
                     db.session.commit()
 
                 return jsonify({"success": True})

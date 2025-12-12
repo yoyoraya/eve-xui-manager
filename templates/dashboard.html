@@ -109,7 +109,21 @@
                 <circle cx="11" cy="11" r="8"></circle>
                 <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="global-search-input" name="search_query_custom" autocomplete="off" data-lpignore="true" placeholder="Search clients..." class="search-input">
+            
+            <div style="width:0;height:0;overflow:hidden;position:absolute;">
+                <input type="text" name="fake_username_trap" tabindex="-1">
+                <input type="password" name="fake_password_trap" tabindex="-1">
+            </div>
+
+            <input type="text" 
+                   id="global-search-input" 
+                   name="search_query_unique_id_123" 
+                   autocomplete="off" 
+                   readonly 
+                   onfocus="this.removeAttribute('readonly');"
+                   placeholder="Search clients..." 
+                   class="search-input">
+
             <button class="search-clear hidden" onclick="clearSearch()" id="clear-search-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
@@ -782,7 +796,7 @@
             if (data.success) {
                 allInboundsData = data.inbounds;
                 inboundsData = data.inbounds;
-                allServers = data.servers || []; // Update server status list if needed
+                // allServers = data.servers || []; // Don't overwrite config with status
                 
                 // Clear pending servers since we have full data
                 pendingServers = [];
@@ -953,8 +967,8 @@
                                         </td>
                                         <td class="traffic-cell">
                                             <div class="traffic-combined-cell">
-                                                <span class="up">↑${client.up}</span>
-                                                <span class="down">↓${client.down}</span>
+                                                <span class="up">↑ ${client.up_formatted}</span>
+                                                <span class="down">↓ ${client.down_formatted}</span>
                                             </div>
                                         </td>
                                         <td class="volume-cell">
@@ -2229,8 +2243,8 @@
                                         </td>
                                         <td class="traffic-cell">
                                             <div class="traffic-combined-cell">
-                                                <span class="up">${client.up}</span>
-                                                <span class="down">${client.down}</span>
+                                                <span class="up">↑ ${client.up_formatted}</span>
+                                                <span class="down">↓ ${client.down_formatted}</span>
                                             </div>
                                         </td>
                                         <td class="volume-cell">

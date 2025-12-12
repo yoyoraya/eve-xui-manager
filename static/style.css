@@ -882,6 +882,10 @@ input:checked + .slider:before {
     white-space: nowrap;
 }
 
+.clients-table th:last-child {
+    text-align: right;
+}
+
 .clients-table td {
     padding: 12px 10px;
     border-bottom: 1px solid var(--border-color);
@@ -963,6 +967,7 @@ input:checked + .slider:before {
     display: flex;
     gap: 4px;
     flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .action-btn {
@@ -2688,6 +2693,7 @@ select optgroup {
         gap: 6px;
         flex-wrap: wrap;
         width: 100%;
+        justify-content: flex-start;
     }
     
     .action-btn {
