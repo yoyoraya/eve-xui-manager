@@ -3590,9 +3590,22 @@ def get_finance_stats():
     if not user:
         return jsonify({"success": False, "error": "User not found"}), 401
     
-    now = datetime.utcnow()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    month_start = today_start.replace(day=1)
+    # Calculate dates based on Tehran time and Jalali calendar
+    now_utc = datetime.utcnow()
+    tehran_offset = timedelta(hours=3, minutes=30)
+    now_tehran = now_utc + tehran_offset
+    
+    j_now = jdatetime_class.fromgregorian(datetime=now_tehran)
+    
+    # Start of Jalali month
+    j_month_start = j_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    g_month_start_tehran = j_month_start.togregorian()
+    month_start = g_month_start_tehran - tehran_offset
+    
+    # Start of Today (Jalali/Tehran)
+    j_today_start = j_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    g_today_start_tehran = j_today_start.togregorian()
+    today_start = g_today_start_tehran - tehran_offset
 
     card_id = request.args.get('card_id', type=int)
     target_user_id = request.args.get('user_id', type=int)
