@@ -49,6 +49,80 @@ GLOBAL_SERVER_DATA = {
     'is_updating': False
 }
 
+# Prevent overlapping forced refreshes (e.g. after rapid UI actions)
+GLOBAL_REFRESH_LOCK = threading.Lock()
+
+
+def _recompute_global_stats_from_server_statuses(server_statuses):
+    """Recompute aggregate stats from cached per-server stats."""
+    total_stats = {
+        "total_inbounds": 0,
+        "active_inbounds": 0,
+        "total_clients": 0,
+        "active_clients": 0,
+        "inactive_clients": 0,
+        "upload_raw": 0,
+        "download_raw": 0,
+    }
+
+    for status in server_statuses or []:
+        if not isinstance(status, dict) or not status.get("success"):
+            continue
+        stats = status.get("stats")
+        if not isinstance(stats, dict):
+            continue
+        for k in list(total_stats.keys()):
+            v = stats.get(k, 0)
+            if isinstance(v, int):
+                total_stats[k] += v
+
+    total_stats["total_upload"] = format_bytes(total_stats["upload_raw"])
+    total_stats["total_download"] = format_bytes(total_stats["download_raw"])
+    total_stats["total_traffic"] = format_bytes(total_stats["upload_raw"] + total_stats["download_raw"])
+    return total_stats
+
+
+def fetch_and_update_server_data(server_id: int):
+    """Fetch a single server's inbounds and update GLOBAL_SERVER_DATA in-place."""
+    server = db.session.get(Server, int(server_id))
+    if not server or not server.enabled:
+        raise ValueError("Server not found or disabled")
+
+    admin_user = Admin.query.filter(or_(Admin.is_superadmin == True, Admin.role == 'superadmin')).first()
+    if not admin_user:
+        admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
+
+    session_obj, error = get_xui_session(server)
+    if error:
+        raise RuntimeError(error)
+
+    inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
+    if fetch_error:
+        raise RuntimeError(fetch_error)
+
+    processed, stats = process_inbounds(inbounds, server, admin_user, '*', {})
+
+    # Update cache atomically under lock
+    # - Replace only this server's inbounds
+    # - Update per-server status stats
+    # - Recompute aggregate stats
+    existing_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    GLOBAL_SERVER_DATA['inbounds'] = [i for i in existing_inbounds if int(i.get('server_id', -1)) != int(server.id)] + list(processed or [])
+
+    statuses = GLOBAL_SERVER_DATA.get('servers_status') or []
+    updated = False
+    for st in statuses:
+        if isinstance(st, dict) and int(st.get('server_id', -1)) == int(server.id):
+            st.update({"server_id": server.id, "success": True, "stats": stats, "panel_type": server.panel_type})
+            updated = True
+            break
+    if not updated:
+        statuses.append({"server_id": server.id, "success": True, "stats": stats, "panel_type": server.panel_type})
+    GLOBAL_SERVER_DATA['servers_status'] = statuses
+
+    GLOBAL_SERVER_DATA['stats'] = _recompute_global_stats_from_server_statuses(statuses)
+    GLOBAL_SERVER_DATA['last_update'] = datetime.utcnow().isoformat()
+
 # Guard to avoid starting background threads multiple times (important for gunicorn workers / dev reload)
 BACKGROUND_THREADS_STARTED = False
 
@@ -1686,9 +1760,33 @@ def api_refresh():
     if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
         ensure_background_threads_started()
 
-    # 1. بررسی وضعیت کش
-    if not GLOBAL_SERVER_DATA.get('last_update') and not GLOBAL_SERVER_DATA.get('is_updating'):
-        pass
+    force = str(request.args.get('force', '')).lower() in ('1', 'true', 'yes')
+    wait = str(request.args.get('wait', '')).lower() in ('1', 'true', 'yes')
+    server_id = request.args.get('server_id')
+    wait_timeout = 12.0
+
+    # Optionally force-refresh the cache
+    # - If server_id is provided: refresh only that server
+    # - Otherwise: refresh all servers
+    if force:
+        if GLOBAL_REFRESH_LOCK.acquire(blocking=False):
+            try:
+                if not GLOBAL_SERVER_DATA.get('is_updating'):
+                    GLOBAL_SERVER_DATA['is_updating'] = True
+                    try:
+                        if server_id:
+                            fetch_and_update_server_data(int(server_id))
+                        else:
+                            fetch_and_update_global_data()
+                    finally:
+                        GLOBAL_SERVER_DATA['is_updating'] = False
+            finally:
+                GLOBAL_REFRESH_LOCK.release()
+
+    if wait:
+        start = time.time()
+        while GLOBAL_SERVER_DATA.get('is_updating') and (time.time() - start) < wait_timeout:
+            time.sleep(0.2)
 
     data = copy.deepcopy(GLOBAL_SERVER_DATA)
     

@@ -732,6 +732,7 @@
     let allInboundsData = [];
     let pendingServers = [];
     let refreshController = null;
+    const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
@@ -779,8 +780,47 @@
         }
     }
 
-    async function refreshData(isSilent = false) {
+    function isSearchActive() {
+        const searchInput = document.getElementById('global-search-input');
+        return Boolean(searchInput && searchInput.value.trim().length > 0);
+    }
+
+    function queueSilentServerRefresh(serverId, cooldownMs = 1200) {
+        const key = (serverId !== undefined && serverId !== null && serverId !== '') ? String(serverId) : '__all__';
+        const now = Date.now();
+
+        const existing = postActionRefreshState.get(key) || { nextAllowedAt: 0, timer: null };
+        const run = () => refreshData(true, { force: true, wait: true, serverId: serverId || null });
+
+        if (now >= existing.nextAllowedAt) {
+            if (existing.timer) {
+                clearTimeout(existing.timer);
+                existing.timer = null;
+            }
+            existing.nextAllowedAt = now + cooldownMs;
+            postActionRefreshState.set(key, existing);
+            run();
+            return;
+        }
+
+        const delay = Math.max(0, existing.nextAllowedAt - now);
+        if (existing.timer) clearTimeout(existing.timer);
+        existing.timer = setTimeout(() => {
+            const cur = postActionRefreshState.get(key) || existing;
+            cur.timer = null;
+            cur.nextAllowedAt = Date.now() + cooldownMs;
+            postActionRefreshState.set(key, cur);
+            run();
+        }, delay);
+        postActionRefreshState.set(key, existing);
+    }
+
+    async function refreshData(isSilent = false, options = {}) {
         const refreshBtn = document.querySelector('.header-controls .btn-primary');
+
+        const force = Boolean(options && options.force);
+        const wait = Boolean(options && options.wait);
+        const serverId = (options && (options.serverId !== undefined)) ? options.serverId : null;
         
         // Cancel previous request if it exists
         if (refreshController) {
@@ -802,7 +842,12 @@
         }
         
         try {
-            const response = await fetch('/api/refresh', { signal });
+            const params = new URLSearchParams();
+            if (force) params.set('force', '1');
+            if (wait) params.set('wait', '1');
+            if (serverId !== null && serverId !== '' && serverId !== undefined) params.set('server_id', String(serverId));
+            const qs = params.toString() ? `?${params.toString()}` : '';
+            const response = await fetch(`/api/refresh${qs}`, { signal });
             const data = await response.json();
             
             if (data.success) {
@@ -1217,7 +1262,7 @@
             const data = await response.json();
             if (data.success) {
                 showToast(enable ? 'Client enabled' : 'Client disabled');
-                refreshData();
+                queueSilentServerRefresh(serverId);
             } else {
                 showToast(data.error || 'Error', 'error');
             }
@@ -1286,7 +1331,7 @@
                 if (typeof data.remaining_credit !== 'undefined') {
                     updateWalletDisplay(data.remaining_credit);
                 }
-                refreshData();
+                queueSilentServerRefresh(serverId);
             } else {
                 showToast(data.error || 'Error', 'error');
             }
@@ -1364,7 +1409,7 @@
                 if (typeof data.remaining_credit !== 'undefined') {
                     updateWalletDisplay(data.remaining_credit);
                 }
-                refreshData();
+                queueSilentServerRefresh(serverId);
             } else {
                 showToast(data.error || 'Error renewing', 'error');
             }
@@ -1715,7 +1760,8 @@
             if (data.success) {
                 showToast('Client created successfully');
                 closeAddClientModal();
-                refreshData();
+                // Always refresh only the affected server immediately
+                refreshData(true, { force: true, wait: true, serverId: inboundData.server_id });
                 if (data.client) {
                     showNewClientModal(data.client);
                 }
@@ -2518,7 +2564,7 @@
             if (result.success) {
                 showToast('Client updated successfully');
                 closeEditClientModal();
-                refreshData();
+                queueSilentServerRefresh(serverId);
             } else {
                 showToast(result.error || 'Error updating client', 'error');
             }
@@ -2583,7 +2629,7 @@
             if (result.success) {
                 showToast('Client deleted successfully');
                 closeDeleteClientModal();
-                refreshData();
+                queueSilentServerRefresh(serverId);
             } else {
                 showToast(result.error || 'Error deleting client', 'error');
             }
