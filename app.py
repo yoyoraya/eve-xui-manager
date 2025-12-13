@@ -923,6 +923,35 @@ def format_jalali(dt):
 
 EMAIL_IN_DESCRIPTION = re.compile(r'([A-Za-z0-9_.+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9-.]+)$')
 
+_DIGIT_TRANSLATION = str.maketrans({
+    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+})
+
+
+def parse_amount_to_int(value):
+    """Parse amount input to int.
+
+    Accepts strings with commas/spaces and Persian/Arabic digits.
+    Returns None if cannot parse.
+    """
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return int(value)
+        s = str(value).strip()
+        if not s:
+            return None
+        s = s.translate(_DIGIT_TRANSLATION)
+        # Keep digits only (strip separators/currency)
+        s = re.sub(r'[^0-9]', '', s)
+        if not s:
+            return None
+        return int(s)
+    except Exception:
+        return None
+
 def extract_email_from_description(description):
     if not description:
         return None
@@ -3467,8 +3496,8 @@ def add_payment():
     except Exception:
         logger.info('add_payment request: (unserializable data)')
     
-    amount = data.get('amount')
-    if not amount or int(amount) <= 0:
+    amount_val = parse_amount_to_int(data.get('amount'))
+    if not amount_val or int(amount_val) <= 0:
         return jsonify({"success": False, "error": "Amount is required and must be positive"}), 400
     
     payment_date_str = (data.get('payment_date') or '').strip() or None
@@ -3489,10 +3518,7 @@ def add_payment():
     if is_expense:
         cost_type = (data.get('cost_type') or 'server_cost').strip()
         server_id = data.get('server_id') or None
-        try:
-            amount_val = -abs(int(amount))
-        except Exception:
-            return jsonify({"success": False, "error": "Invalid amount"}), 400
+        amount_val = -abs(int(amount_val))
 
         tx = Transaction(
             admin_id=user.id,
@@ -3523,7 +3549,7 @@ def add_payment():
         card_id=data.get('card_id') or None,
         sender_card=data.get('sender_card', '').strip() or None,
         sender_name=data.get('sender_name', '').strip() or None,
-        amount=int(amount),
+        amount=int(amount_val),
         payment_date=payment_date,
         client_email=data.get('client_email', '').strip() or None,
         description=data.get('description', '').strip() or None,
@@ -3561,7 +3587,10 @@ def update_payment(payment_id):
         return jsonify({"success": False, "error": "Invalid JSON"}), 400
     
     if 'amount' in data:
-        payment.amount = int(data['amount'])
+        parsed = parse_amount_to_int(data.get('amount'))
+        if parsed is None or int(parsed) <= 0:
+            return jsonify({"success": False, "error": "Invalid amount"}), 400
+        payment.amount = int(parsed)
     if 'card_id' in data:
         payment.card_id = data['card_id'] or None
     if 'sender_card' in data:

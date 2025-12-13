@@ -269,7 +269,7 @@
                 </div>
                 <div class="form-group">
                     <label>Amount (Toman) *</label>
-                    <input type="number" id="payment-amount" class="form-input" required min="1" placeholder="e.g. 150000">
+                    <input type="text" id="payment-amount" class="form-input" required inputmode="numeric" placeholder="e.g. 150,000">
                 </div>
                 <div class="form-group">
                     <label>Payment Date (Jalali)</label>
@@ -433,6 +433,45 @@
             clearTimeout(timeout);
             timeout = setTimeout(() => fn(...args), delay);
         };
+    };
+
+    const normalizeDigits = (value) => {
+        if (value == null) return '';
+        let s = String(value);
+        const map = {
+            '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+            '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+        };
+        s = s.replace(/[۰-۹٠-٩]/g, (ch) => map[ch] || ch);
+        return s;
+    };
+
+    const toCleanNumberString = (value) => {
+        // keep digits only (after normalizing), strip commas/spaces
+        const s = normalizeDigits(value);
+        const digitsOnly = s.replace(/[^0-9]/g, '');
+        return digitsOnly;
+    };
+
+    const formatWithCommas = (digitsOnly) => {
+        const s = String(digitsOnly || '').replace(/^0+(\d)/, '$1');
+        if (!s) return '';
+        return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    };
+
+    const setupAmountFormatting = () => {
+        const amountInput = document.getElementById('payment-amount');
+        if (!amountInput) return;
+
+        amountInput.addEventListener('input', () => {
+            const cleaned = toCleanNumberString(amountInput.value);
+            amountInput.value = formatWithCommas(cleaned);
+        });
+
+        amountInput.addEventListener('blur', () => {
+            const cleaned = toCleanNumberString(amountInput.value);
+            amountInput.value = formatWithCommas(cleaned);
+        });
     };
 
     const updateKindUI = () => {
@@ -754,6 +793,13 @@
 
     addPaymentBtn.addEventListener('click', () => {
         document.getElementById('modal-title').textContent = 'Add Payment';
+        // اتوفیل تاریخ امروز به جلالی (کاربر می‌تواند دستی تغییر دهد)
+        const today = new Date();
+        const todayJalali = formatJalali(today);
+        const dateInput = document.getElementById('payment-date');
+        if (dateInput && !dateInput.value) {
+            dateInput.value = todayJalali;
+        }
         // مقدار ساعت و دقیقه فعلی را اتوفیل کن
         const now = new Date();
         const hh = String(now.getHours()).padStart(2, '0');
@@ -764,6 +810,8 @@
         openModal();
     });
 
+    setupAmountFormatting();
+
     document.getElementById('payment-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const errorBox = document.getElementById('payment-error');
@@ -772,8 +820,9 @@
         errorBox.textContent = '';
 
         // Simple client-side validation
-        const amountVal = document.getElementById('payment-amount').value;
-        if (!amountVal || Number(amountVal) <= 0) {
+        const amountValRaw = document.getElementById('payment-amount').value;
+        const amountDigits = toCleanNumberString(amountValRaw);
+        if (!amountDigits || Number(amountDigits) <= 0) {
             errorBox.textContent = 'Amount is required and must be greater than 0';
             errorBox.style.display = 'block';
             return;
@@ -794,7 +843,7 @@
             paymentTime = `${hh}:${mm}`;
         }
         const data = {
-            amount: document.getElementById('payment-amount').value,
+            amount: amountDigits,
             payment_date: paymentDate,
             payment_time: paymentTime,
             card_id: document.getElementById('payment-card').value || null,
@@ -863,7 +912,7 @@
             }
 
             document.getElementById('payment-id').value = payment.id;
-            document.getElementById('payment-amount').value = payment.amount;
+            document.getElementById('payment-amount').value = formatWithCommas(String(payment.amount || '').replace(/[^0-9]/g, ''));
             // payment_date_jalali is like "YYYY/MM/DD HH:MM"; split into date/time inputs
             const jalaliDt = (payment.payment_date_jalali || '').trim();
             let datePart = '';
