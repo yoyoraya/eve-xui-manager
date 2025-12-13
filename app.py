@@ -104,10 +104,38 @@ def fetch_and_update_server_data(server_id: int):
 
     # Update cache atomically under lock
     # - Replace only this server's inbounds
+    # - Preserve the previous ordering position (do NOT move the server's block to the end)
     # - Update per-server status stats
     # - Recompute aggregate stats
     existing_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
-    GLOBAL_SERVER_DATA['inbounds'] = [i for i in existing_inbounds if int(i.get('server_id', -1)) != int(server.id)] + list(processed or [])
+    new_block = list(processed or [])
+
+    # Find the first occurrence index of this server in the existing list (if any)
+    first_idx = None
+    for idx, item in enumerate(existing_inbounds):
+        try:
+            if int(item.get('server_id', -1)) == int(server.id):
+                first_idx = idx
+                break
+        except Exception:
+            continue
+
+    without_server = []
+    for item in existing_inbounds:
+        try:
+            if int(item.get('server_id', -1)) == int(server.id):
+                continue
+        except Exception:
+            pass
+        without_server.append(item)
+
+    if first_idx is None:
+        # Server didn't exist in cache before: append to end
+        GLOBAL_SERVER_DATA['inbounds'] = without_server + new_block
+    else:
+        # Insert new block at the previous position
+        insert_at = min(max(first_idx, 0), len(without_server))
+        GLOBAL_SERVER_DATA['inbounds'] = without_server[:insert_at] + new_block + without_server[insert_at:]
 
     statuses = GLOBAL_SERVER_DATA.get('servers_status') or []
     updated = False
