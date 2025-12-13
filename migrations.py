@@ -115,6 +115,7 @@ def fix_database():
             ('server_id', 'INTEGER REFERENCES servers(id)'),
             ('card_id', 'INTEGER REFERENCES bank_cards(id)'),
             ('sender_card', 'VARCHAR(32)'),
+            ('sender_name', 'VARCHAR(120)'),
             ('client_email', 'VARCHAR(100)'),
             ('category', "VARCHAR(16) NOT NULL DEFAULT 'usage'")
         ]

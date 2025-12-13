@@ -544,6 +544,7 @@ class Transaction(db.Model):
     server_id = db.Column(db.Integer, db.ForeignKey('servers.id'), nullable=True)
     card_id = db.Column(db.Integer, db.ForeignKey('bank_cards.id'), nullable=True)  # کارت مقصد (شما)
     sender_card = db.Column(db.String(32), nullable=True)  # شماره کارت مشتری
+    sender_name = db.Column(db.String(120), nullable=True)  # نام فرستنده
     client_email = db.Column(db.String(100), nullable=True)  # ایمیل کلاینت مرتبط
     amount = db.Column(db.Integer, nullable=False)
     type = db.Column(db.String(20))
@@ -587,6 +588,7 @@ class Transaction(db.Model):
             'card_id': self.card_id,
             'card': card_info,
             'sender_card': self.sender_card,
+            'sender_name': self.sender_name,
             'client_email': self.client_email,
             'amount': self.amount,
             'type': self.type,
@@ -730,6 +732,19 @@ with app.app_context():
             print("telegram_id column already exists")
     except Exception as e:
         print(f"Migration error: {e}")
+
+    # Ensure sender_name exists on transactions table (older DBs)
+    try:
+        inspector = inspect(db.engine)
+        tx_columns = [c['name'] for c in inspector.get_columns('transactions')]
+        if 'sender_name' not in tx_columns:
+            print("sender_name column missing on transactions, attempting to add...")
+            with db.engine.connect() as conn:
+                conn.execute(text('ALTER TABLE transactions ADD COLUMN sender_name VARCHAR(120)'))
+                conn.commit()
+            print("Added sender_name column to transactions table")
+    except Exception as e:
+        print(f"Migration error (transactions.sender_name): {e}")
     
     # Initialize PanelAPI data
     if not PanelAPI.query.first():
@@ -3366,7 +3381,7 @@ def get_payments():
                 'role': admin.role
             } if admin else None,
             'sender_card': t.sender_card or '',
-            'sender_name': None,
+            'sender_name': getattr(t, 'sender_name', None) or None,
             'card_id': t.card_id,
             'card': {
                 'id': card.id,
@@ -3456,16 +3471,16 @@ def add_payment():
     if not amount or int(amount) <= 0:
         return jsonify({"success": False, "error": "Amount is required and must be positive"}), 400
     
-    payment_date_str = data.get('payment_date')
-    payment_time_str = data.get('payment_time')
-    payment_date = parse_jalali_date(payment_date_str, end_of_day=False)
-    # اگر ساعت و دقیقه هم ارسال شده بود، به datetime اضافه کن
-    if payment_date and payment_time_str:
-        try:
-            hh, mm = map(int, payment_time_str.split(':'))
-            payment_date = payment_date.replace(hour=hh, minute=mm)
-        except Exception:
-            pass
+    payment_date_str = (data.get('payment_date') or '').strip() or None
+    payment_time_str = (data.get('payment_time') or '').strip() or None
+    combined_dt_str = None
+    if payment_date_str and payment_time_str:
+        combined_dt_str = f"{payment_date_str} {payment_time_str}"
+    elif payment_date_str:
+        combined_dt_str = payment_date_str
+
+    # parse_jalali_date converts Tehran -> UTC; ensure we pass date+time together to avoid double shifting
+    payment_date = parse_jalali_date(combined_dt_str, end_of_day=False)
     if not payment_date:
         payment_date = datetime.utcnow()
     
@@ -3482,6 +3497,10 @@ def add_payment():
         tx = Transaction(
             admin_id=user.id,
             server_id=server_id,
+            card_id=data.get('card_id') or None,
+            sender_card=(data.get('sender_card') or '').strip() or None,
+            sender_name=(data.get('sender_name') or '').strip() or None,
+            client_email=(data.get('client_email') or '').strip() or None,
             amount=amount_val,
             type=cost_type,
             description=data.get('description', '').strip() or None,
@@ -3555,8 +3574,26 @@ def update_payment(payment_id):
         payment.description = data['description'].strip() or None
     if 'verified' in data and user.is_superadmin:
         payment.verified = bool(data['verified'])
-    if 'payment_date' in data:
-        new_date = parse_jalali_date(data['payment_date'], end_of_day=False)
+    if 'payment_date' in data or 'payment_time' in data:
+        date_part = (data.get('payment_date') or '').strip() or None
+        time_part = (data.get('payment_time') or '').strip() or None
+
+        if not date_part and time_part and payment.payment_date:
+            # derive current Jalali date part from existing UTC datetime
+            try:
+                current_tehran = payment.payment_date + timedelta(hours=3, minutes=30)
+                j_current = jdatetime_class.fromgregorian(datetime=current_tehran)
+                date_part = j_current.strftime('%Y/%m/%d')
+            except Exception:
+                date_part = None
+
+        combined_dt_str = None
+        if date_part and time_part:
+            combined_dt_str = f"{date_part} {time_part}"
+        elif date_part:
+            combined_dt_str = date_part
+
+        new_date = parse_jalali_date(combined_dt_str, end_of_day=False)
         if new_date:
             payment.payment_date = new_date
     

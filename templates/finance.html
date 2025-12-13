@@ -864,7 +864,17 @@
 
             document.getElementById('payment-id').value = payment.id;
             document.getElementById('payment-amount').value = payment.amount;
-            document.getElementById('payment-date').value = payment.payment_date_jalali || '';
+            // payment_date_jalali is like "YYYY/MM/DD HH:MM"; split into date/time inputs
+            const jalaliDt = (payment.payment_date_jalali || '').trim();
+            let datePart = '';
+            let timePart = '';
+            if (jalaliDt) {
+                const parts = jalaliDt.split(' ');
+                datePart = parts[0] || '';
+                timePart = parts[1] || '';
+            }
+            document.getElementById('payment-date').value = datePart;
+            document.getElementById('payment-time').value = timePart;
             document.getElementById('payment-card').value = payment.card_id || '';
             document.getElementById('payment-sender-name').value = payment.sender_name || '';
             document.getElementById('payment-sender-card').value = payment.sender_card || '';
@@ -872,6 +882,8 @@
             document.getElementById('payment-description').value = payment.description || '';
 
             document.getElementById('modal-title').textContent = 'Edit Payment';
+            kindSelect.value = 'income';
+            updateKindUI();
             openModal();
         } catch (error) {
             alert('Error loading payment');
