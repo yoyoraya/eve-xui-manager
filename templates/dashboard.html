@@ -462,16 +462,28 @@
         </div>
         <div class="modal-body">
             <div class="form-group">
-                <label>Username / Email</label>
-                <input type="text" id="add-client-email" class="form-input" placeholder="user1">
-            </div>
-            
-            <div class="form-group">
                 <label>Server & Inbound</label>
                 <div style="display: flex; gap: 10px;">
                     <select id="add-client-server-select" class="form-select" onchange="onServerSelected()" style="flex: 1;"></select>
-                    <select id="add-client-inbound-select" class="form-select" style="flex: 1;"></select>
+                    <select id="add-client-inbound-select" class="form-select" {% if is_superadmin %}onchange="onInboundSelected()"{% endif %} style="flex: 1;"></select>
                 </div>
+            </div>
+
+            <div class="form-group">
+                {% if is_superadmin %}
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end;">
+                        <div>
+                            <label>Username / Email</label>
+                            <input type="text" id="add-client-email" class="form-input" placeholder="user1">
+                        </div>
+                        <div style="background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; height: 42px; display: flex; align-items: center; justify-content: center; padding: 0 10px; overflow: hidden;">
+                            <span style="font-size: 0.85rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="last-user-display">Last User: -</span>
+                        </div>
+                    </div>
+                {% else %}
+                    <label>Username / Email</label>
+                    <input type="text" id="add-client-email" class="form-input" placeholder="user1">
+                {% endif %}
             </div>
 
             <div class="form-group">
@@ -973,7 +985,7 @@
                                         </td>
                                         <td class="volume-cell">
                                             <div class="volume-info">
-                                                <span class="remaining">${client.remaining_formatted}</span>
+                                                <span class="remaining ${client.volume_status || ''}">${client.remaining_formatted}</span>
                                                 <span class="total">/ ${client.totalGB_formatted}</span>
                                             </div>
                                         </td>
@@ -1368,6 +1380,13 @@
     function openAddClientModal() {
         document.getElementById('add-client-server-select').innerHTML = '<option value="">-- Select Server --</option>';
         document.getElementById('add-client-inbound-select').innerHTML = '<option value="">-- Select Inbound --</option>';
+
+        const lastUserDisplay = document.getElementById('last-user-display');
+        if (lastUserDisplay) {
+            lastUserDisplay.innerText = 'Last User: -';
+            lastUserDisplay.style.color = 'var(--text-secondary)';
+            lastUserDisplay.title = '';
+        }
         
         if (allServers && allServers.length > 0) {
             allServers.forEach(server => {
@@ -1579,6 +1598,13 @@
         const serverId = document.getElementById('add-client-server-select').value;
         const inboundSelect = document.getElementById('add-client-inbound-select');
         inboundSelect.innerHTML = '<option value="">-- Select Inbound --</option>';
+
+        const lastUserDisplay = document.getElementById('last-user-display');
+        if (lastUserDisplay) {
+            lastUserDisplay.innerText = 'Last User: -';
+            lastUserDisplay.style.color = 'var(--text-secondary)';
+            lastUserDisplay.title = '';
+        }
         
         if (!serverId) return;
         
@@ -1599,6 +1625,41 @@
             option.textContent = 'No inbounds available';
             option.disabled = true;
             inboundSelect.appendChild(option);
+        }
+    }
+
+    function onInboundSelected() {
+        if (typeof IS_SUPERADMIN !== 'undefined' && !IS_SUPERADMIN) return;
+        const select = document.getElementById('add-client-inbound-select');
+        const display = document.getElementById('last-user-display');
+
+        if (!display) return;
+
+        if (!select.value) {
+            display.innerText = 'Last User: -';
+            display.style.color = 'var(--text-secondary)';
+            display.title = '';
+            return;
+        }
+
+        try {
+            const data = JSON.parse(select.value);
+            const inbound = inboundsData.find(i => i.id == data.inbound_id && i.server_id == data.server_id);
+            if (inbound && inbound.clients && inbound.clients.length > 0) {
+                const lastClient = inbound.clients[inbound.clients.length - 1];
+                display.innerText = `Last User: ${lastClient.email}`;
+                display.style.color = '#fbbf24';
+                display.title = lastClient.email;
+            } else {
+                display.innerText = 'Last User: None';
+                display.style.color = 'var(--text-secondary)';
+                display.title = '';
+            }
+        } catch (e) {
+            console.error(e);
+            display.innerText = 'Last User: Error';
+            display.style.color = 'var(--text-secondary)';
+            display.title = '';
         }
     }
 
@@ -2249,7 +2310,7 @@
                                         </td>
                                         <td class="volume-cell">
                                             <div class="volume-info">
-                                                <span class="remaining">${client.remaining_formatted}</span>
+                                                <span class="remaining ${client.volume_status || ''}">${client.remaining_formatted}</span>
                                                 <span class="total">/ ${client.totalGB_formatted}</span>
                                             </div>
                                         </td>
