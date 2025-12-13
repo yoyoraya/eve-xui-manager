@@ -3049,3 +3049,6 @@ select optgroup {
     background: rgba(99, 102, 241, 0.1);
     color: var(--primary);
 }
+
+.remaining.suspended { color: #ff4d4f; font-weight: bold; }
+.remaining.low { color: #faad14; font-weight: bold; }

@@ -746,7 +746,7 @@
         loadServers().then(() => {
             refreshData(true).then(() => hideLoading());
         });
-        document.getElementById('global-search-input').addEventListener('input', performGlobalSearch);
+        document.getElementById('global-search-input').addEventListener('input', () => performGlobalSearch(false));
         if (IS_SUPERADMIN) loadResellersForModal();
     });
 
@@ -821,7 +821,8 @@
                 // If there is an active search, re-run it
                 const searchInput = document.getElementById('global-search-input');
                 if (searchInput && searchInput.value.trim().length > 0) {
-                    performGlobalSearch();
+                    // Re-run search immediately after refresh (no debounce)
+                    performGlobalSearch(true);
                 }
             } else {
                 if (!isSilent) showToast(data.error || 'Error updating data', 'error');
@@ -1930,7 +1931,7 @@
             // For now, let's just re-run search if there is a query
             const searchInput = document.getElementById('global-search-input');
             if (searchInput.value.trim().length > 0) {
-                performGlobalSearch();
+                performGlobalSearch(true);
                 return;
             }
         }
@@ -2142,7 +2143,7 @@
 
     let searchTimeout = null;
 
-    async function performGlobalSearch() {
+    async function performGlobalSearch(immediate = false) {
         const searchInput = document.getElementById('global-search-input');
         const clearBtn = document.getElementById('clear-search-btn');
         const query = searchInput.value.trim().toLowerCase();
@@ -2154,20 +2155,17 @@
             clearBtn.classList.add('hidden');
         }
         
-        if (searchTimeout) {
-            clearTimeout(searchTimeout);
-        }
+        if (searchTimeout) clearTimeout(searchTimeout);
 
         if (query.length === 0) {
             clearSearch(false); // Pass false to avoid refreshing data immediately if not needed
             return;
         }
         
-        searchTimeout = setTimeout(async () => {
+        const runSearch = async () => {
             try {
                 const response = await fetch(`/api/clients/search?email=${encodeURIComponent(query)}`);
                 const data = await response.json();
-                
                 if (data.success && data.results.length > 0) {
                     displaySearchResults(data.results, query);
                 } else {
@@ -2176,7 +2174,14 @@
             } catch (error) {
                 console.error('Search error:', error);
             }
-        }, 500); // 500ms debounce
+        };
+
+        if (immediate) {
+            await runSearch();
+            return;
+        }
+
+        searchTimeout = setTimeout(runSearch, 500); // 500ms debounce
     }
 
     function clearSearch(shouldRefresh = true) {
@@ -2300,7 +2305,10 @@
                                                 : `<span class="client-status inactive">Disabled</span>`}
                                         </td>
                                         <td>
-                                            <span class="expiry-badge ${getExpiryClass(client.expiryType)}">${client.expiryTime}</span>
+                                            <span class="expiry-badge ${getExpiryClass(client.expiryType)}">
+                                                <span class="expiry-time">${client.expiryTime}</span>
+                                                ${client.expiryTimestamp ? `<span class="expiry-time">${formatTehranTime(client.expiryTimestamp)}</span>` : ''}
+                                            </span>
                                         </td>
                                         <td class="traffic-cell">
                                             <div class="traffic-combined-cell">

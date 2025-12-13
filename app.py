@@ -16,7 +16,7 @@ import time
 import concurrent.futures
 from collections import defaultdict
 from types import SimpleNamespace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import copy
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
@@ -797,7 +797,9 @@ def format_jalali(dt):
     if not dt:
         return None
     try:
-        jalali_date = jdatetime_class.fromgregorian(datetime=dt)
+        # Convert UTC to Tehran (+3:30)
+        dt_tehran = dt + timedelta(hours=3, minutes=30)
+        jalali_date = jdatetime_class.fromgregorian(datetime=dt_tehran)
         return jalali_date.strftime('%Y/%m/%d %H:%M')
     except Exception:
         return dt.isoformat() if dt else None
@@ -824,11 +826,16 @@ def parse_jalali_date(date_str, end_of_day=False):
         try:
             j_date = jdatetime_class.strptime(normalized, pattern)
             gregorian = j_date.togregorian()
+            dt = None
             if 'H' not in pattern:
                 day = gregorian.date()
                 time_part = datetime.max.time() if end_of_day else datetime.min.time()
-                return datetime.combine(day, time_part)
-            return gregorian
+                dt = datetime.combine(day, time_part)
+            else:
+                dt = gregorian
+            
+            # Convert Tehran to UTC (-3:30)
+            return dt - timedelta(hours=3, minutes=30)
         except ValueError:
             continue
     return None
@@ -1158,14 +1165,18 @@ def format_remaining_days(timestamp):
     try:
         expiry_date = datetime.fromtimestamp(timestamp/1000)
         now = datetime.now()
-        jalali_date = jdatetime_class.fromgregorian(datetime=expiry_date)
         
         if expiry_date < now:
             days_ago = (now - expiry_date).days
             return {"text": f"Expired ({days_ago}d ago)", "days": -days_ago, "type": "expired"}
         
         days = (expiry_date - now).days
-        if days == 0: return {"text": f"Today [{jalali_date.strftime('%Y-%m-%d')}]", "days": 0, "type": "today"}
+        if days == 0: 
+            # Calculate Tehran time (UTC+3:30)
+            expiry_utc = datetime.utcfromtimestamp(timestamp/1000)
+            expiry_tehran = expiry_utc + timedelta(hours=3, minutes=30)
+            time_str = expiry_tehran.strftime('%H:%M')
+            return {"text": f"Today {time_str}", "days": 0, "type": "today"}
         elif days < 7: return {"text": f"{days} days left", "days": days, "type": "soon"}
         else: return {"text": f"{days} days left", "days": days, "type": "normal"}
     except:
@@ -1502,7 +1513,18 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 total_bytes = client.get('totalGB', 0) or 0
                 remaining_bytes = max(total_bytes - (client_up + client_down), 0) if total_bytes > 0 else None
                 total_formatted = format_bytes_gb_tb(total_bytes) if total_bytes > 0 else "Unlimited"
-                remaining_formatted = format_bytes_gb_tb(remaining_bytes) if remaining_bytes is not None else "Unlimited"
+                
+                volume_status = ""
+                if remaining_bytes is not None:
+                    remaining_formatted = format_bytes_gb_tb(remaining_bytes)
+                    if remaining_bytes <= 0:
+                        remaining_formatted = "Suspended"
+                        volume_status = "suspended"
+                    elif remaining_bytes < 1073741824: # 1 GB
+                        remaining_formatted = f"{remaining_formatted} Low"
+                        volume_status = "low"
+                else:
+                    remaining_formatted = "Unlimited"
 
                 expiry_raw = client.get('expiryTime', 0)
                 expiry_info = format_remaining_days(expiry_raw)
@@ -1516,6 +1538,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                     "totalGB_formatted": total_formatted,
                     "remaining_bytes": remaining_bytes if remaining_bytes is not None else -1,
                     "remaining_formatted": remaining_formatted,
+                    "volume_status": volume_status,
                     "expiryTime": expiry_info['text'],
                     "expiryTimestamp": expiry_raw,
                     "expiryType": expiry_info['type'],
@@ -3207,14 +3230,7 @@ def get_payments():
         admin = db.session.get(Admin, t.admin_id)
         card = db.session.get(BankCard, t.card_id) if t.card_id else None
         server = db.session.get(Server, t.server_id) if getattr(t, 'server_id', None) else None
-        jalali_date = ''
-        if t.created_at:
-            try:
-                import jdatetime
-                jdt = jdatetime.datetime.fromgregorian(datetime=t.created_at)
-                jalali_date = jdt.strftime('%Y/%m/%d %H:%M')
-            except:
-                jalali_date = t.created_at.strftime('%Y-%m-%d %H:%M')
+        jalali_date = format_jalali(t.created_at) or ''
         mapped_transactions.append({
             'id': f"tx-{t.id}",
             'admin_id': t.admin_id,
@@ -3254,10 +3270,8 @@ def get_payments():
         d['payment_date_jalali'] = ''
         if d['payment_date']:
             try:
-                import jdatetime
                 dt = datetime.fromisoformat(d['payment_date'])
-                jdt = jdatetime.datetime.fromgregorian(datetime=dt)
-                d['payment_date_jalali'] = jdt.strftime('%Y/%m/%d %H:%M')
+                d['payment_date_jalali'] = format_jalali(dt)
             except:
                 pass
         mapped_receipts.append(d)
