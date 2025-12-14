@@ -956,8 +956,13 @@
             closeModal();
             // show a success toast
             try {
-                if (method === 'POST') showToast('Payment saved successfully');
-                else showToast('Payment updated successfully');
+                if (result && result.converted) {
+                    showToast('Converted to expense successfully');
+                } else if (method === 'POST') {
+                    showToast('Payment saved successfully');
+                } else {
+                    showToast('Payment updated successfully');
+                }
             } catch (e) { /* ignore if showToast not available */ }
             loadPayments();
             loadStats();

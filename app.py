@@ -3792,6 +3792,92 @@ def update_payment(payment_id):
         data = request.get_json() or {}
     except:
         return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    # Convert payment -> expense transaction (when editing and user switches kind)
+    if bool(data.get('is_expense')):
+        parsed_amount = parse_amount_to_int(data.get('amount')) if 'amount' in data else payment.amount
+        if parsed_amount is None or int(parsed_amount) <= 0:
+            return jsonify({"success": False, "error": "Invalid amount"}), 400
+
+        server_id = data.get('server_id') or None
+        if not server_id:
+            return jsonify({"success": False, "error": "Server is required for expense"}), 400
+
+        # Resolve date/time (Jalali + Tehran)
+        resolved_dt = payment.payment_date
+        if 'payment_date' in data or 'payment_time' in data:
+            date_part = (data.get('payment_date') or '').strip() or None
+            time_part = (data.get('payment_time') or '').strip() or None
+
+            if not date_part and time_part and payment.payment_date:
+                # derive current Jalali date part from existing UTC datetime
+                try:
+                    current_tehran = payment.payment_date + timedelta(hours=3, minutes=30)
+                    j_current = jdatetime_class.fromgregorian(datetime=current_tehran)
+                    date_part = j_current.strftime('%Y/%m/%d')
+                except Exception:
+                    date_part = None
+
+            combined_dt_str = None
+            if date_part and time_part:
+                combined_dt_str = f"{date_part} {time_part}"
+            elif date_part:
+                combined_dt_str = date_part
+
+            new_date = parse_jalali_date(combined_dt_str, end_of_day=False)
+            if new_date:
+                resolved_dt = new_date
+
+        # Carry forward fields (prefer explicit updates)
+        card_id = data.get('card_id') if 'card_id' in data else payment.card_id
+        sender_card = (data.get('sender_card') if 'sender_card' in data else payment.sender_card) or None
+        sender_name = (data.get('sender_name') if 'sender_name' in data else payment.sender_name) or None
+        client_email = (data.get('client_email') if 'client_email' in data else payment.client_email) or None
+        base_desc = (data.get('description') if 'description' in data else payment.description) or ''
+
+        sender_card = (sender_card or '').strip() or None
+        sender_name = (sender_name or '').strip() or None
+        client_email = (client_email or '').strip() or None
+        base_desc = (base_desc or '').strip()
+
+        cost_type = (data.get('cost_type') or 'server_cost').strip() or 'server_cost'
+
+        audit_note = _truncate_text(
+            f"Converted from payment#{payment.id} by {(user.username if user else 'unknown')} at {format_jalali(datetime.utcnow()) or ''}.",
+            255,
+        )
+        merged_desc = (f"{base_desc} {audit_note}".strip())
+        merged_desc = _truncate_text(merged_desc, 255) or None
+
+        tx = Transaction(
+            admin_id=payment.admin_id,
+            server_id=server_id,
+            card_id=card_id or None,
+            sender_card=sender_card,
+            sender_name=sender_name,
+            client_email=client_email,
+            amount=-abs(int(parsed_amount)),
+            type=cost_type,
+            description=merged_desc,
+            category='expense',
+            created_at=resolved_dt or datetime.utcnow(),
+        )
+
+        db.session.add(tx)
+        db.session.delete(payment)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return jsonify({"success": False, "error": "Failed to convert payment to expense"}), 500
+
+        return jsonify({
+            "success": True,
+            "converted": True,
+            "mode": "expense",
+            "transaction_id": tx.id,
+            "entry_id": f"tx-{tx.id}",
+        })
     
     if 'amount' in data:
         parsed = parse_amount_to_int(data.get('amount'))
