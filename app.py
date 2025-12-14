@@ -3295,10 +3295,11 @@ def _truncate_text(value: str, max_len: int) -> str:
     return s[: max(0, max_len - 1)] + '…'
 
 
-def _build_tx_edit_audit(editor_username: str, old_amount: int, old_type: str, old_category: str, old_desc: str, new_amount: int, new_type: str, new_category: str, new_desc: str) -> str:
+def _build_tx_edit_audit(editor_username: str, at_jalali: str, old_amount: int, old_type: str, old_category: str, old_desc: str, new_amount: int, new_type: str, new_category: str, new_desc: str) -> str:
     # Keep it compact (Transaction.description is VARCHAR(255))
     editor = editor_username or 'unknown'
-    base = f"Edited by {editor}: {old_amount}->{new_amount}, {old_type}->{new_type}, {old_category}->{new_category}. "
+    when = at_jalali or ''
+    base = f"Edited by {editor} at {when}: {old_amount}->{new_amount}, {old_type}->{new_type}, {old_category}->{new_category}. "
     # Allocate remaining space for desc fragments
     remaining = 255 - len(base) - len("Was:  | Now: ")
     if remaining < 0:
@@ -3308,6 +3309,14 @@ def _build_tx_edit_audit(editor_username: str, old_amount: int, old_type: str, o
     now_part = _truncate_text(new_desc or '', remaining - len(was_part))
     final = f"{base}Was: {was_part} | Now: {now_part}".strip()
     return _truncate_text(final, 255)
+
+
+def _build_tx_delete_audit(deleter_username: str, at_jalali: str, deleted_tx_id: int, deleted_admin_username: str, deleted_amount: int, deleted_type: str) -> str:
+    deleter = deleter_username or 'unknown'
+    when = at_jalali or ''
+    admin_u = deleted_admin_username or 'unknown'
+    base = f"Deleted by {deleter} at {when}: tx#{deleted_tx_id} ({admin_u}) {deleted_amount} {deleted_type}."
+    return _truncate_text(base, 255)
 
 
 @app.route('/api/transactions/<int:tx_id>', methods=['PUT'])
@@ -3387,6 +3396,7 @@ def update_transaction(tx_id):
 
     audit_desc = _build_tx_edit_audit(
         editor.username if editor else 'unknown',
+        format_jalali(datetime.utcnow()) or '',
         old_amount,
         old_type,
         old_category,
@@ -3410,7 +3420,40 @@ def update_transaction(tx_id):
 @app.route('/api/transactions/<int:tx_id>', methods=['DELETE'])
 @superadmin_required
 def delete_transaction(tx_id):
+    deleter = db.session.get(Admin, session.get('admin_id'))
     tx = Transaction.query.get_or_404(tx_id)
+
+    # Create an audit log entry that remains visible in /transactions
+    try:
+        deleted_admin_username = None
+        if hasattr(tx, 'admin') and tx.admin:
+            deleted_admin_username = tx.admin.username
+        else:
+            admin_obj = db.session.get(Admin, tx.admin_id)
+            deleted_admin_username = admin_obj.username if admin_obj else None
+
+        audit_desc = _build_tx_delete_audit(
+            deleter.username if deleter else 'unknown',
+            format_jalali(datetime.utcnow()) or '',
+            tx.id,
+            deleted_admin_username,
+            int(tx.amount or 0),
+            (tx.type or ''),
+        )
+
+        audit_tx = Transaction(
+            admin_id=deleter.id if deleter else tx.admin_id,
+            amount=0,
+            type='audit',
+            category='usage',
+            description=audit_desc,
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(audit_tx)
+    except Exception:
+        # If audit creation fails, continue with delete (avoid blocking admin cleanup)
+        pass
+
     db.session.delete(tx)
     db.session.commit()
     return jsonify({"success": True})
@@ -3434,7 +3477,7 @@ def finance_page():
         admin_options = [user]
     return render_template('finance.html', 
                            cards=cards, 
-                           is_superadmin=user.is_superadmin,
+                           is_superadmin=(user.role == 'superadmin' or user.is_superadmin),
                            admin_username=user.username,
                            role=user.role,
                            wallet_credit=user.credit,
@@ -3506,6 +3549,9 @@ def get_payments():
             Transaction.sender_card.ilike(pattern),
             Transaction.type.ilike(pattern)
         ))
+
+    # Exclude system/audit rows from Finance overview list
+    tx_query = tx_query.filter(Transaction.type != 'audit')
 
     if direction_filter == 'income':
         tx_query = tx_query.filter(Transaction.amount > 0)
@@ -3703,6 +3749,7 @@ def add_payment():
         return jsonify({"success": True, "id": tx.id, "mode": "expense"})
 
     # Income (payment) flow
+    is_super = (user.role == 'superadmin' or user.is_superadmin)
     payment = Payment(
         admin_id=user.id,
         card_id=data.get('card_id') or None,
@@ -3712,7 +3759,7 @@ def add_payment():
         payment_date=payment_date,
         client_email=data.get('client_email', '').strip() or None,
         description=data.get('description', '').strip() or None,
-        verified=True if user.is_superadmin else False
+        verified=True if is_super else False
     )
     
     db.session.add(payment)
@@ -3736,8 +3783,9 @@ def update_payment(payment_id):
     
     payment = Payment.query.get_or_404(payment_id)
     
+    is_super = (user.role == 'superadmin' or user.is_superadmin)
     # Only owner or superadmin can edit
-    if payment.admin_id != user.id and not user.is_superadmin:
+    if payment.admin_id != user.id and not is_super:
         return jsonify({"success": False, "error": "Access denied"}), 403
     
     try:
@@ -3760,7 +3808,7 @@ def update_payment(payment_id):
         payment.client_email = data['client_email'].strip() or None
     if 'description' in data:
         payment.description = data['description'].strip() or None
-    if 'verified' in data and user.is_superadmin:
+    if 'verified' in data and is_super:
         payment.verified = bool(data['verified'])
     if 'payment_date' in data or 'payment_time' in data:
         date_part = (data.get('payment_date') or '').strip() or None
@@ -3798,8 +3846,9 @@ def delete_payment(payment_id):
     
     payment = Payment.query.get_or_404(payment_id)
     
+    is_super = (user.role == 'superadmin' or user.is_superadmin)
     # Only owner or superadmin can delete
-    if payment.admin_id != user.id and not user.is_superadmin:
+    if payment.admin_id != user.id and not is_super:
         return jsonify({"success": False, "error": "Access denied"}), 403
     
     db.session.delete(payment)

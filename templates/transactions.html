@@ -458,19 +458,19 @@
     };
 
     const clearFilters = () => {
-        searchInput.value = '';
-        if (directionSelect) {
-            directionSelect.value = '';
-        }
-        if (typeSelect) {
-            typeSelect.value = '';
-        }
-        startInput.value = '';
-        endInput.value = '';
-        serverSelect.value = '';
-        if (userSelect) {
-            userSelect.value = '';
-        }
+        // Reset all filter fields to their initial state
+        if (filtersForm) filtersForm.reset();
+        // For selects that may not reset with .reset()
+        if (directionSelect) directionSelect.value = '';
+        if (typeSelect) typeSelect.value = '';
+        if (serverSelect) serverSelect.value = '';
+        if (userSelect) userSelect.value = '';
+        // For text inputs
+        if (searchInput) searchInput.value = '';
+        if (startInput) startInput.value = '';
+        if (endInput) endInput.value = '';
+        // If there are any custom UI elements (like range chips), remove their active state
+        rangeButtons.forEach(btn => btn.classList.remove('active'));
         updateFiltersFromInputs();
         currentPage = 1; // Reset page
     };
@@ -494,9 +494,7 @@
                 startInput.value = formatJalali(start);
                 endInput.value = formatJalali(end);
             }
-            updateFiltersFromInputs();
-            currentPage = 1; // Reset page
-            loadTransactions();
+            // Removed immediate update to allow "Apply Filters" to handle it
         });
     });
 
@@ -513,41 +511,14 @@
         loadTransactions();
     });
 
-    serverSelect.addEventListener('change', () => {
-        updateFiltersFromInputs();
-        currentPage = 1; // Reset page
-        loadTransactions();
-    });
-
-    if (directionSelect) {
-        directionSelect.addEventListener('change', () => {
-            updateFiltersFromInputs();
-            currentPage = 1; // Reset page
-            loadTransactions();
-        });
-    }
-
-    if (typeSelect) {
-        typeSelect.addEventListener('change', () => {
-            updateFiltersFromInputs();
-            currentPage = 1; // Reset page
-            loadTransactions();
-        });
-    }
-
-    if (userSelect) {
-        userSelect.addEventListener('change', () => {
-            updateFiltersFromInputs();
-            currentPage = 1; // Reset page
-            loadTransactions();
-        });
-    }
-
-    searchInput.addEventListener('input', debounce(() => {
-        updateFiltersFromInputs();
-        currentPage = 1; // Reset page
-        loadTransactions();
-    }, 500));
+    // Removed immediate change listeners to support "Apply Filters" button workflow
+    /*
+    serverSelect.addEventListener('change', () => { ... });
+    if (directionSelect) { ... }
+    if (typeSelect) { ... }
+    if (userSelect) { ... }
+    searchInput.addEventListener('input', ...);
+    */
 
     updateFiltersFromInputs();
     loadTransactions();

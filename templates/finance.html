@@ -343,6 +343,9 @@
                 <div class="form-group">
                     <label>Description</label>
                     <textarea id="payment-description" class="form-input" rows="2" placeholder="Notes..."></textarea>
+                    <div id="tx-audit-note" class="muted-note" style="display:none; margin-top: 6px;">
+                        For transaction edits, changes are automatically written into the description (who/when/what changed).
+                    </div>
                 </div>
             </div>
             <div class="form-actions">
@@ -369,7 +372,9 @@
         </div>
         <div class="modal-body">
             <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-                <p style="color: #991b1b; margin: 0; font-weight: 500;">⚠️ Warning: This action cannot be undone!</p>
+                <p style="color: #991b1b; margin: 0; font-weight: 600;">⚠️ Warning: This action cannot be undone!</p>
+                <p style="color: #991b1b; margin: 8px 0 0 0; font-size: 0.9rem;">This will remove the record from the Finance overview.</p>
+                <p style="color: #991b1b; margin: 6px 0 0 0; font-size: 0.9rem;">A log entry will remain in Transactions showing who deleted it.</p>
             </div>
             <p style="color: var(--text-primary); margin-bottom: 12px;">You are about to delete this payment transaction:</p>
             <div style="background: var(--bg-secondary); border-radius: 8px; padding: 12px; margin-bottom: 20px;">
@@ -417,6 +422,7 @@
     const tbody = document.getElementById('payments-list');
     const kindSelect = document.getElementById('payment-kind');
     const expenseFields = document.querySelectorAll('.expense-only');
+    const txAuditNote = document.getElementById('tx-audit-note');
     const countLabel = document.getElementById('payments-count');
     const pageInfo = document.getElementById('page-info');
     const paginationButtons = document.getElementById('pagination-buttons');
@@ -463,6 +469,14 @@
             clearTimeout(timeout);
             timeout = setTimeout(() => fn(...args), delay);
         };
+    };
+
+    const escapeAttr = (value) => {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     };
 
     const normalizeDigits = (value) => {
@@ -645,13 +659,37 @@
             }
 
             let statusBadge = '';
-            if (p.type === 'payment') {
+            const isEdited = String(p.description || '').toLowerCase().includes('edited by');
+            if (isEdited) {
+                statusBadge = '<span class="badge" style="font-size: 0.7rem; background: #6366f1;">EDITED</span>';
+            } else if (p.type === 'payment') {
                 statusBadge = '<span class="badge active" style="font-size: 0.7rem;">VERIFIED</span>';
             } else {
                 statusBadge = p.verified
                     ? '<span class="badge active" style="font-size: 0.7rem;">VERIFIED</span>'
                     : '<span class="badge" style="font-size: 0.7rem; background: #374151;">PENDING</span>';
             }
+
+            const entryId = String(p.id);
+            const isTx = entryId.startsWith('tx-');
+            const canEdit = (p.type === 'payment') || (isSuperadmin && isTx);
+            const canDelete = (p.type === 'payment') || (isSuperadmin && isTx);
+
+            const editBtnHtml = canEdit
+                ? `<button class="action-btn" title="Edit" data-action="edit" data-entry-id="${escapeAttr(entryId)}">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    </button>`
+                : `<button class="action-btn" title="Edit" disabled style="opacity:0.5;cursor:not-allowed;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    </button>`;
+
+            const deleteBtnHtml = canDelete
+                ? `<button class="action-btn danger" title="Delete" data-action="delete" data-entry-id="${escapeAttr(entryId)}">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>`
+                : `<button class="action-btn danger" title="Delete" disabled style="opacity:0.5;cursor:not-allowed;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>`;
 
             // Determine amount color and sign: positive = green with +, negative = red (minus is automatic)
             const amountValue = Number(p.amount);
@@ -673,36 +711,25 @@
                     <td style="padding: 15px;">${statusBadge}</td>
                     <td style="padding: 15px; text-align: center;">
                         <div style="display: flex; gap: 8px; justify-content: center;">
-                            ${(() => {
-                                const entryId = p.id;
-                                const isTx = String(entryId).startsWith('tx-');
-                                const canEdit = (p.type === 'payment') || (isSuperadmin && isTx);
-                                const disabledAttr = canEdit ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"';
-                                const idArg = JSON.stringify(entryId);
-                                return `
-                                    <button onclick="editEntry(${idArg})" class="action-btn" title="Edit" ${disabledAttr}>
-                                        <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\"></path><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\"></path></svg>
-                                    </button>
-                                `;
-                            })()}
-                            ${(() => {
-                                const entryId = p.id;
-                                const isTx = String(entryId).startsWith('tx-');
-                                const canDelete = (p.type === 'payment') || (isSuperadmin && isTx);
-                                const disabledAttr = canDelete ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"';
-                                const idArg = JSON.stringify(entryId);
-                                return `
-                                    <button onclick="deleteEntry(${idArg})" class="action-btn danger" title="Delete" ${disabledAttr}>
-                                        <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"3 6 5 6 21 6\"></polyline><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"></path></svg>
-                                    </button>
-                                `;
-                            })()}
+                            ${editBtnHtml}
+                            ${deleteBtnHtml}
                         </div>
                     </td>
                 </tr>
             `;
         }).join('');
     };
+
+    // Delegate clicks for dynamically rendered action buttons (avoids inline onclick quoting issues)
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.getAttribute('data-action');
+        const entryId = btn.getAttribute('data-entry-id');
+        if (!entryId) return;
+        if (action === 'edit') window.editEntry(entryId);
+        if (action === 'delete') window.deleteEntry(entryId);
+    });
 
     const loadStats = async () => {
         try {
@@ -750,13 +777,16 @@
     };
 
     const clearFilters = () => {
-        searchInput.value = '';
-        startInput.value = '';
-        endInput.value = '';
-        cardSelect.value = '';
-        if (userSelect) {
-            userSelect.value = '';
-        }
+        // Reset all filter fields to their initial state
+        if (filtersForm) filtersForm.reset();
+        if (cardSelect) cardSelect.value = '';
+        if (userSelect) userSelect.value = '';
+        if (directionSelect) directionSelect.value = '';
+        if (typeSelect) typeSelect.value = '';
+        if (searchInput) searchInput.value = '';
+        if (startInput) startInput.value = '';
+        if (endInput) endInput.value = '';
+        rangeButtons.forEach(btn => btn.classList.remove('active'));
         updateFiltersFromInputs();
         currentPage = 1;
     };
@@ -780,10 +810,7 @@
                 startInput.value = formatJalali(start);
                 endInput.value = formatJalali(end);
             }
-            updateFiltersFromInputs();
-            currentPage = 1;
-            loadPayments();
-            loadStats();
+            // Removed immediate update to allow "Apply Filters" to handle it
         });
     });
 
@@ -802,46 +829,14 @@
         loadStats();
     });
 
-    cardSelect.addEventListener('change', () => {
-        updateFiltersFromInputs();
-        currentPage = 1;
-        loadPayments();
-        loadStats();
-    });
-
-    if (directionSelect) {
-        directionSelect.addEventListener('change', () => {
-            updateFiltersFromInputs();
-            currentPage = 1;
-            loadPayments();
-            loadStats();
-        });
-    }
-
-    if (typeSelect) {
-        typeSelect.addEventListener('change', () => {
-            updateFiltersFromInputs();
-            currentPage = 1;
-            loadPayments();
-            loadStats();
-        });
-    }
-
-    if (userSelect) {
-        userSelect.addEventListener('change', () => {
-            updateFiltersFromInputs();
-            currentPage = 1;
-            loadPayments();
-            loadStats();
-        });
-    }
-
-    searchInput.addEventListener('input', debounce(() => {
-        updateFiltersFromInputs();
-        currentPage = 1;
-        loadPayments();
-        loadStats();
-    }, 500));
+    // Removed immediate change listeners to support "Apply Filters" button workflow
+    /*
+    cardSelect.addEventListener('change', () => { ... });
+    if (directionSelect) { ... }
+    if (typeSelect) { ... }
+    if (userSelect) { ... }
+    searchInput.addEventListener('input', ...);
+    */
 
     kindSelect.addEventListener('change', () => {
         updateKindUI();
@@ -977,12 +972,12 @@
 
     window.editEntry = async (id) => {
         try {
-            const entryId = id;
-            let entry = (lastLoadedEntries || []).find(p => p.id === entryId);
+            const entryId = String(id);
+            let entry = (lastLoadedEntries || []).find(p => String(p.id) === entryId);
             if (!entry) {
                 const response = await fetch(`/api/payments?limit=1000`);
                 const data = await response.json();
-                entry = (data.payments || []).find(p => p.id === entryId);
+                entry = (data.payments || []).find(p => String(p.id) === entryId);
             }
 
             if (!entry) {
@@ -994,6 +989,10 @@
             if (isTx && !isSuperadmin) {
                 alert('Access denied');
                 return;
+            }
+
+            if (txAuditNote) {
+                txAuditNote.style.display = isTx ? 'block' : 'none';
             }
 
             document.getElementById('payment-id').value = entry.id;
@@ -1042,12 +1041,12 @@
 
     window.deleteEntry = async (id) => {
         try {
-            const entryId = id;
-            let entry = (lastLoadedEntries || []).find(p => p.id === entryId);
+            const entryId = String(id);
+            let entry = (lastLoadedEntries || []).find(p => String(p.id) === entryId);
             if (!entry) {
                 const response = await fetch(`/api/payments?limit=1000`);
                 const data = await response.json();
-                entry = (data.payments || []).find(p => p.id === entryId);
+                entry = (data.payments || []).find(p => String(p.id) === entryId);
             }
 
             if (!entry) {
