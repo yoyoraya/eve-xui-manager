@@ -3173,6 +3173,9 @@ def get_transactions():
 
         query = Transaction.query.join(Admin)
 
+        type_filter = (request.args.get('type') or '').strip()
+        direction_filter = (request.args.get('direction') or '').strip()
+
         if user.role == 'reseller':
             query = query.filter(Transaction.admin_id == user.id)
         else:
@@ -3196,6 +3199,14 @@ def get_transactions():
                 Transaction.type.ilike(pattern),
                 Admin.username.ilike(pattern)
             ))
+
+        if direction_filter == 'income':
+            query = query.filter(Transaction.amount > 0)
+        elif direction_filter == 'expense':
+            query = query.filter(Transaction.amount < 0)
+
+        if type_filter:
+            query = query.filter(Transaction.type == type_filter)
 
         start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
         if start_dt:
@@ -3275,6 +3286,136 @@ def get_transactions():
     })
 
 
+def _truncate_text(value: str, max_len: int) -> str:
+    if value is None:
+        return ''
+    s = str(value)
+    if len(s) <= max_len:
+        return s
+    return s[: max(0, max_len - 1)] + '…'
+
+
+def _build_tx_edit_audit(editor_username: str, old_amount: int, old_type: str, old_category: str, old_desc: str, new_amount: int, new_type: str, new_category: str, new_desc: str) -> str:
+    # Keep it compact (Transaction.description is VARCHAR(255))
+    editor = editor_username or 'unknown'
+    base = f"Edited by {editor}: {old_amount}->{new_amount}, {old_type}->{new_type}, {old_category}->{new_category}. "
+    # Allocate remaining space for desc fragments
+    remaining = 255 - len(base) - len("Was:  | Now: ")
+    if remaining < 0:
+        return _truncate_text(base, 255)
+    half = max(0, remaining // 2)
+    was_part = _truncate_text(old_desc or '', half)
+    now_part = _truncate_text(new_desc or '', remaining - len(was_part))
+    final = f"{base}Was: {was_part} | Now: {now_part}".strip()
+    return _truncate_text(final, 255)
+
+
+@app.route('/api/transactions/<int:tx_id>', methods=['PUT'])
+@superadmin_required
+def update_transaction(tx_id):
+    editor = db.session.get(Admin, session.get('admin_id'))
+    tx = Transaction.query.get_or_404(tx_id)
+
+    try:
+        data = request.get_json() or {}
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    # Snapshot for audit
+    old_amount = tx.amount
+    old_type = tx.type or ''
+    old_category = tx.category or ''
+    old_desc = tx.description or ''
+
+    # Determine direction
+    is_expense = None
+    if 'is_expense' in data:
+        is_expense = bool(data.get('is_expense'))
+
+    # Amount (UI sends positive digits; we apply sign based on direction)
+    parsed_amount = None
+    if 'amount' in data:
+        parsed_amount = parse_amount_to_int(data.get('amount'))
+        if parsed_amount is None or int(parsed_amount) <= 0:
+            return jsonify({"success": False, "error": "Invalid amount"}), 400
+
+    if is_expense is None:
+        # infer from existing
+        is_expense = (tx.amount or 0) < 0 or (tx.category == 'expense')
+
+    if parsed_amount is not None:
+        tx.amount = -abs(int(parsed_amount)) if is_expense else abs(int(parsed_amount))
+
+    # Category
+    tx.category = 'expense' if is_expense else 'income'
+
+    # Type
+    new_type = (data.get('cost_type') or data.get('type') or tx.type or '').strip() or None
+    if new_type is not None:
+        tx.type = new_type
+
+    # Common fields
+    if 'server_id' in data:
+        tx.server_id = data.get('server_id') or None
+    if 'card_id' in data:
+        tx.card_id = data.get('card_id') or None
+    if 'sender_card' in data:
+        tx.sender_card = (data.get('sender_card') or '').strip() or None
+    if 'sender_name' in data:
+        tx.sender_name = (data.get('sender_name') or '').strip() or None
+    if 'client_email' in data:
+        tx.client_email = (data.get('client_email') or '').strip() or None
+
+    # Date/time (Jalali + Tehran)
+    if 'payment_date' in data or 'payment_time' in data:
+        date_part = (data.get('payment_date') or '').strip() or None
+        time_part = (data.get('payment_time') or '').strip() or None
+        combined = None
+        if date_part and time_part:
+            combined = f"{date_part} {time_part}"
+        elif date_part:
+            combined = date_part
+        if combined:
+            dt = parse_jalali_date(combined, end_of_day=False)
+            if dt:
+                tx.created_at = dt
+
+    # Description update + audit
+    new_desc = old_desc
+    if 'description' in data:
+        new_desc = (data.get('description') or '').strip()
+
+    audit_desc = _build_tx_edit_audit(
+        editor.username if editor else 'unknown',
+        old_amount,
+        old_type,
+        old_category,
+        old_desc,
+        tx.amount,
+        (tx.type or ''),
+        (tx.category or ''),
+        new_desc,
+    )
+    tx.description = audit_desc
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({"success": False, "error": "Failed to update transaction"}), 500
+
+    return jsonify({"success": True, "transaction": tx.to_dict()})
+
+
+@app.route('/api/transactions/<int:tx_id>', methods=['DELETE'])
+@superadmin_required
+def delete_transaction(tx_id):
+    tx = Transaction.query.get_or_404(tx_id)
+    db.session.delete(tx)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
 # ==================== FINANCE OVERVIEW ====================
 
 @app.route('/finance')
@@ -3310,6 +3451,9 @@ def get_payments():
         if not user:
             return jsonify({"success": False, "error": "User not found"}), 401
         
+        type_filter = (request.args.get('type') or '').strip()
+        direction_filter = (request.args.get('direction') or '').strip()
+
         # Payments
         payment_query = Payment.query
         if user.role == 'reseller':
@@ -3336,7 +3480,9 @@ def get_payments():
         end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
         if end_dt:
             payment_query = payment_query.filter(Payment.payment_date <= end_dt)
-        payments_list = payment_query.order_by(Payment.payment_date.desc()).all()
+        payments_list = []
+        if direction_filter != 'expense' and (not type_filter or type_filter == 'payment'):
+            payments_list = payment_query.order_by(Payment.payment_date.desc()).all()
 
         # ...existing code...
         # (rest of the function remains unchanged)
@@ -3357,8 +3503,19 @@ def get_payments():
         pattern = f"%{search_term}%"
         tx_query = tx_query.filter(or_(
             Transaction.description.ilike(pattern),
-            Transaction.sender_card.ilike(pattern)
+            Transaction.sender_card.ilike(pattern),
+            Transaction.type.ilike(pattern)
         ))
+
+    if direction_filter == 'income':
+        tx_query = tx_query.filter(Transaction.amount > 0)
+    elif direction_filter == 'expense':
+        tx_query = tx_query.filter(Transaction.amount < 0)
+
+    if type_filter and type_filter not in ('payment', 'receipt'):
+        tx_query = tx_query.filter(Transaction.type == type_filter)
+    elif type_filter in ('payment', 'receipt'):
+        tx_query = tx_query.filter(text('1=0'))
     if start_dt:
         tx_query = tx_query.filter(Transaction.created_at >= start_dt)
     if end_dt:
@@ -3385,7 +3542,9 @@ def get_payments():
         receipt_query = receipt_query.filter(ManualReceipt.deposit_at >= start_dt)
     if end_dt:
         receipt_query = receipt_query.filter(ManualReceipt.deposit_at <= end_dt)
-    receipts_list = receipt_query.order_by(ManualReceipt.deposit_at.desc()).all()
+    receipts_list = []
+    if direction_filter != 'expense' and (not type_filter or type_filter == 'receipt'):
+        receipts_list = receipt_query.order_by(ManualReceipt.deposit_at.desc()).all()
 
     # Map payments
     mapped_payments = []

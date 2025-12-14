@@ -168,6 +168,30 @@
                 <input type="text" id="payment-search" placeholder="Email, description, or sender">
             </div>
             <div class="filter-field">
+                <label>Direction</label>
+                <select id="direction-filter" class="form-select filter-select">
+                    <option value="">All</option>
+                    <option value="income">Income (+)</option>
+                    <option value="expense">Expense (-)</option>
+                </select>
+            </div>
+            <div class="filter-field">
+                <label>Type</label>
+                <select id="type-filter" class="form-select filter-select">
+                    <option value="">All types</option>
+                    <option value="payment">PAYMENT</option>
+                    <option value="receipt">RECEIPT</option>
+                    <option value="renew">RENEW</option>
+                    <option value="reset_traffic">RESET_TRAFFIC</option>
+                    <option value="add_client">ADD_CLIENT</option>
+                    <option value="server_renewal">SERVER_RENEWAL</option>
+                    <option value="server_traffic">SERVER_TRAFFIC</option>
+                    <option value="server_cost">SERVER_COST</option>
+                    <option value="deposit">DEPOSIT</option>
+                    <option value="manual_debit">MANUAL_DEBIT</option>
+                </select>
+            </div>
+            <div class="filter-field">
                 <label>Start Date (Jalali)</label>
                 <input type="text" id="start-date" dir="ltr" placeholder="1403/01/01">
             </div>
@@ -403,6 +427,8 @@
     const endInput = document.getElementById('end-date');
     const cardSelect = document.getElementById('card-filter');
     const userSelect = document.getElementById('user-filter');
+    const directionSelect = document.getElementById('direction-filter');
+    const typeSelect = document.getElementById('type-filter');
     const resetButton = document.getElementById('reset-filters');
     const rangeButtons = document.querySelectorAll('[data-range]');
     const addPaymentBtn = document.getElementById('add-payment-btn');
@@ -411,6 +437,8 @@
     let totalPages = 1;
     let totalItems = 0;
     const perPage = 20;
+
+    let lastLoadedEntries = [];
 
     let formatter;
     try {
@@ -421,6 +449,8 @@
 
     const filters = {
         search: '',
+        direction: '',
+        type: '',
         start_date: '',
         end_date: '',
         card_id: '',
@@ -493,6 +523,8 @@
 
     const updateFiltersFromInputs = () => {
         filters.search = searchInput.value.trim();
+        filters.direction = directionSelect ? directionSelect.value : '';
+        filters.type = typeSelect ? typeSelect.value : '';
         filters.start_date = startInput.value.trim();
         filters.end_date = endInput.value.trim();
         filters.card_id = cardSelect.value;
@@ -641,12 +673,30 @@
                     <td style="padding: 15px;">${statusBadge}</td>
                     <td style="padding: 15px; text-align: center;">
                         <div style="display: flex; gap: 8px; justify-content: center;">
-                            <button onclick="editPayment(${p.id})" class="action-btn" title="Edit" ${(p.type !== 'payment') ? 'disabled style=\"opacity:0.5;cursor:not-allowed;\"' : ''}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                            </button>
-                            <button onclick="deletePayment(${p.id})" class="action-btn danger" title="Delete" ${(p.type !== 'payment') ? 'disabled style=\"opacity:0.5;cursor:not-allowed;\"' : ''}>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                            </button>
+                            ${(() => {
+                                const entryId = p.id;
+                                const isTx = String(entryId).startsWith('tx-');
+                                const canEdit = (p.type === 'payment') || (isSuperadmin && isTx);
+                                const disabledAttr = canEdit ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"';
+                                const idArg = JSON.stringify(entryId);
+                                return `
+                                    <button onclick="editEntry(${idArg})" class="action-btn" title="Edit" ${disabledAttr}>
+                                        <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\"></path><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\"></path></svg>
+                                    </button>
+                                `;
+                            })()}
+                            ${(() => {
+                                const entryId = p.id;
+                                const isTx = String(entryId).startsWith('tx-');
+                                const canDelete = (p.type === 'payment') || (isSuperadmin && isTx);
+                                const disabledAttr = canDelete ? '' : 'disabled style="opacity:0.5;cursor:not-allowed;"';
+                                const idArg = JSON.stringify(entryId);
+                                return `
+                                    <button onclick="deleteEntry(${idArg})" class="action-btn danger" title="Delete" ${disabledAttr}>
+                                        <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"3 6 5 6 21 6\"></polyline><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"></path></svg>
+                                    </button>
+                                `;
+                            })()}
                         </div>
                     </td>
                 </tr>
@@ -685,6 +735,8 @@
             totalPages = data.pages || 1;
             currentPage = data.current_page || 1;
             totalItems = data.total || 0;
+
+            lastLoadedEntries = data.payments || [];
 
             renderPayments(data.payments || []);
             updatePaginationUI();
@@ -756,6 +808,24 @@
         loadPayments();
         loadStats();
     });
+
+    if (directionSelect) {
+        directionSelect.addEventListener('change', () => {
+            updateFiltersFromInputs();
+            currentPage = 1;
+            loadPayments();
+            loadStats();
+        });
+    }
+
+    if (typeSelect) {
+        typeSelect.addEventListener('change', () => {
+            updateFiltersFromInputs();
+            currentPage = 1;
+            loadPayments();
+            loadStats();
+        });
+    }
 
     if (userSelect) {
         userSelect.addEventListener('change', () => {
@@ -867,8 +937,13 @@
         }
 
         try {
-            const url = paymentId ? `/api/payments/${paymentId}` : '/api/payments';
-            const method = paymentId ? 'PUT' : 'POST';
+            let url = paymentId ? `/api/payments/${paymentId}` : '/api/payments';
+            let method = paymentId ? 'PUT' : 'POST';
+
+            if (paymentId && String(paymentId).startsWith('tx-')) {
+                url = `/api/transactions/${String(paymentId).slice(3)}`;
+                method = 'PUT';
+            }
 
             const response = await fetch(url, {
                 method,
@@ -900,21 +975,31 @@
         }
     });
 
-    window.editPayment = async (id) => {
+    window.editEntry = async (id) => {
         try {
-            const response = await fetch(`/api/payments?limit=1000`);
-            const data = await response.json();
-            const payment = data.payments.find(p => p.id === id);
+            const entryId = id;
+            let entry = (lastLoadedEntries || []).find(p => p.id === entryId);
+            if (!entry) {
+                const response = await fetch(`/api/payments?limit=1000`);
+                const data = await response.json();
+                entry = (data.payments || []).find(p => p.id === entryId);
+            }
 
-            if (!payment) {
+            if (!entry) {
                 alert('Payment not found');
                 return;
             }
 
-            document.getElementById('payment-id').value = payment.id;
-            document.getElementById('payment-amount').value = formatWithCommas(String(payment.amount || '').replace(/[^0-9]/g, ''));
+            const isTx = String(entry.id).startsWith('tx-');
+            if (isTx && !isSuperadmin) {
+                alert('Access denied');
+                return;
+            }
+
+            document.getElementById('payment-id').value = entry.id;
+            document.getElementById('payment-amount').value = formatWithCommas(String(entry.amount || '').replace(/[^0-9]/g, ''));
             // payment_date_jalali is like "YYYY/MM/DD HH:MM"; split into date/time inputs
-            const jalaliDt = (payment.payment_date_jalali || '').trim();
+            const jalaliDt = (entry.payment_date_jalali || '').trim();
             let datePart = '';
             let timePart = '';
             if (jalaliDt) {
@@ -924,15 +1009,29 @@
             }
             document.getElementById('payment-date').value = datePart;
             document.getElementById('payment-time').value = timePart;
-            document.getElementById('payment-card').value = payment.card_id || '';
-            document.getElementById('payment-sender-name').value = payment.sender_name || '';
-            document.getElementById('payment-sender-card').value = payment.sender_card || '';
-            document.getElementById('payment-client').value = payment.client_email || '';
-            document.getElementById('payment-description').value = payment.description || '';
+            document.getElementById('payment-card').value = entry.card_id || '';
+            document.getElementById('payment-sender-name').value = entry.sender_name || '';
+            document.getElementById('payment-sender-card').value = entry.sender_card || '';
+            document.getElementById('payment-client').value = entry.client_email || '';
+            document.getElementById('payment-description').value = entry.description || '';
+
+            if (isTx) {
+                const isExpense = Number(entry.amount) < 0;
+                kindSelect.value = isExpense ? 'expense' : 'income';
+                updateKindUI();
+                // expense-only fields (server/type)
+                try {
+                    document.getElementById('payment-server').value = (entry.server && entry.server.id) ? entry.server.id : '';
+                } catch (e) {}
+                try {
+                    document.getElementById('payment-cost-type').value = entry.type || 'server_cost';
+                } catch (e) {}
+            } else {
+                kindSelect.value = 'income';
+                updateKindUI();
+            }
 
             document.getElementById('modal-title').textContent = 'Edit Payment';
-            kindSelect.value = 'income';
-            updateKindUI();
             openModal();
         } catch (error) {
             alert('Error loading payment');
@@ -941,25 +1040,34 @@
 
     let paymentToDelete = null;
 
-    window.deletePayment = async (id) => {
+    window.deleteEntry = async (id) => {
         try {
-            // Fetch payment details
-            const response = await fetch(`/api/payments?limit=1000`);
-            const data = await response.json();
-            const payment = data.payments.find(p => p.id === id);
+            const entryId = id;
+            let entry = (lastLoadedEntries || []).find(p => p.id === entryId);
+            if (!entry) {
+                const response = await fetch(`/api/payments?limit=1000`);
+                const data = await response.json();
+                entry = (data.payments || []).find(p => p.id === entryId);
+            }
 
-            if (!payment) {
+            if (!entry) {
                 alert('Payment not found');
                 return;
             }
 
+            const isTx = String(entry.id).startsWith('tx-');
+            if (isTx && !isSuperadmin) {
+                alert('Access denied');
+                return;
+            }
+
             // Store payment ID for deletion
-            paymentToDelete = id;
+            paymentToDelete = entry.id;
 
             // Populate modal with payment details
-            document.getElementById('delete-amount').textContent = `${Number(payment.amount || 0).toLocaleString()} T`;
-            document.getElementById('delete-date').textContent = payment.payment_date_jalali || '-';
-            document.getElementById('delete-sender').textContent = payment.sender_name || payment.sender_card || '-';
+            document.getElementById('delete-amount').textContent = `${Number(entry.amount || 0).toLocaleString()} T`;
+            document.getElementById('delete-date').textContent = entry.payment_date_jalali || '-';
+            document.getElementById('delete-sender').textContent = entry.sender_name || entry.sender_card || '-';
 
             // Show delete modal
             document.getElementById('delete-modal').classList.remove('hidden');
@@ -982,7 +1090,11 @@
         confirmBtn.innerHTML = '<span style="opacity: 0.7;">Deleting...</span>';
 
         try {
-            const response = await fetch(`/api/payments/${paymentToDelete}`, { method: 'DELETE' });
+            let url = `/api/payments/${paymentToDelete}`;
+            if (String(paymentToDelete).startsWith('tx-')) {
+                url = `/api/transactions/${String(paymentToDelete).slice(3)}`;
+            }
+            const response = await fetch(url, { method: 'DELETE' });
             const result = await response.json();
 
             if (!response.ok) throw new Error(result.error || 'Failed to delete');

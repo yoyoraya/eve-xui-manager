@@ -128,6 +128,28 @@
                 <input type="text" id="transaction-search" placeholder="Email, description, or type">
             </div>
             <div class="filter-field">
+                <label>Direction</label>
+                <select id="direction-filter" class="form-select filter-select">
+                    <option value="">All</option>
+                    <option value="income">Income (+)</option>
+                    <option value="expense">Expense (-)</option>
+                </select>
+            </div>
+            <div class="filter-field">
+                <label>Type</label>
+                <select id="type-filter" class="form-select filter-select">
+                    <option value="">All types</option>
+                    <option value="deposit">DEPOSIT</option>
+                    <option value="manual_debit">MANUAL_DEBIT</option>
+                    <option value="renew">RENEW</option>
+                    <option value="reset_traffic">RESET_TRAFFIC</option>
+                    <option value="add_client">ADD_CLIENT</option>
+                    <option value="server_renewal">SERVER_RENEWAL</option>
+                    <option value="server_traffic">SERVER_TRAFFIC</option>
+                    <option value="server_cost">SERVER_COST</option>
+                </select>
+            </div>
+            <div class="filter-field">
                 <label>Start Date (Jalali)</label>
                 <input type="text" id="start-date" dir="ltr" placeholder="1403/01/01">
             </div>
@@ -211,6 +233,8 @@
     const endInput = document.getElementById('end-date');
     const serverSelect = document.getElementById('server-filter');
     const userSelect = document.getElementById('user-filter');
+    const directionSelect = document.getElementById('direction-filter');
+    const typeSelect = document.getElementById('type-filter');
     const resetButton = document.getElementById('reset-filters');
     const countLabel = document.getElementById('transactions-count');
     const rangeButtons = document.querySelectorAll('[data-range]');
@@ -233,6 +257,8 @@
 
     const filters = {
         search: '',
+        direction: '',
+        type: '',
         start_date: '',
         end_date: '',
         server_id: '',
@@ -259,6 +285,8 @@
 
     const updateFiltersFromInputs = () => {
         filters.search = searchInput.value.trim();
+        filters.direction = directionSelect ? directionSelect.value : '';
+        filters.type = typeSelect ? typeSelect.value : '';
         filters.start_date = startInput.value.trim();
         filters.end_date = endInput.value.trim();
         filters.server_id = serverSelect.value;
@@ -431,6 +459,12 @@
 
     const clearFilters = () => {
         searchInput.value = '';
+        if (directionSelect) {
+            directionSelect.value = '';
+        }
+        if (typeSelect) {
+            typeSelect.value = '';
+        }
         startInput.value = '';
         endInput.value = '';
         serverSelect.value = '';
@@ -484,6 +518,22 @@
         currentPage = 1; // Reset page
         loadTransactions();
     });
+
+    if (directionSelect) {
+        directionSelect.addEventListener('change', () => {
+            updateFiltersFromInputs();
+            currentPage = 1; // Reset page
+            loadTransactions();
+        });
+    }
+
+    if (typeSelect) {
+        typeSelect.addEventListener('change', () => {
+            updateFiltersFromInputs();
+            currentPage = 1; // Reset page
+            loadTransactions();
+        });
+    }
 
     if (userSelect) {
         userSelect.addEventListener('change', () => {
