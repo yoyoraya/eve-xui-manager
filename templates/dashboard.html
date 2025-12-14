@@ -80,6 +80,9 @@
                 <div class="client-breakdown">
                     <span class="client-count active-count"><span id="stat-active-clients">0</span></span>
                     <span class="client-count inactive-count"><span id="stat-inactive-clients">0</span></span>
+                    <span class="client-count expiry-start-after" title="Not started"><span id="stat-not-started-clients">0</span></span>
+                    <span class="client-count unlimited-expiry" title="Unlimited expiry"><span id="stat-unlimited-expiry-clients">0</span></span>
+                    <span class="client-count unlimited-volume" title="Unlimited volume"><span id="stat-unlimited-volume-clients">0</span></span>
                 </div>
             </div>
         </div>
@@ -936,6 +939,12 @@
         document.getElementById('stat-total-clients').textContent = stats?.total_clients || 0;
         document.getElementById('stat-active-clients').textContent = stats?.active_clients || 0;
         document.getElementById('stat-inactive-clients').textContent = stats?.inactive_clients || 0;
+        const notStartedEl = document.getElementById('stat-not-started-clients');
+        if (notStartedEl) notStartedEl.textContent = stats?.not_started_clients || 0;
+        const unExpEl = document.getElementById('stat-unlimited-expiry-clients');
+        if (unExpEl) unExpEl.textContent = stats?.unlimited_expiry_clients || 0;
+        const unVolEl = document.getElementById('stat-unlimited-volume-clients');
+        if (unVolEl) unVolEl.textContent = stats?.unlimited_volume_clients || 0;
         document.getElementById('stat-traffic').textContent = stats?.total_traffic || '0 B';
         document.getElementById('stat-upload').textContent = `↑ ${stats?.total_upload || '0 B'}`;
         document.getElementById('stat-download').textContent = `↓ ${stats?.total_download || '0 B'}`;
@@ -947,6 +956,7 @@
             case 'today': return 'expiry-today';
             case 'soon': return 'expiry-soon';
             case 'start_after_use': return 'expiry-start-after';
+            case 'unlimited': return 'expiry-start-after';
             default: return '';
         }
     }
@@ -1039,7 +1049,7 @@
                                         <td class="volume-cell">
                                             <div class="volume-info">
                                                 <span class="remaining ${client.volume_status || ''}">${client.remaining_formatted}</span>
-                                                <span class="total">/ ${client.totalGB_formatted}</span>
+                                                <span class="total ${client.totalGB_formatted === 'Unlimited' ? 'expiry-start-after' : ''}">/ ${client.totalGB_formatted}</span>
                                             </div>
                                         </td>
                                         <td class="action-cell">
@@ -2439,7 +2449,7 @@
                                         <td class="volume-cell">
                                             <div class="volume-info">
                                                 <span class="remaining ${client.volume_status || ''}">${client.remaining_formatted}</span>
-                                                <span class="total">/ ${client.totalGB_formatted}</span>
+                                                <span class="total ${client.totalGB_formatted === 'Unlimited' ? 'expiry-start-after' : ''}">/ ${client.totalGB_formatted}</span>
                                             </div>
                                         </td>
                                         <td class="action-cell">

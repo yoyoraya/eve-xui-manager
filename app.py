@@ -1585,7 +1585,7 @@ def find_client(inbounds, inbound_id, email):
 
 def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, app_base_url=None):
     processed = []
-    stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
+    stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "upload_raw": 0, "download_raw": 0}
     
     assignments = assignments or {}
 
@@ -1659,6 +1659,9 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 total_bytes = client.get('totalGB', 0) or 0
                 remaining_bytes = max(total_bytes - (client_up + client_down), 0) if total_bytes > 0 else None
                 total_formatted = format_bytes_gb_tb(total_bytes) if total_bytes > 0 else "Unlimited"
+
+                if total_bytes <= 0:
+                    stats["unlimited_volume_clients"] += 1
                 
                 volume_status = ""
                 if remaining_bytes is not None:
@@ -1671,9 +1674,17 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                         volume_status = "low"
                 else:
                     remaining_formatted = "Unlimited"
+                    # Use existing purple badge style (expiry-start-after) for unlimited volume
+                    volume_status = "expiry-start-after"
 
                 expiry_raw = client.get('expiryTime', 0)
                 expiry_info = format_remaining_days(expiry_raw)
+
+                if expiry_info.get('type') == 'start_after_use':
+                    stats["not_started_clients"] += 1
+
+                if expiry_info.get('type') == 'unlimited':
+                    stats["unlimited_expiry_clients"] += 1
 
                 client_data = {
                     "email": email,
@@ -1876,7 +1887,7 @@ def api_refresh():
             "success": True, 
             "inbounds": [], 
             "stats": {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, 
-                      "active_clients": 0, "inactive_clients": 0, "total_traffic": "0 B", 
+                      "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "total_traffic": "0 B", 
                       "total_upload": "0 B", "total_download": "0 B"}, 
             "servers": [],
             "server_count": 0
@@ -1925,6 +1936,9 @@ def api_refresh():
         "total_clients": 0,     # فقط کلاینت‌های Assign شده
         "active_clients": 0,    # فقط کلاینت‌های Assign شده فعال
         "inactive_clients": 0,  # فقط کلاینت‌های Assign شده غیرفعال
+        "not_started_clients": 0,
+        "unlimited_expiry_clients": 0,
+        "unlimited_volume_clients": 0,
         "upload_raw": 0,        # فقط مصرف کلاینت‌های Assign شده
         "download_raw": 0
     }
@@ -1971,6 +1985,16 @@ def api_refresh():
                     reseller_stats["active_clients"] += 1
                 else:
                     reseller_stats["inactive_clients"] += 1
+
+                if client.get('expiryType') == 'start_after_use':
+                    reseller_stats["not_started_clients"] += 1
+
+                if client.get('expiryType') == 'unlimited':
+                    reseller_stats["unlimited_expiry_clients"] += 1
+
+                # totalGB_formatted is already normalized in cached payload
+                if (client.get('totalGB_formatted') == 'Unlimited'):
+                    reseller_stats["unlimited_volume_clients"] += 1
                 
                 # جمع زدن ترافیک کلاینت‌های خودش
                 reseller_stats["upload_raw"] += client.get('up', 0)
@@ -5138,7 +5162,7 @@ def fetch_and_update_global_data():
                 results.append(future.result())
 
         all_inbounds = []
-        total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "upload_raw": 0, "download_raw": 0}
+        total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "upload_raw": 0, "download_raw": 0}
         server_statuses = []
 
         admin_user = Admin.query.filter(or_(Admin.is_superadmin == True, Admin.role == 'superadmin')).first()
