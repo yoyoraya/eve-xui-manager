@@ -33,8 +33,11 @@ body {
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.6;
+    overflow-x: hidden;
     direction: ltr;
 }
+
+
 
 .app-layout {
     display: flex;
@@ -1376,9 +1379,43 @@ input:checked + .slider:before {
 
 @media (max-width: 768px) {
     .filter-dropdown {
-        right: auto;
-        left: 0;
+        right: 0;
+        left: auto;
         max-width: 85vw;
+    }
+
+    /* Dashboard filters: Server dropdown opens from left, Expiry from right */
+    #server-filter-dropdown {
+        left: 0;
+        right: auto;
+    }
+
+    #expiry-filter-dropdown {
+        right: 0;
+        left: auto;
+    }
+}
+
+/* Extra small screens: split Server and Expiry into separate rows */
+@media (max-width: 444px) {
+    .filters-group {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        align-items: stretch;
+    }
+
+    /* Server takes the full line width */
+    #server-filter-btn {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    /* Expiry takes the full line width */
+    #expiry-filter-btn {
+        width: 100%;
+        justify-content: space-between;
     }
 }
 
@@ -2462,13 +2499,64 @@ select optgroup {
     .content-area {
         padding: 16px;
     }
-    
+
+    /* Prevent mobile browsers from auto-scaling due to header overflow */
+    .header-actions {
+        flex-wrap: wrap;
+        min-width: 0;
+    }
+
+    .header-controls {
+        flex-wrap: wrap;
+        min-width: 0;
+    }
+
+    .wallet-pill {
+        max-width: 100%;
+        min-width: 0;
+    }
+
+    /* Fix dashboard search/filter bar responsiveness */
+    .filter-bar {
+        padding: 10px 12px;
+        gap: 10px;
+    }
+
+    .search-wrapper {
+        min-width: 0;
+        width: 100%;
+        flex-basis: 100%;
+    }
+
+    .filters-group {
+        flex-wrap: wrap;
+        min-width: 0;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .filter-btn {
+        padding: 8px 12px;
+        font-size: 0.85rem;
+    }
+
+    .filter-btn span:not(.badge-count):not(.checkmark) {
+        display: inline;
+    }
+
+    .filter-toggle {
+        padding: 6px 10px;
+        font-size: 0.85rem;
+    }
+
+    .toggle-text {
+        font-size: 0.85rem;
+    }
+
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 12px;
-    }
-    
-    .stat-card {
+    }    .stat-card {
         padding: 16px;
     }
     

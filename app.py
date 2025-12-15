@@ -4004,6 +4004,21 @@ def get_finance_stats():
     j_month_start = j_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     g_month_start_tehran = j_month_start.togregorian()
     month_start = g_month_start_tehran - tehran_offset
+
+    # Start of previous Jalali month
+    try:
+        prev_year = int(j_month_start.year)
+        prev_month = int(j_month_start.month) - 1
+        if prev_month <= 0:
+            prev_month = 12
+            prev_year -= 1
+        j_prev_month_start = jdatetime_class(prev_year, prev_month, 1, 0, 0, 0, 0)
+        g_prev_month_start_tehran = j_prev_month_start.togregorian()
+        prev_month_start = g_prev_month_start_tehran - tehran_offset
+        prev_month_end = month_start
+    except Exception:
+        prev_month_start = None
+        prev_month_end = None
     
     # Start of Today (Jalali/Tehran)
     j_today_start = j_now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -4030,8 +4045,35 @@ def get_finance_stats():
         month_charge = sum_amount(charge_query, month_start)
         total_charge = sum_amount(charge_query)
 
+        prev_month_charge = 0
+        if prev_month_start and prev_month_end:
+            q_prev = charge_query.filter(Transaction.created_at >= prev_month_start, Transaction.created_at < prev_month_end)
+            prev_month_charge = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(Transaction.id.in_(q_prev.with_entities(Transaction.id))).scalar() or 0
+
         month_usage = abs(sum_amount(usage_query, month_start))
         total_usage = abs(sum_amount(usage_query))
+
+        prev_month_usage = 0
+        if prev_month_start and prev_month_end:
+            q_prev_u = usage_query.filter(Transaction.created_at >= prev_month_start, Transaction.created_at < prev_month_end)
+            prev_month_usage = abs(db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(Transaction.id.in_(q_prev_u.with_entities(Transaction.id))).scalar() or 0)
+
+        month_net = int(month_charge) - int(month_usage)
+        prev_month_net = int(prev_month_charge) - int(prev_month_usage)
+
+        def pct_change(cur, prev):
+            try:
+                cur = float(cur)
+                prev = float(prev)
+            except Exception:
+                return None
+            if prev == 0:
+                return 0.0 if cur == 0 else None
+            return ((cur - prev) / abs(prev)) * 100.0
+
+        month_charge_pct = pct_change(month_charge, prev_month_charge)
+        month_usage_pct = pct_change(month_usage, prev_month_usage)
+        month_net_pct = pct_change(month_net, prev_month_net)
 
         remain = total_charge - total_usage
 
@@ -4042,6 +4084,13 @@ def get_finance_stats():
                 'month': month_charge,
                 'month_expense': month_usage,
                 'total': remain,
+                'prev_month': prev_month_charge,
+                'prev_month_expense': prev_month_usage,
+                'month_net': month_net,
+                'prev_month_net': prev_month_net,
+                'month_change_pct': month_charge_pct,
+                'month_expense_change_pct': month_usage_pct,
+                'month_net_change_pct': month_net_pct,
                 'payment_count': charge_query.count(),
                 'total_charge': total_charge,
                 'total_usage': total_usage
@@ -4067,6 +4116,14 @@ def get_finance_stats():
         month_income = sum_income(month_start)
         total_income = sum_income()
 
+        prev_month_income = 0
+        if prev_month_start and prev_month_end:
+            prev_month_income = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+                Transaction.id.in_(query.with_entities(Transaction.id)),
+                Transaction.created_at >= prev_month_start,
+                Transaction.created_at < prev_month_end
+            ).scalar() or 0
+
         # For net profit: get expense transactions separately
         expense_query = Transaction.query.filter(Transaction.category == 'expense')
         if target_user_id:
@@ -4082,6 +4139,33 @@ def get_finance_stats():
             Transaction.id.in_(expense_query.with_entities(Transaction.id)),
             Transaction.created_at >= month_start
         ).scalar() or 0
+
+        prev_month_expense = 0
+        if prev_month_start and prev_month_end:
+            prev_month_expense = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+                Transaction.id.in_(expense_query.with_entities(Transaction.id)),
+                Transaction.created_at >= prev_month_start,
+                Transaction.created_at < prev_month_end
+            ).scalar() or 0
+
+        month_cost_abs = abs(month_expense)
+        prev_month_cost_abs = abs(prev_month_expense)
+        month_profit = int(month_income) - int(month_cost_abs)
+        prev_month_profit = int(prev_month_income) - int(prev_month_cost_abs)
+
+        def pct_change(cur, prev):
+            try:
+                cur = float(cur)
+                prev = float(prev)
+            except Exception:
+                return None
+            if prev == 0:
+                return 0.0 if cur == 0 else None
+            return ((cur - prev) / abs(prev)) * 100.0
+
+        month_income_pct = pct_change(month_income, prev_month_income)
+        month_cost_pct = pct_change(month_cost_abs, prev_month_cost_abs)
+        month_profit_pct = pct_change(month_profit, prev_month_profit)
 
         payment_count = query.count()
 
@@ -4111,12 +4195,213 @@ def get_finance_stats():
                 'month': month_income,
                 'month_expense': abs(month_expense),
                 'total': total_income,
+                'prev_month': prev_month_income,
+                'prev_month_expense': prev_month_cost_abs,
+                'month_net': month_profit,
+                'prev_month_net': prev_month_profit,
+                'month_change_pct': month_income_pct,
+                'month_expense_change_pct': month_cost_pct,
+                'month_net_change_pct': month_profit_pct,
                 'payment_count': payment_count,
                 'by_card': income_by_card,
                 'total_income': total_income,
                 'total_expense': total_expense
             }
         })
+
+
+@app.route('/api/finance/overview', methods=['GET'])
+@login_required
+def get_finance_overview():
+    """Timeseries overview for income/expense/profit."""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+
+    requested_range = (request.args.get('range') or '30d').strip().lower()
+    if requested_range not in ('12m', '30d', '7d', '24h', 'month'):
+        requested_range = '30d'
+
+    # Optional month selection (Jalali)
+    selected_month = request.args.get('month', type=int)
+    selected_year = request.args.get('year', type=int)
+    if selected_month and 1 <= int(selected_month) <= 12:
+        requested_range = 'month'
+
+    card_id = request.args.get('card_id', type=int)
+    target_user_id = request.args.get('user_id', type=int)
+
+    tehran_offset = timedelta(hours=3, minutes=30)
+    now_utc = datetime.utcnow()
+    now_tehran = now_utc + tehran_offset
+
+    def as_tehran(dt_utc):
+        return (dt_utc + tehran_offset) if dt_utc else None
+
+    labels = []
+    keys = []
+    start_utc = None
+    end_utc = None
+
+    # Build bucket keys (chronological)
+    if requested_range == '12m':
+        j_now = jdatetime_class.fromgregorian(datetime=now_tehran)
+        j_year = int(j_now.year)
+        j_month = int(j_now.month)
+
+        def shift_month(year, month, delta):
+            total = (year * 12 + (month - 1)) + delta
+            new_year = total // 12
+            new_month = (total % 12) + 1
+            return new_year, new_month
+
+        month_starts_tehran = []
+        for i in range(11, -1, -1):
+            y, m = shift_month(j_year, j_month, -i)
+            j_start = jdatetime_class(y, m, 1, 0, 0, 0, 0)
+            g_start_tehran = j_start.togregorian()
+            month_starts_tehran.append(g_start_tehran)
+            labels.append(f"{y:04d}/{m:02d}")
+            keys.append((y, m))
+
+        # end is start of next month
+        next_y, next_m = shift_month(j_year, j_month, 1)
+        j_end = jdatetime_class(next_y, next_m, 1, 0, 0, 0, 0)
+        g_end_tehran = j_end.togregorian()
+        start_utc = month_starts_tehran[0] - tehran_offset
+        end_utc = g_end_tehran - tehran_offset
+    elif requested_range in ('30d', '7d'):
+        days = 30 if requested_range == '30d' else 7
+        end_tehran = now_tehran
+        end_tehran_floor = end_tehran.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        start_tehran = end_tehran_floor - timedelta(days=days)
+        start_utc = start_tehran - tehran_offset
+        end_utc = end_tehran_floor - tehran_offset
+
+        for i in range(days, 0, -1):
+            day_start_tehran = end_tehran_floor - timedelta(days=i)
+            # label as Jalali date
+            j_label = (format_jalali(day_start_tehran) or '').strip()
+            if ' ' in j_label:
+                j_label = j_label.split(' ')[0]
+            labels.append(j_label)
+            keys.append(day_start_tehran.date())
+    elif requested_range == 'month':
+        # Daily buckets for a selected Jalali month (defaults to current Jalali year)
+        j_now = jdatetime_class.fromgregorian(datetime=now_tehran)
+        j_year = int(selected_year or j_now.year)
+        j_month = int(selected_month or j_now.month)
+
+        # Start of selected month
+        j_start = jdatetime_class(j_year, j_month, 1, 0, 0, 0, 0)
+        g_start_tehran = j_start.togregorian()
+        start_utc = g_start_tehran - tehran_offset
+
+        # Start of next month
+        if j_month == 12:
+            j_end = jdatetime_class(j_year + 1, 1, 1, 0, 0, 0, 0)
+        else:
+            j_end = jdatetime_class(j_year, j_month + 1, 1, 0, 0, 0, 0)
+        g_end_tehran = j_end.togregorian()
+        end_utc = g_end_tehran - tehran_offset
+
+        # Number of days in this Jalali month
+        try:
+            days_in_month = int(j_end.togregorian().date() - j_start.togregorian().date()).days
+        except Exception:
+            days_in_month = 31
+            if j_month > 6:
+                days_in_month = 30
+            if j_month == 12:
+                days_in_month = 29
+
+        for day in range(1, days_in_month + 1):
+            # Use day number as label (cleaner for bar chart)
+            labels.append(str(day))
+            # Keys are Gregorian dates in Tehran (date-only)
+            g_day_tehran = (jdatetime_class(j_year, j_month, day, 0, 0, 0, 0)).togregorian()
+            keys.append(g_day_tehran.date())
+    else:  # 24h
+        end_tehran = now_tehran.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        start_tehran = end_tehran - timedelta(hours=24)
+        start_utc = start_tehran - tehran_offset
+        end_utc = end_tehran - tehran_offset
+
+        for i in range(24, 0, -1):
+            hour_start_tehran = end_tehran - timedelta(hours=i)
+            labels.append(hour_start_tehran.strftime('%H:00'))
+            keys.append(hour_start_tehran)
+
+    # Query transactions in a single window then bin in Python
+    tx_query = Transaction.query
+    if user.role == 'reseller':
+        tx_query = tx_query.filter(Transaction.admin_id == user.id)
+    else:
+        if target_user_id:
+            tx_query = tx_query.filter(Transaction.admin_id == target_user_id)
+
+    if card_id:
+        tx_query = tx_query.filter(Transaction.card_id == card_id)
+
+    tx_query = tx_query.filter(Transaction.created_at >= start_utc, Transaction.created_at < end_utc)
+    tx_query = tx_query.filter(Transaction.type != 'audit')
+
+    # For superadmin views, keep only ledger-like rows
+    if user.role != 'reseller':
+        tx_query = tx_query.filter(Transaction.category.in_(['income', 'expense']))
+
+    tx_rows = tx_query.all()
+
+    income_map = {k: 0 for k in keys}
+    expense_map = {k: 0 for k in keys}
+
+    for tx in tx_rows:
+        if not tx.created_at:
+            continue
+        tehran_dt = as_tehran(tx.created_at)
+        if not tehran_dt:
+            continue
+
+        bucket_key = None
+        if requested_range == '12m':
+            j_dt = jdatetime_class.fromgregorian(datetime=tehran_dt)
+            bucket_key = (int(j_dt.year), int(j_dt.month))
+        elif requested_range in ('30d', '7d', 'month'):
+            bucket_key = tehran_dt.date()
+        else:
+            bucket_key = tehran_dt.replace(minute=0, second=0, microsecond=0)
+
+        if bucket_key not in income_map:
+            continue
+
+        amount = int(tx.amount or 0)
+        if user.role == 'reseller':
+            if amount > 0:
+                income_map[bucket_key] += amount
+            elif amount < 0:
+                expense_map[bucket_key] += abs(amount)
+        else:
+            if tx.category == 'income' and amount > 0:
+                income_map[bucket_key] += amount
+            elif tx.category == 'expense' and amount < 0:
+                expense_map[bucket_key] += abs(amount)
+
+    income_series = [int(income_map[k] or 0) for k in keys]
+    expense_series = [int(expense_map[k] or 0) for k in keys]
+    profit_series = [int(i - e) for i, e in zip(income_series, expense_series)]
+
+    return jsonify({
+        'success': True,
+        'range': requested_range,
+        'month': int(selected_month) if selected_month else None,
+        'year': int(selected_year) if selected_year else None,
+        'labels': labels,
+        'series': {
+            'income': income_series,
+            'expense': expense_series,
+            'profit': profit_series
+        }
+    })
 
 
 @app.route('/s/<int:server_id>/<sub_id>')
