@@ -2558,6 +2558,7 @@ def renew_client(server_id, inbound_id, email):
 
     start_after_first_use = bool(data.get('start_after_first_use', False))
     reset_traffic = bool(data.get('reset_traffic', False))
+    is_free = bool(data.get('free', False))
     mode = (data.get('mode') or 'custom').lower()
     if mode not in ('package', 'custom'):
         mode = 'custom'
@@ -2597,6 +2598,9 @@ def renew_client(server_id, inbound_id, email):
             description = f"Renew Custom: {days_to_add} Days, {volume_gb_to_add} GB - {email}"
     except (ValueError, TypeError):
         return jsonify({"success": False, "error": "Invalid data"}), 400
+
+    if is_free:
+        price = 0
     
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
@@ -2705,9 +2709,15 @@ def renew_client(server_id, inbound_id, email):
                         except:
                             pass
 
-                if price > 0:
-                    sender_card = data.get('sender_card', '') or ''
-                    card_id = data.get('card_id')
+                sender_card = data.get('sender_card', '') or ''
+                card_id = data.get('card_id')
+                if is_free:
+                    if user.role == 'reseller':
+                        log_transaction(user.id, 0, 'renew', f"User Renewal (Free) - {description}", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
+                    else:
+                        log_transaction(user.id, 0, 'renew', f"User Renewal (Free) - {description}", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
+                    db.session.commit()
+                elif price > 0:
                     if user.role == 'reseller':
                         user.credit -= price
                         log_transaction(user.id, -price, 'renew', "User Renewal (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
@@ -2936,6 +2946,7 @@ def add_client(server_id, inbound_id):
     email = data.get('email', '').strip()
     mode = data.get('mode', 'custom')
     start_after_first_use = bool(data.get('start_after_first_use', False))
+    is_free = bool(data.get('free', False))
     
     if not email: return jsonify({"success": False, "error": "Email is required"})
 
@@ -2967,13 +2978,16 @@ def add_client(server_id, inbound_id):
         price = (days * user_cost_day) + (volume_gb * user_cost_gb)
         description = f"Custom Plan: {days} Days, {volume_gb} GB - {email}"
 
+    if is_free:
+        price = 0
+
     if user.role == 'reseller':
         if not is_server_accessible(server_id, allowed_map, assignments):
             return jsonify({"success": False, "error": "Access to this server is denied"}), 403
         if not is_inbound_accessible(server_id, inbound_id, allowed_map, assignments):
             return jsonify({"success": False, "error": "Access to this inbound is denied"}), 403
         
-        if user.credit < price:
+        if price > 0 and user.credit < price:
             return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
 
     session_obj, error = get_xui_session(server)
@@ -3032,10 +3046,15 @@ def add_client(server_id, inbound_id):
         up_resp = session_obj.post(up_url, json=update_data, verify=False, timeout=10)
         
         if up_resp.status_code == 200 and up_resp.json().get('success'):
-            
-            if price > 0:
-                sender_card = data.get('sender_card', '') or ''
-                card_id = data.get('card_id')
+
+            sender_card = data.get('sender_card', '') or ''
+            card_id = data.get('card_id')
+            if is_free:
+                if user.role == 'reseller':
+                    log_transaction(user.id, 0, 'purchase', f"Add User (Free) - {description}", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
+                else:
+                    log_transaction(user.id, 0, 'purchase', f"Add User (Free) - {description}", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
+            elif price > 0:
                 if user.role == 'reseller':
                     user.credit -= price
                     log_transaction(user.id, -price, 'purchase', "Add User (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)

@@ -157,22 +157,51 @@
                 <button class="filter-btn" onclick="toggleExpiryFilter()" id="expiry-filter-btn">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="filter-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                     <span id="expiry-filter-label">Expiry</span>
+                    <span class="badge-count hidden" id="expiry-filter-count">0</span>
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </button>
                 <div id="expiry-filter-dropdown" class="filter-dropdown hidden">
                     <div class="filter-header">
                         <span>Expiry</span>
-                        <button class="text-btn" onclick="clearExpiryFilter()">All</button>
+                        <button class="text-btn" onclick="toggleAllExpiryFilters()">All</button>
                     </div>
                     <div class="filter-list">
-                        <div class="filter-item" onclick="setExpiryFilter('not_started')"><span>Not started</span></div>
-                        <div class="filter-item" onclick="setExpiryFilter('unlimited')"><span>Unlimited</span></div>
-                        <div class="filter-item" onclick="setExpiryFilter('expired')"><span>Expired</span></div>
-                        <div class="filter-item" onclick="setExpiryFilter('today')"><span>Today</span></div>
-                        <div class="filter-item" onclick="setExpiryFilter('lt_days', { keepOpen: true })">
-                            <span>Less than</span>
-                            <input type="number" id="expiry-lt-days" class="form-input expiry-days-input" min="1" step="1" value="7" onchange="onExpiryDaysChanged()" onkeydown="onExpiryDaysKeyDown(event)">
-                            <span>days</span>
+                        <div class="filter-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="expiry-filter-not-started" onchange="toggleExpirySelection('not_started', this.checked)">
+                                <span class="checkmark"></span>
+                                <span>Not started</span>
+                            </label>
+                        </div>
+                        <div class="filter-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="expiry-filter-unlimited" onchange="toggleExpirySelection('unlimited', this.checked)">
+                                <span class="checkmark"></span>
+                                <span>Unlimited</span>
+                            </label>
+                        </div>
+                        <div class="filter-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="expiry-filter-expired" onchange="toggleExpirySelection('expired', this.checked)">
+                                <span class="checkmark"></span>
+                                <span>Expired</span>
+                            </label>
+                        </div>
+                        <div class="filter-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="expiry-filter-today" onchange="toggleExpirySelection('today', this.checked)">
+                                <span class="checkmark"></span>
+                                <span>Today</span>
+                            </label>
+                        </div>
+                        <div class="filter-item">
+                            <label class="checkbox-label" style="width: 100%;">
+                                <input type="checkbox" id="expiry-filter-lt-days" onchange="toggleExpirySelection('lt_days', this.checked)">
+                                <span class="checkmark"></span>
+                                <span>Less than</span>
+                                <input type="number" id="expiry-lt-days" class="form-input expiry-days-input" min="1" max="999" step="1" value="7" onchange="onExpiryDaysChanged()" onkeydown="onExpiryDaysKeyDown(event)" onclick="event.stopPropagation()">
+                                <span>days</span>
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -367,6 +396,14 @@
                 </div>
             </div>
 
+            <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0 0 10px 0;">
+                <div class="toggle-switch">
+                    <input type="checkbox" id="renew-free-toggle" onchange="refreshRenewPriceDisplay()">
+                    <span class="slider"></span>
+                </div>
+                <span>Free</span>
+            </label>
+
             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); padding: 8px 12px; border-radius: 8px; margin-bottom: 5px;">
                 <span style="font-size: 0.9rem; color: #4ade80;">Payable Amount</span>
                 <div style="color: #4ade80;">
@@ -549,6 +586,14 @@
                     <span style="font-size: 0.85rem; color: var(--text-secondary);">Cost: <strong id="custom-price-display" style="color: #fbbf24; margin-left: 4px;">0</strong> <span style="font-size: 0.75rem;">T</span></span>
                 </div>
             </div>
+
+            <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0 0 10px 0;">
+                <div class="toggle-switch">
+                    <input type="checkbox" id="add-client-free-toggle" onchange="updateAddPriceDisplay()">
+                    <span class="slider"></span>
+                </div>
+                <span>Free</span>
+            </label>
 
             <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); padding: 8px 12px; border-radius: 8px; margin-bottom: 5px;">
                 <span style="font-size: 0.9rem; color: #4ade80;">Payable Amount</span>
@@ -776,7 +821,7 @@
     let refreshController = null;
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
 
-    let selectedExpiryFilter = 'all'; // all | not_started | expired | today | lt_days
+    const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days
     let expiryLessThanDays = 7;
     let disabledOnlyClients = false;
 
@@ -789,6 +834,9 @@
 
     document.addEventListener('DOMContentLoaded', function() {
         showLoading();
+        updateExpiryFilterLabel();
+        updateExpiryFilterCount();
+        syncExpiryFilterCheckboxes();
         // Load servers first to know if we have any
         loadServers().then(() => {
             refreshData(true).then(() => hideLoading());
@@ -1467,6 +1515,8 @@
         }
         document.getElementById('renew-start-after-first-use').checked = false;
         document.getElementById('renew-reset-traffic').checked = false;
+        const renewFreeToggle = document.getElementById('renew-free-toggle');
+        if (renewFreeToggle) renewFreeToggle.checked = false;
         document.getElementById('renew-custom-days').value = 30;
         document.getElementById('renew-custom-volume').value = 10;
         selectedRenewPackageId = null;
@@ -1491,6 +1541,7 @@
         const usePackage = Boolean(selectedRenewPackageId);
         const payload = {
             mode: usePackage ? 'package' : 'custom',
+            free: Boolean(document.getElementById('renew-free-toggle')?.checked),
             start_after_first_use: startAfterFirstUse,
             reset_traffic: resetTraffic,
             sender_card: senderCard,
@@ -1567,6 +1618,8 @@
         document.getElementById('custom-days').value = 30;
         document.getElementById('custom-volume').value = 10;
         document.getElementById('add-client-start-after-first-use').checked = false;
+        const addFreeToggle = document.getElementById('add-client-free-toggle');
+        if (addFreeToggle) addFreeToggle.checked = false;
         selectedPackageId = null;
         loadPackages();
         calculateCustomPrice();
@@ -1592,7 +1645,7 @@
             container.innerHTML = pkgs.map(p => `
                 <div class="pkg-card" data-package-id="${p.id}" data-package-price="${p.price}" onclick="selectPackage(this, ${p.id}, ${p.price})" 
                      style="border: 1px solid var(--border-color); padding: 8px; border-radius: 6px; cursor: pointer; transition: 0.2s; background: var(--bg-dark); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-height: 60px;">
-                    <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; line-height: 1.2;">${p.name}</div>
+                    <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; line-height: 1.2; color: var(--text-secondary);">${p.name}</div>
                     <div style="color: #4ade80; font-weight: bold; font-size: 0.8rem;">${p.price.toLocaleString()} T</div>
                 </div>
             `).join('');
@@ -1634,7 +1687,8 @@
     function updateRenewPriceDisplay(amount) {
         const target = document.getElementById('renew-payable-display');
         if (!target) return;
-        const normalized = Number(amount) || 0;
+        const isFree = Boolean(document.getElementById('renew-free-toggle')?.checked);
+        const normalized = isFree ? 0 : (Number(amount) || 0);
         target.textContent = normalized.toLocaleString();
     }
 
@@ -1655,7 +1709,7 @@
             container.innerHTML = pkgs.map(p => `
                 <div class="pkg-card" data-package-id="${p.id}" data-package-price="${p.price}" onclick="selectRenewPackage(this, ${p.id}, ${p.price})"
                      style="border: 1px solid var(--border-color); padding: 8px; border-radius: 6px; cursor: pointer; transition: 0.2s; background: var(--bg-dark); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-height: 60px;">
-                    <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; line-height: 1.2;">${p.name}</div>
+                    <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; line-height: 1.2; color: var(--text-secondary);">${p.name}</div>
                     <div style="color: #4ade80; font-weight: bold; font-size: 0.8rem;">${p.price.toLocaleString()} T</div>
                 </div>
             `).join('');
@@ -1757,7 +1811,9 @@
         } else {
             total = computeAddCustomPrice();
         }
-        display.textContent = (Number(total) || 0).toLocaleString();
+        const isFree = Boolean(document.getElementById('add-client-free-toggle')?.checked);
+        const normalized = isFree ? 0 : (Number(total) || 0);
+        display.textContent = normalized.toLocaleString();
     }
 
     function onServerSelected() {
@@ -1849,6 +1905,7 @@
         const payload = {
             email: email,
             mode: usePackage ? 'package' : 'custom',
+            free: Boolean(document.getElementById('add-client-free-toggle')?.checked),
             start_after_first_use: startAfterFirstUse,
             sender_card: senderCard,
             card_id: destCardId ? parseInt(destCardId) : null
@@ -2086,7 +2143,20 @@
     function updateExpiryFilterLabel() {
         const labelEl = document.getElementById('expiry-filter-label');
         if (!labelEl) return;
-        switch (selectedExpiryFilter) {
+
+        const count = selectedExpiryFilters.size;
+        if (count === 0) {
+            labelEl.textContent = 'Expiry';
+            return;
+        }
+
+        if (count > 1) {
+            labelEl.textContent = 'Expiry';
+            return;
+        }
+
+        const only = Array.from(selectedExpiryFilters)[0];
+        switch (only) {
             case 'not_started':
                 labelEl.textContent = 'Not started';
                 break;
@@ -2107,42 +2177,84 @@
         }
     }
 
-    function setExpiryFilter(type, options = {}) {
-        selectedExpiryFilter = type || 'all';
+    function updateExpiryFilterCount() {
+        const badge = document.getElementById('expiry-filter-count');
+        if (!badge) return;
+        const count = selectedExpiryFilters.size;
+        badge.textContent = count;
+        if (count > 0) badge.classList.remove('hidden');
+        else badge.classList.add('hidden');
+    }
 
-        if (selectedExpiryFilter === 'lt_days') {
+    function toggleAllExpiryFilters() {
+        const allKeys = ['not_started', 'unlimited', 'expired', 'today', 'lt_days'];
+        const allSelected = allKeys.every(k => selectedExpiryFilters.has(k));
+
+        if (allSelected) {
+            selectedExpiryFilters.clear();
+        } else {
+            allKeys.forEach(k => selectedExpiryFilters.add(k));
             const daysInput = document.getElementById('expiry-lt-days');
             const parsed = parseInt(daysInput?.value || '', 10);
             expiryLessThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
         }
 
         updateExpiryFilterLabel();
+        updateExpiryFilterCount();
+        syncExpiryFilterCheckboxes();
         applyFilters();
+    }
 
-        if (!options.keepOpen) {
-            const dropdown = document.getElementById('expiry-filter-dropdown');
-            if (dropdown) dropdown.classList.add('hidden');
-        } else {
+    function syncExpiryFilterCheckboxes() {
+        const map = {
+            not_started: 'expiry-filter-not-started',
+            unlimited: 'expiry-filter-unlimited',
+            expired: 'expiry-filter-expired',
+            today: 'expiry-filter-today',
+            lt_days: 'expiry-filter-lt-days'
+        };
+
+        Object.entries(map).forEach(([key, id]) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = selectedExpiryFilters.has(key);
+        });
+
+        const daysInput = document.getElementById('expiry-lt-days');
+        if (daysInput) daysInput.value = String(expiryLessThanDays);
+    }
+
+    function toggleExpirySelection(type, checked) {
+        const key = String(type || '').toLowerCase();
+        if (!key) return;
+
+        if (checked) selectedExpiryFilters.add(key);
+        else selectedExpiryFilters.delete(key);
+
+        if (key === 'lt_days' && checked) {
             const daysInput = document.getElementById('expiry-lt-days');
-            if (daysInput) daysInput.focus();
+            const parsed = parseInt(daysInput?.value || '', 10);
+            expiryLessThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
         }
+
+        updateExpiryFilterLabel();
+        updateExpiryFilterCount();
+        applyFilters();
     }
 
     function clearExpiryFilter() {
-        selectedExpiryFilter = 'all';
+        selectedExpiryFilters.clear();
         updateExpiryFilterLabel();
+        updateExpiryFilterCount();
+        syncExpiryFilterCheckboxes();
         applyFilters();
-        const dropdown = document.getElementById('expiry-filter-dropdown');
-        if (dropdown) dropdown.classList.add('hidden');
     }
 
     function onExpiryDaysChanged() {
         const daysInput = document.getElementById('expiry-lt-days');
         const parsed = parseInt(daysInput?.value || '', 10);
         expiryLessThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
-        selectedExpiryFilter = 'lt_days';
         updateExpiryFilterLabel();
-        applyFilters();
+        if (selectedExpiryFilters.has('lt_days')) applyFilters();
     }
 
     function onExpiryDaysKeyDown(event) {
@@ -2150,43 +2262,31 @@
         if (event.key === 'Enter') {
             event.preventDefault();
             onExpiryDaysChanged();
-            const dropdown = document.getElementById('expiry-filter-dropdown');
-            if (dropdown) dropdown.classList.add('hidden');
         }
     }
 
     function matchesExpiryFilter(client) {
         if (!client) return false;
-        if (!selectedExpiryFilter || selectedExpiryFilter === 'all') return true;
+        if (!selectedExpiryFilters || selectedExpiryFilters.size === 0) return true;
 
         const type = String(client.expiryType || '').toLowerCase();
         const expiryTs = Number(client.expiryTimestamp || 0);
         const now = Date.now();
 
-        if (selectedExpiryFilter === 'not_started') {
-            return type === 'start_after_use';
+        // OR across selected options
+        if (selectedExpiryFilters.has('not_started') && type === 'start_after_use') return true;
+        if (selectedExpiryFilters.has('unlimited') && type === 'unlimited') return true;
+        if (selectedExpiryFilters.has('expired') && (type === 'expired' || (expiryTs > 0 && expiryTs < now))) return true;
+        if (selectedExpiryFilters.has('today') && type === 'today') return true;
+
+        if (selectedExpiryFilters.has('lt_days')) {
+            if (expiryTs > now && type !== 'expired' && type !== 'start_after_use' && type !== 'unlimited' && type !== 'today') {
+                const daysLeft = Math.ceil((expiryTs - now) / 86400000);
+                if (daysLeft > 0 && daysLeft < expiryLessThanDays) return true;
+            }
         }
 
-        if (selectedExpiryFilter === 'unlimited') {
-            return type === 'unlimited';
-        }
-
-        if (selectedExpiryFilter === 'expired') {
-            return type === 'expired' || (expiryTs > 0 && expiryTs < now);
-        }
-
-        if (selectedExpiryFilter === 'today') {
-            return type === 'today';
-        }
-
-        if (selectedExpiryFilter === 'lt_days') {
-            if (!expiryTs || expiryTs <= now) return false;
-            if (type === 'today' || type === 'expired' || type === 'start_after_use' || type === 'unlimited') return false;
-            const daysLeft = Math.ceil((expiryTs - now) / 86400000);
-            return daysLeft > 0 && daysLeft < expiryLessThanDays;
-        }
-
-        return true;
+        return false;
     }
 
     // Close dropdown when clicking outside
@@ -2249,7 +2349,7 @@
         }
         
         // 2. Filter clients (Hide Disabled / Disabled Only + Expiry)
-        if (hideDisabledClients || disabledOnlyClients || (selectedExpiryFilter && selectedExpiryFilter !== 'all')) {
+        if (hideDisabledClients || disabledOnlyClients || (selectedExpiryFilters && selectedExpiryFilters.size > 0)) {
             filtered = filtered.map(inbound => {
                 let clients = inbound.clients;
 
@@ -2261,7 +2361,7 @@
                     clients = clients.filter(c => !c.enable);
                 }
 
-                if (selectedExpiryFilter && selectedExpiryFilter !== 'all') {
+                if (selectedExpiryFilters && selectedExpiryFilters.size > 0) {
                     clients = clients.filter(matchesExpiryFilter);
                 }
 
@@ -2532,7 +2632,7 @@
         }
 
         // Filter by Expiry
-        if (selectedExpiryFilter && selectedExpiryFilter !== 'all') {
+        if (selectedExpiryFilters && selectedExpiryFilters.size > 0) {
             filteredResults = filteredResults.filter(r => matchesExpiryFilter(r.client));
         }
         

@@ -1495,8 +1495,8 @@ input:checked + .slider:before {
 }
 
 .expiry-days-input {
-    width: 84px;
-    padding: 6px 10px;
+    width: 56px;
+    padding: 6px 8px;
 }
 
 /* Toggle Switch Style */
