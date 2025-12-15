@@ -1458,6 +1458,19 @@ input:checked + .slider:before {
     border-radius: 4px;
 }
 
+.modal-body::-webkit-scrollbar {
+    width: 4px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
 .filter-item {
     display: flex;
     align-items: center;
