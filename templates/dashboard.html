@@ -396,19 +396,22 @@
                 </div>
             </div>
 
-            <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0 0 10px 0;">
-                <div class="toggle-switch">
-                    <input type="checkbox" id="renew-free-toggle" onchange="refreshRenewPriceDisplay()">
-                    <span class="slider"></span>
-                </div>
-                <span>Free</span>
-            </label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; margin-bottom: 5px;">
+                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="renew-free-toggle" onchange="refreshRenewPriceDisplay()">
+                        <span class="slider"></span>
+                    </div>
+                    <span>Free</span>
+                </label>
 
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); padding: 8px 12px; border-radius: 8px; margin-bottom: 5px;">
-                <span style="font-size: 0.9rem; color: #4ade80;">Payable Amount</span>
-                <div style="color: #4ade80;">
-                    <strong id="renew-payable-display" style="font-size: 1.1rem;">0</strong>
-                    <span class="wallet-currency" style="font-size: 0.8rem;">T</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); padding: 8px 12px; border-radius: 8px; margin: 0;">
+                    <span style="font-size: 0.9rem; color: #4ade80;">Payable Amount</span>
+                    <div style="color: #4ade80; display: inline-flex; align-items: baseline; gap: 8px;">
+                        <strong id="renew-payable-display" style="font-size: 1.1rem;">0</strong>
+                        <strong id="renew-payable-free" style="display:none; font-size: 1.1rem; color: #fbbf24;">0</strong>
+                        <span class="wallet-currency" style="font-size: 0.8rem;">T</span>
+                    </div>
                 </div>
             </div>
             <div style="font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 15px; text-align: right; opacity: 0.8;">
@@ -587,19 +590,22 @@
                 </div>
             </div>
 
-            <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0 0 10px 0;">
-                <div class="toggle-switch">
-                    <input type="checkbox" id="add-client-free-toggle" onchange="updateAddPriceDisplay()">
-                    <span class="slider"></span>
-                </div>
-                <span>Free</span>
-            </label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; margin-bottom: 5px;">
+                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="add-client-free-toggle" onchange="updateAddPriceDisplay()">
+                        <span class="slider"></span>
+                    </div>
+                    <span>Free</span>
+                </label>
 
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); padding: 8px 12px; border-radius: 8px; margin-bottom: 5px;">
-                <span style="font-size: 0.9rem; color: #4ade80;">Payable Amount</span>
-                <div style="color: #4ade80;">
-                    <strong id="add-price-display" style="font-size: 1.1rem;">0</strong>
-                    <span class="wallet-currency" style="font-size: 0.8rem;">T</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); padding: 8px 12px; border-radius: 8px; margin: 0;">
+                    <span style="font-size: 0.9rem; color: #4ade80;">Payable Amount</span>
+                    <div style="color: #4ade80; display: inline-flex; align-items: baseline; gap: 8px;">
+                        <strong id="add-price-display" style="font-size: 1.1rem;">0</strong>
+                        <strong id="add-price-free" style="display:none; font-size: 1.1rem; color: #fbbf24;">0</strong>
+                        <span class="wallet-currency" style="font-size: 0.8rem;">T</span>
+                    </div>
                 </div>
             </div>
             <div style="font-size: 0.7rem; color: var(--text-secondary); margin-bottom: 15px; text-align: right; opacity: 0.8;">
@@ -1687,9 +1693,21 @@
     function updateRenewPriceDisplay(amount) {
         const target = document.getElementById('renew-payable-display');
         if (!target) return;
-        const isFree = Boolean(document.getElementById('renew-free-toggle')?.checked);
-        const normalized = isFree ? 0 : (Number(amount) || 0);
+        const freeEl = document.getElementById('renew-payable-free');
+
+        const normalized = Number(amount) || 0;
         target.textContent = normalized.toLocaleString();
+
+        const isFree = Boolean(document.getElementById('renew-free-toggle')?.checked);
+        if (isFree) {
+            target.style.textDecoration = 'line-through';
+            target.style.opacity = '0.65';
+            if (freeEl) freeEl.style.display = '';
+        } else {
+            target.style.textDecoration = '';
+            target.style.opacity = '';
+            if (freeEl) freeEl.style.display = 'none';
+        }
     }
 
     async function loadRenewPackages() {
@@ -1803,6 +1821,7 @@
     function updateAddPriceDisplay(prefetchedAmount) {
         const display = document.getElementById('add-price-display');
         if (!display) return;
+        const freeEl = document.getElementById('add-price-free');
         let total;
         if (selectedPackageId) {
             total = getPackagePrice('#packages-list', selectedPackageId);
@@ -1811,9 +1830,20 @@
         } else {
             total = computeAddCustomPrice();
         }
-        const isFree = Boolean(document.getElementById('add-client-free-toggle')?.checked);
-        const normalized = isFree ? 0 : (Number(total) || 0);
+
+        const normalized = Number(total) || 0;
         display.textContent = normalized.toLocaleString();
+
+        const isFree = Boolean(document.getElementById('add-client-free-toggle')?.checked);
+        if (isFree) {
+            display.style.textDecoration = 'line-through';
+            display.style.opacity = '0.65';
+            if (freeEl) freeEl.style.display = '';
+        } else {
+            display.style.textDecoration = '';
+            display.style.opacity = '';
+            if (freeEl) freeEl.style.display = 'none';
+        }
     }
 
     function onServerSelected() {
