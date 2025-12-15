@@ -1494,6 +1494,11 @@ input:checked + .slider:before {
     color: var(--text-primary);
 }
 
+.expiry-days-input {
+    width: 84px;
+    padding: 6px 10px;
+}
+
 /* Toggle Switch Style */
 .filter-toggle {
     display: flex;

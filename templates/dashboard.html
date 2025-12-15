@@ -152,11 +152,43 @@
                 </div>
             </div>
 
+            <!-- Expiry Filter -->
+            <div class="filter-dropdown-wrapper">
+                <button class="filter-btn" onclick="toggleExpiryFilter()" id="expiry-filter-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="filter-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    <span id="expiry-filter-label">Expiry</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div id="expiry-filter-dropdown" class="filter-dropdown hidden">
+                    <div class="filter-header">
+                        <span>Expiry</span>
+                        <button class="text-btn" onclick="clearExpiryFilter()">All</button>
+                    </div>
+                    <div class="filter-list">
+                        <div class="filter-item" onclick="setExpiryFilter('not_started')"><span>Not started</span></div>
+                        <div class="filter-item" onclick="setExpiryFilter('unlimited')"><span>Unlimited</span></div>
+                        <div class="filter-item" onclick="setExpiryFilter('expired')"><span>Expired</span></div>
+                        <div class="filter-item" onclick="setExpiryFilter('today')"><span>Today</span></div>
+                        <div class="filter-item" onclick="setExpiryFilter('lt_days', { keepOpen: true })">
+                            <span>Less than</span>
+                            <input type="number" id="expiry-lt-days" class="form-input expiry-days-input" min="1" step="1" value="7" onchange="onExpiryDaysChanged()" onkeydown="onExpiryDaysKeyDown(event)">
+                            <span>days</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Hide Disabled Filter -->
             <label class="filter-toggle" title="Hide Disabled Clients">
                 <input type="checkbox" id="hide-disabled-filter" onchange="applyFilters()">
                 <span class="toggle-track"></span>
                 <span class="toggle-text">Hide Disabled</span>
+            </label>
+
+            <label class="filter-toggle" title="Show Disabled Clients Only">
+                <input type="checkbox" id="disabled-only-filter" onchange="applyFilters()">
+                <span class="toggle-track"></span>
+                <span class="toggle-text">Disabled only</span>
             </label>
         </div>
     </div>
@@ -743,6 +775,10 @@
     let pendingServers = [];
     let refreshController = null;
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
+
+    let selectedExpiryFilter = 'all'; // all | not_started | expired | today | lt_days
+    let expiryLessThanDays = 7;
+    let disabledOnlyClients = false;
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
@@ -2042,6 +2078,117 @@
         dropdown.classList.toggle('hidden');
     }
 
+    function toggleExpiryFilter() {
+        const dropdown = document.getElementById('expiry-filter-dropdown');
+        dropdown.classList.toggle('hidden');
+    }
+
+    function updateExpiryFilterLabel() {
+        const labelEl = document.getElementById('expiry-filter-label');
+        if (!labelEl) return;
+        switch (selectedExpiryFilter) {
+            case 'not_started':
+                labelEl.textContent = 'Not started';
+                break;
+            case 'unlimited':
+                labelEl.textContent = 'Unlimited';
+                break;
+            case 'expired':
+                labelEl.textContent = 'Expired';
+                break;
+            case 'today':
+                labelEl.textContent = 'Today';
+                break;
+            case 'lt_days':
+                labelEl.textContent = `< ${expiryLessThanDays} days`;
+                break;
+            default:
+                labelEl.textContent = 'Expiry';
+        }
+    }
+
+    function setExpiryFilter(type, options = {}) {
+        selectedExpiryFilter = type || 'all';
+
+        if (selectedExpiryFilter === 'lt_days') {
+            const daysInput = document.getElementById('expiry-lt-days');
+            const parsed = parseInt(daysInput?.value || '', 10);
+            expiryLessThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
+        }
+
+        updateExpiryFilterLabel();
+        applyFilters();
+
+        if (!options.keepOpen) {
+            const dropdown = document.getElementById('expiry-filter-dropdown');
+            if (dropdown) dropdown.classList.add('hidden');
+        } else {
+            const daysInput = document.getElementById('expiry-lt-days');
+            if (daysInput) daysInput.focus();
+        }
+    }
+
+    function clearExpiryFilter() {
+        selectedExpiryFilter = 'all';
+        updateExpiryFilterLabel();
+        applyFilters();
+        const dropdown = document.getElementById('expiry-filter-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+    }
+
+    function onExpiryDaysChanged() {
+        const daysInput = document.getElementById('expiry-lt-days');
+        const parsed = parseInt(daysInput?.value || '', 10);
+        expiryLessThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
+        selectedExpiryFilter = 'lt_days';
+        updateExpiryFilterLabel();
+        applyFilters();
+    }
+
+    function onExpiryDaysKeyDown(event) {
+        if (!event) return;
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            onExpiryDaysChanged();
+            const dropdown = document.getElementById('expiry-filter-dropdown');
+            if (dropdown) dropdown.classList.add('hidden');
+        }
+    }
+
+    function matchesExpiryFilter(client) {
+        if (!client) return false;
+        if (!selectedExpiryFilter || selectedExpiryFilter === 'all') return true;
+
+        const type = String(client.expiryType || '').toLowerCase();
+        const expiryTs = Number(client.expiryTimestamp || 0);
+        const now = Date.now();
+
+        if (selectedExpiryFilter === 'not_started') {
+            return type === 'start_after_use';
+        }
+
+        if (selectedExpiryFilter === 'unlimited') {
+            return type === 'unlimited';
+        }
+
+        if (selectedExpiryFilter === 'expired') {
+            return type === 'expired' || (expiryTs > 0 && expiryTs < now);
+        }
+
+        if (selectedExpiryFilter === 'today') {
+            return type === 'today';
+        }
+
+        if (selectedExpiryFilter === 'lt_days') {
+            if (!expiryTs || expiryTs <= now) return false;
+            if (type === 'today' || type === 'expired' || type === 'start_after_use' || type === 'unlimited') return false;
+            const daysLeft = Math.ceil((expiryTs - now) / 86400000);
+            return daysLeft > 0 && daysLeft < expiryLessThanDays;
+        }
+
+        return true;
+    }
+
     // Close dropdown when clicking outside
     document.addEventListener('click', function(event) {
         const dropdown = document.getElementById('server-filter-dropdown');
@@ -2049,10 +2196,26 @@
         if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(event.target) && !btn.contains(event.target)) {
             dropdown.classList.add('hidden');
         }
+
+        const expDropdown = document.getElementById('expiry-filter-dropdown');
+        const expBtn = document.getElementById('expiry-filter-btn');
+        if (expDropdown && !expDropdown.classList.contains('hidden') && !expDropdown.contains(event.target) && !expBtn.contains(event.target)) {
+            expDropdown.classList.add('hidden');
+        }
     });
 
     function applyFilters() {
-        hideDisabledClients = document.getElementById('hide-disabled-filter').checked;
+        const disabledOnlyEl = document.getElementById('disabled-only-filter');
+        disabledOnlyClients = Boolean(disabledOnlyEl && disabledOnlyEl.checked);
+
+        const hideDisabledEl = document.getElementById('hide-disabled-filter');
+        hideDisabledClients = Boolean(hideDisabledEl && hideDisabledEl.checked);
+
+        // Mutually exclusive: "Disabled only" overrides "Hide Disabled"
+        if (disabledOnlyClients && hideDisabledClients) {
+            hideDisabledClients = false;
+            if (hideDisabledEl) hideDisabledEl.checked = false;
+        }
         
         // If we have search results, filter them
         const searchResultsDiv = document.getElementById('search-results');
@@ -2085,16 +2248,29 @@
             filtered = filtered.filter(i => selectedServerIds.has(i.server_id));
         }
         
-        // 2. Filter by Hide Disabled
-        if (hideDisabledClients) {
-            // We need to return new inbound objects with filtered clients
+        // 2. Filter clients (Hide Disabled / Disabled Only + Expiry)
+        if (hideDisabledClients || disabledOnlyClients || (selectedExpiryFilter && selectedExpiryFilter !== 'all')) {
             filtered = filtered.map(inbound => {
-                const activeClients = inbound.clients.filter(c => c.enable);
-                if (activeClients.length === 0) return null; // Filter out empty inbounds?
-                
+                let clients = inbound.clients;
+
+                if (hideDisabledClients) {
+                    clients = clients.filter(c => c.enable);
+                }
+
+                if (disabledOnlyClients) {
+                    clients = clients.filter(c => !c.enable);
+                }
+
+                if (selectedExpiryFilter && selectedExpiryFilter !== 'all') {
+                    clients = clients.filter(matchesExpiryFilter);
+                }
+
+                if (clients.length === 0) return null;
+
                 return {
                     ...inbound,
-                    clients: activeClients
+                    clients,
+                    client_count: clients.length
                 };
             }).filter(i => i !== null);
         }
@@ -2348,6 +2524,16 @@
         // Filter by Hide Disabled
         if (hideDisabledClients) {
             filteredResults = filteredResults.filter(r => r.client.enable);
+        }
+
+        // Filter by Disabled Only
+        if (disabledOnlyClients) {
+            filteredResults = filteredResults.filter(r => !r.client.enable);
+        }
+
+        // Filter by Expiry
+        if (selectedExpiryFilter && selectedExpiryFilter !== 'all') {
+            filteredResults = filteredResults.filter(r => matchesExpiryFilter(r.client));
         }
         
         if (filteredResults.length === 0) {
