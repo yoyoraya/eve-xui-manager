@@ -1712,6 +1712,7 @@ input:checked + .slider:before {
     padding: 24px;
     max-height: calc(90vh - 80px);
     overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .server-form h3,
