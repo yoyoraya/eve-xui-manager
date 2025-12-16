@@ -4513,6 +4513,17 @@ def client_subscription(server_id, sub_id):
 
     expiry_info = format_remaining_days(target_client.get('expiryTime', 0))
 
+    # Prepare fallback headers for client apps (used for both upstream-proxy and manual generation)
+    expiry_time_ms = target_client.get('expiryTime', 0)
+    expiry_time_sec = int(expiry_time_ms / 1000) if expiry_time_ms and expiry_time_ms > 0 else 0
+    user_info_header = f"upload={up}; download={down}; total={total_limit}; expire={expiry_time_sec}"
+    fallback_headers = {
+        'Subscription-Userinfo': user_info_header,
+        'Profile-Update-Interval': '3600',
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Profile-Title': f"{server.name} - {client_email}"
+    }
+
     host_value = server.host
     if host_value and not host_value.startswith(('http://', 'https://')):
         host_value = f"http://{host_value}"
@@ -4533,25 +4544,15 @@ def client_subscription(server_id, sub_id):
 
     # Prepare User-Agent check
     user_agent = (request.headers.get('User-Agent') or '').lower()
-    agent_tokens = ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobox', 'clash', 'sing-box', 'sagernet', 'v2box']
+    agent_tokens = ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobox', 'clash', 'sing-box', 'sagernet', 'v2box', 'hiddify']
     wants_b64 = request.args.get('format', '').lower() == 'b64'
-    is_client_app = wants_b64 or any(token in user_agent for token in agent_tokens)
+    accept = (request.headers.get('Accept') or '').lower()
+    accept_prefers_html = ('text/html' in accept) or ('application/xhtml+xml' in accept)
+    is_client_app = wants_b64 or any(token in user_agent for token in agent_tokens) or (accept and not accept_prefers_html)
 
     # If it's a client app, try to proxy the subscription from the upstream X-UI panel
     if is_client_app and not wants_html_view:
         try:
-            # Calculate headers for stats
-            expiry_time_ms = target_client.get('expiryTime', 0)
-            expiry_time_sec = int(expiry_time_ms / 1000) if expiry_time_ms > 0 else 0
-            
-            user_info_header = f"upload={up}; download={down}; total={total_limit}; expire={expiry_time_sec}"
-            fallback_headers = {
-                'Subscription-Userinfo': user_info_header,
-                'Profile-Update-Interval': '3600',
-                'Content-Type': 'text/plain; charset=utf-8',
-                'Profile-Title': f"{server.name} - {client_email}"
-            }
-            
             # Fetch from upstream
             resp = requests.get(upstream_sub_url, headers={'User-Agent': request.headers.get('User-Agent')}, timeout=15, verify=False)
             if resp.status_code == 200:
@@ -4599,7 +4600,9 @@ def client_subscription(server_id, sub_id):
     encoded_blob = base64.b64encode((subscription_blob or '').encode('utf-8')).decode('utf-8') if subscription_blob else ''
 
     if encoded_blob and is_client_app and not wants_html_view:
-        return encoded_blob, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+        headers = dict(fallback_headers)
+        headers['Content-Type'] = 'text/plain; charset=utf-8'
+        return encoded_blob, 200, headers
 
     client_payload = {
         "email": client_email,
