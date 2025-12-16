@@ -1,4 +1,4 @@
-# Eve - Xui Manager v1.4.2
+# Eve - Xui Manager v1.5.0
 
 ## 🐛 Bug Fixes & Improvements
 - **Reseller Visibility**: Fixed issue where clients were hidden from resellers due to missing inbound IDs (implemented loose matching).
