@@ -4270,6 +4270,8 @@ def get_finance_overview():
     start_utc = None
     end_utc = None
 
+    excluded_types_upper = {'SERVER_COST', 'SERVER_RENEWAL', 'SERVER_TRAFFIC'}
+
     # Build bucket keys (chronological)
     if requested_range == '12m':
         j_now = jdatetime_class.fromgregorian(datetime=now_tehran)
@@ -4359,7 +4361,10 @@ def get_finance_overview():
             labels.append(hour_start_tehran.strftime('%H:00'))
             keys.append(hour_start_tehran)
 
-    # Query transactions in a single window then bin in Python
+    # Query ledger rows in a single window then bin in Python.
+    # - Income: any positive amount EXCEPT server-cost/renewal/traffic.
+    # - Expense: any negative amount (absolute).
+    # Also include manual `Payment` rows as income.
     tx_query = Transaction.query
     if user.role == 'reseller':
         tx_query = tx_query.filter(Transaction.admin_id == user.id)
@@ -4373,14 +4378,28 @@ def get_finance_overview():
     tx_query = tx_query.filter(Transaction.created_at >= start_utc, Transaction.created_at < end_utc)
     tx_query = tx_query.filter(Transaction.type != 'audit')
 
-    # For superadmin views, keep only ledger-like rows
-    if user.role != 'reseller':
-        tx_query = tx_query.filter(Transaction.category.in_(['income', 'expense']))
-
     tx_rows = tx_query.all()
+
+    pay_query = Payment.query.filter(Payment.payment_date >= start_utc, Payment.payment_date < end_utc)
+    if user.role == 'reseller':
+        pay_query = pay_query.filter(Payment.admin_id == user.id)
+    else:
+        if target_user_id:
+            pay_query = pay_query.filter(Payment.admin_id == target_user_id)
+    if card_id:
+        pay_query = pay_query.filter(Payment.card_id == card_id)
+    pay_rows = pay_query.all()
 
     income_map = {k: 0 for k in keys}
     expense_map = {k: 0 for k in keys}
+
+    def bucket_for_tehran_dt(tehran_dt):
+        if requested_range == '12m':
+            j_dt = jdatetime_class.fromgregorian(datetime=tehran_dt)
+            return (int(j_dt.year), int(j_dt.month))
+        if requested_range in ('30d', '7d', 'month'):
+            return tehran_dt.date()
+        return tehran_dt.replace(minute=0, second=0, microsecond=0)
 
     for tx in tx_rows:
         if not tx.created_at:
@@ -4389,29 +4408,33 @@ def get_finance_overview():
         if not tehran_dt:
             continue
 
-        bucket_key = None
-        if requested_range == '12m':
-            j_dt = jdatetime_class.fromgregorian(datetime=tehran_dt)
-            bucket_key = (int(j_dt.year), int(j_dt.month))
-        elif requested_range in ('30d', '7d', 'month'):
-            bucket_key = tehran_dt.date()
-        else:
-            bucket_key = tehran_dt.replace(minute=0, second=0, microsecond=0)
-
+        bucket_key = bucket_for_tehran_dt(tehran_dt)
         if bucket_key not in income_map:
             continue
 
         amount = int(tx.amount or 0)
-        if user.role == 'reseller':
-            if amount > 0:
-                income_map[bucket_key] += amount
-            elif amount < 0:
-                expense_map[bucket_key] += abs(amount)
-        else:
-            if tx.category == 'income' and amount > 0:
-                income_map[bucket_key] += amount
-            elif tx.category == 'expense' and amount < 0:
-                expense_map[bucket_key] += abs(amount)
+        if amount > 0:
+            tx_type = (tx.type or '')
+            if tx_type and str(tx_type).upper() in excluded_types_upper:
+                continue
+            income_map[bucket_key] += amount
+        elif amount < 0:
+            expense_map[bucket_key] += abs(amount)
+
+    for pay in pay_rows:
+        if not pay.payment_date:
+            continue
+        tehran_dt = as_tehran(pay.payment_date)
+        if not tehran_dt:
+            continue
+
+        bucket_key = bucket_for_tehran_dt(tehran_dt)
+        if bucket_key not in income_map:
+            continue
+
+        amount = int(pay.amount or 0)
+        if amount > 0:
+            income_map[bucket_key] += amount
 
     income_series = [int(income_map[k] or 0) for k in keys]
     expense_series = [int(expense_map[k] or 0) for k in keys]
