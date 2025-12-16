@@ -4460,6 +4460,8 @@ def client_subscription(server_id, sub_id):
     if not server:
         return "Subscription not found", 404
 
+    wants_html_view = str(request.args.get('view', '')).strip().lower() in ('1', 'true', 'yes')
+
     session_obj, login_error = get_xui_session(server)
     if login_error or not session_obj:
         app.logger.warning(f"Dash sub auth failed for server {server_id}: {login_error}")
@@ -4523,14 +4525,20 @@ def client_subscription(server_id, sub_id):
     base_sub = f"{scheme}://{hostname}{port_str}"
     sub_url = f"{base_sub}/{sub_path}/{normalized_sub_id}" if sub_path else f"{base_sub}/{normalized_sub_id}"
 
+    # Forward query params (except local-only ones) to upstream
+    forward_params = dict(request.args)
+    forward_params.pop('view', None)
+    upstream_sub_url = f"{sub_url}?{urlencode(forward_params)}" if forward_params else sub_url
+
     # Prepare User-Agent check
     user_agent = (request.headers.get('User-Agent') or '').lower()
     agent_tokens = ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobox', 'clash', 'sing-box', 'sagernet', 'v2box']
     wants_b64 = request.args.get('format', '').lower() == 'b64'
     is_client_app = wants_b64 or any(token in user_agent for token in agent_tokens)
 
-    # If it's a client app, try to proxy the subscription from the upstream X-UI panel
-    if is_client_app:
+    # Prefer proxying the subscription from the upstream X-UI panel "as-is".
+    # Use ?view=1 to force the HTML page.
+    if not wants_html_view:
         try:
             # Calculate headers for stats
             expiry_time_ms = target_client.get('expiryTime', 0)
@@ -4545,15 +4553,15 @@ def client_subscription(server_id, sub_id):
             }
             
             # Fetch from upstream
-            resp = requests.get(sub_url, headers={'User-Agent': request.headers.get('User-Agent')}, timeout=15, verify=False)
+            resp = requests.get(upstream_sub_url, headers={'User-Agent': request.headers.get('User-Agent')}, timeout=15, verify=False)
             if resp.status_code == 200:
                 return resp.content, 200, headers
             else:
-                app.logger.warning(f"Upstream sub fetch failed: {resp.status_code} for {sub_url}")
+                app.logger.warning(f"Upstream sub fetch failed: {resp.status_code} for {upstream_sub_url}")
         except Exception as e:
             app.logger.error(f"Upstream sub fetch error: {e}")
 
-    # Fallback to manual generation (or if not a client app, show the HTML page)
+    # Fallback to manual generation (or show the HTML page)
     configs = []
     direct_link = generate_client_link(target_client, target_inbound, server.host)
     if direct_link:
@@ -4565,7 +4573,7 @@ def client_subscription(server_id, sub_id):
     subscription_blob = '\n'.join(subscription_entries)
     encoded_blob = base64.b64encode((subscription_blob or '').encode('utf-8')).decode('utf-8') if subscription_blob else ''
 
-    if encoded_blob and is_client_app:
+    if encoded_blob and is_client_app and not wants_html_view:
         return encoded_blob, 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
     client_payload = {
