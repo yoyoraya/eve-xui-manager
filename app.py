@@ -4528,6 +4528,7 @@ def client_subscription(server_id, sub_id):
     # Forward query params (except local-only ones) to upstream
     forward_params = dict(request.args)
     forward_params.pop('view', None)
+    forward_params.pop('format', None)
     upstream_sub_url = f"{sub_url}?{urlencode(forward_params)}" if forward_params else sub_url
 
     # Prepare User-Agent check
@@ -4536,16 +4537,15 @@ def client_subscription(server_id, sub_id):
     wants_b64 = request.args.get('format', '').lower() == 'b64'
     is_client_app = wants_b64 or any(token in user_agent for token in agent_tokens)
 
-    # Prefer proxying the subscription from the upstream X-UI panel "as-is".
-    # Use ?view=1 to force the HTML page.
-    if not wants_html_view:
+    # If it's a client app, try to proxy the subscription from the upstream X-UI panel
+    if is_client_app and not wants_html_view:
         try:
             # Calculate headers for stats
             expiry_time_ms = target_client.get('expiryTime', 0)
             expiry_time_sec = int(expiry_time_ms / 1000) if expiry_time_ms > 0 else 0
             
             user_info_header = f"upload={up}; download={down}; total={total_limit}; expire={expiry_time_sec}"
-            headers = {
+            fallback_headers = {
                 'Subscription-Userinfo': user_info_header,
                 'Profile-Update-Interval': '3600',
                 'Content-Type': 'text/plain; charset=utf-8',
@@ -4555,13 +4555,38 @@ def client_subscription(server_id, sub_id):
             # Fetch from upstream
             resp = requests.get(upstream_sub_url, headers={'User-Agent': request.headers.get('User-Agent')}, timeout=15, verify=False)
             if resp.status_code == 200:
-                return resp.content, 200, headers
+                # Prefer upstream headers (especially Subscription-Userinfo) so client apps show the same usage/expiry.
+                upstream_headers = {}
+
+                def pick_header(name: str):
+                    return resp.headers.get(name) or resp.headers.get(name.lower())
+
+                for k in ('Subscription-Userinfo', 'Profile-Title', 'Profile-Update-Interval', 'Content-Type', 'Content-Disposition'):
+                    v = pick_header(k)
+                    if v:
+                        upstream_headers[k] = v
+
+                if 'Subscription-Userinfo' not in upstream_headers:
+                    upstream_headers['Subscription-Userinfo'] = fallback_headers['Subscription-Userinfo']
+                if 'Profile-Title' not in upstream_headers:
+                    upstream_headers['Profile-Title'] = fallback_headers['Profile-Title']
+                if 'Profile-Update-Interval' not in upstream_headers:
+                    upstream_headers['Profile-Update-Interval'] = fallback_headers['Profile-Update-Interval']
+                if 'Content-Type' not in upstream_headers:
+                    upstream_headers['Content-Type'] = fallback_headers['Content-Type']
+
+                if wants_b64:
+                    encoded = base64.b64encode(resp.content or b'').decode('utf-8')
+                    upstream_headers['Content-Type'] = 'text/plain; charset=utf-8'
+                    return encoded, 200, upstream_headers
+
+                return resp.content, 200, upstream_headers
             else:
                 app.logger.warning(f"Upstream sub fetch failed: {resp.status_code} for {upstream_sub_url}")
         except Exception as e:
             app.logger.error(f"Upstream sub fetch error: {e}")
 
-    # Fallback to manual generation (or show the HTML page)
+    # Fallback to manual generation (or if not a client app, show the HTML page)
     configs = []
     direct_link = generate_client_link(target_client, target_inbound, server.host)
     if direct_link:
