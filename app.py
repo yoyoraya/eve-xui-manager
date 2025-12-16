@@ -4028,9 +4028,15 @@ def get_finance_stats():
     card_id = request.args.get('card_id', type=int)
     target_user_id = request.args.get('user_id', type=int)
 
+    excluded_types_upper = {'SERVER_COST', 'SERVER_RENEWAL', 'SERVER_TRAFFIC'}
+
     if user.role == 'reseller':
         # Charge: مجموع تراکنش‌های مثبت (واریزها)
-        charge_query = Transaction.query.filter(Transaction.admin_id == user.id, Transaction.amount > 0)
+        charge_query = Transaction.query.filter(
+            Transaction.admin_id == user.id,
+            Transaction.amount > 0,
+            or_(Transaction.type.is_(None), func.upper(Transaction.type).notin_(excluded_types_upper))
+        )
         usage_query = Transaction.query.filter(Transaction.admin_id == user.id, Transaction.amount < 0)
         if card_id:
             charge_query = charge_query.filter(Transaction.card_id == card_id)
@@ -4097,32 +4103,53 @@ def get_finance_stats():
             }
         })
     else:
-        # Base query - filter only 'income' transactions for stats
-        query = Transaction.query.filter(Transaction.category == 'income')
+        # Month income must include ALL positive entries except server cost/renewal/traffic.
+        # Also include manual `Payment` records (these are separate from `Transaction`).
+        tx_income_query = Transaction.query.filter(
+            Transaction.amount > 0,
+            or_(Transaction.type.is_(None), func.upper(Transaction.type).notin_(excluded_types_upper))
+        )
         if target_user_id:
-            query = query.filter(Transaction.admin_id == target_user_id)
+            tx_income_query = tx_income_query.filter(Transaction.admin_id == target_user_id)
         if card_id:
-            query = query.filter(Transaction.card_id == card_id)
+            tx_income_query = tx_income_query.filter(Transaction.card_id == card_id)
 
-        def sum_income(start_time=None):
+        pay_income_query = Payment.query.filter(Payment.amount > 0)
+        if target_user_id:
+            pay_income_query = pay_income_query.filter(Payment.admin_id == target_user_id)
+        if card_id:
+            pay_income_query = pay_income_query.filter(Payment.card_id == card_id)
+
+        def sum_tx_income(start_time=None, end_time=None):
             q = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-                Transaction.id.in_(query.with_entities(Transaction.id))
+                Transaction.id.in_(tx_income_query.with_entities(Transaction.id))
             )
             if start_time:
                 q = q.filter(Transaction.created_at >= start_time)
+            if end_time:
+                q = q.filter(Transaction.created_at < end_time)
             return q.scalar() or 0
 
-        today_income = sum_income(today_start)
-        month_income = sum_income(month_start)
-        total_income = sum_income()
+        def sum_pay_income(start_time=None, end_time=None):
+            q = db.session.query(func.coalesce(func.sum(Payment.amount), 0)).filter(
+                Payment.id.in_(pay_income_query.with_entities(Payment.id))
+            )
+            if start_time:
+                q = q.filter(Payment.payment_date >= start_time)
+            if end_time:
+                q = q.filter(Payment.payment_date < end_time)
+            return q.scalar() or 0
+
+        today_income = sum_tx_income(today_start) + sum_pay_income(today_start)
+        month_income = sum_tx_income(month_start) + sum_pay_income(month_start)
+        total_income = sum_tx_income() + sum_pay_income()
 
         prev_month_income = 0
         if prev_month_start and prev_month_end:
-            prev_month_income = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-                Transaction.id.in_(query.with_entities(Transaction.id)),
-                Transaction.created_at >= prev_month_start,
-                Transaction.created_at < prev_month_end
-            ).scalar() or 0
+            prev_month_income = (
+                sum_tx_income(prev_month_start, prev_month_end)
+                + sum_pay_income(prev_month_start, prev_month_end)
+            )
 
         # For net profit: get expense transactions separately
         expense_query = Transaction.query.filter(Transaction.category == 'expense')
@@ -4167,7 +4194,7 @@ def get_finance_stats():
         month_cost_pct = pct_change(month_cost_abs, prev_month_cost_abs)
         month_profit_pct = pct_change(month_profit, prev_month_profit)
 
-        payment_count = query.count()
+        payment_count = tx_income_query.count() + pay_income_query.count()
 
         income_by_card = []
         if user.is_superadmin or user.role == 'reseller':
@@ -4177,7 +4204,7 @@ def get_finance_stats():
                 BankCard.bank_name,
                 func.sum(Transaction.amount).label('total')
             ).join(Transaction, Transaction.card_id == BankCard.id).filter(
-                Transaction.id.in_(query.with_entities(Transaction.id)),
+                Transaction.id.in_(tx_income_query.with_entities(Transaction.id)),
                 Transaction.category.in_(['income', 'expense'])
             ).group_by(BankCard.id).all()
 
