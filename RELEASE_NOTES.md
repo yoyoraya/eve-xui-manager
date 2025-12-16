@@ -1,6 +1,37 @@
 # Eve - Xui Manager v1.5.0
 
-## 🐛 Bug Fixes & Improvements
+## [1.5.0] - 2025-12-16
+
+Persian (فارسی):
+- نسخه 1.5.0 شامل بهبودهای ظاهری و تجربه کاربری صفحه "Finance" است:
+	- بازطراحی بخش Summary به صورت یک "feed" قابل بازشدن (lazy-load) برای کاهش بار اولیه و بهبود نمایش در موبایل.
+	- در نمایش‌های میانی (≤1100px) مقادیر Overview دیگر با نقطهٔ انتهایی (ellipsis) بریده نمی‌شوند؛ اکنون خط‌شکنی فعال و کلمه‌شکنی (`word-break`) انجام می‌شود تا از همپوشانی متن جلوگیری شود.
+	- شبکهٔ Overview در تبلت‌ها به دو ستون تبدیل شده (≤900px) تا فضای هر آیتم بیشتر و خواناتر شود.
+	- نمای کارت‌گونهٔ جدول تراکنش‌ها اکنون از عرض ≤1024px فعال می‌شود (قبلاً برای موبایل محدود بود) و مقدار `Amount` در این نما هم‌راستا شده تا از افتادن به خط پایین جلوگیری شود.
+	- شبکهٔ فیلترها در صفحهٔ پرداخت‌ها در ≤1024px به دو ستون منتقل شده تا فیلدها قابل دسترس و مرتب بمانند.
+	- رنگ‌ها و استایلِ badge های نوع تراکنش یکپارچه شدند تا خوانایی بهتر شود.
+	- انتخابگر ماه (Jalali) در Summary به‌صورت درون بدنهٔ Summary قرار گرفته و داده‌های ماه‌ها هنگام بازکردن Summary بارگذاری می‌شوند (lazy-load).
+	- چند اصلاح JavaScript برای امن‌تر کردن رندر، برطرف‌کردن برش‌های طولانی، و مرتب‌سازی/فیلتر صحیح داده‌ها انجام شد.
+	- فایل قدیمی تمپلیت `templates/financeold.html` حذف شد تا از سردرگمی جلوگیری شود.
+	- نسخهٔ برنامه به `v1.5.0` ارتقا یافت.
+
+English:
+- v1.5.0 focuses on responsive and UX improvements for the Finance area (changes since v1.4.2):
+	- Summary redesigned as a collapsible feed and lazy-loaded when opened to reduce initial load and improve mobile UX.
+	- Overview numeric values no longer truncate with ellipsis on mid widths (≤1100px); they now wrap and use word-break to prevent text overlap.
+	- Overview grid switches to two columns on narrower tablets (≤900px) to give each metric more space and improve readability.
+	- Payments table now switches to a card (mobile) view up to 1024px (previously only on small screens); `Amount` is kept aligned to avoid line wrapping.
+	- Filters grid is forced into two columns at ≤1024px for a cleaner, more usable filter layout.
+	- Transaction type badges got consistent styling and color tokens for clearer visual identification.
+	- The Jalali month picker for the summary is loaded inside the Summary body and months/data are lazy-loaded on expand.
+	- Several JS improvements: safer rendering of dynamic content, better truncation handling, ordering/limits applied correctly in overview rendering.
+	- Removed legacy template `templates/financeold.html` to avoid confusion.
+	- Application version bumped to `v1.5.0`.
+
+Notes:
+- These changes are primarily client-side (templates, CSS, and frontend JS) and aim to improve usability at tablet and laptop breakpoints (around 900–1100px and 1024px).
+
+## 🐛 Bug Fixes & Improvements (previous)
 - **Reseller Visibility**: Fixed issue where clients were hidden from resellers due to missing inbound IDs (implemented loose matching).
 - **Traffic Formatting**: Improved traffic display to dynamically show KB/MB/GB/TB units.
 - **UI Alignment**: Fixed action button alignment on desktop (right-aligned) and mobile (left-aligned).
