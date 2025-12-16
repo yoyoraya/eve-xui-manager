@@ -9,18 +9,232 @@
 
 <style>
     /* ===== Finance page: responsive helpers ===== */
+    html, body { overflow-x: hidden; }
     .stats-grid { min-width: 0; max-width: 100%; }
     .stat-card { min-width: 0; }
     .server-card { min-width: 0; max-width: 100%; }
     .filters-card { min-width: 0; max-width: 100%; }
 
+    /* Overview (feed-style) */
+    .overview-feed {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 0 20px 14px 20px;
+    }
+
+    .overview-item {
+        display: flex;
+        gap: 12px;
+        padding: 12px 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        background: var(--bg-dark);
+        min-width: 0;
+    }
+
+    .overview-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--primary);
+        flex: 0 0 auto;
+        margin-top: 6px;
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
+    }
+
+    .overview-content {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        align-items: start;
+        min-width: 0;
+    }
+
+    .overview-cell {
+        min-width: 0;
+    }
+
+    .overview-label {
+        display: block;
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+        white-space: nowrap;
+    }
+
+    .overview-value {
+        display: inline-block;
+        max-width: 100%;
+        font-weight: 700;
+        color: var(--text-primary);
+        font-size: 0.95rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Mid screens (sidebar visible): allow wrapping to avoid ellipsis dots */
+    @media (max-width: 1100px) {
+        .overview-value {
+            display: block;
+            font-size: 0.88rem;
+            white-space: normal;
+            word-break: break-word;
+            overflow: visible;
+            text-overflow: unset;
+            line-height: 1.25;
+        }
+    }
+
+    .overview-value.success { color: var(--success); }
+    .overview-value.danger { color: var(--danger); }
+    .overview-value.profit { color: var(--warning); }
+
+    /* Collapsible Summary */
+    .overview-details { width: 100%; }
+    .overview-summary {
+        cursor: pointer;
+        user-select: none;
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        padding-right: 54px;
+    }
+    .overview-summary::-webkit-details-marker { display: none; }
+    .overview-summary-title { flex: 1; min-width: 0; }
+    .overview-summary-row {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        min-width: 0;
+    }
+    .overview-summary-title h3 { margin: 0; }
+    .overview-summary-hint {
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .overview-picker {
+        padding: 14px 20px 10px 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        min-width: 0;
+        max-width: 100%;
+    }
+    .overview-picker label {
+        font-size: 0.8rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin: 0;
+        white-space: nowrap;
+    }
+    .overview-picker select {
+        min-width: 0;
+        width: 100%;
+        max-width: 240px;
+    }
+
+    .overview-summary::after {
+        content: '▾';
+        color: var(--text-secondary);
+        font-size: 0.95rem;
+        line-height: 1;
+        position: absolute;
+        right: 20px;
+        top: 50%;
+        transform: translateY(-50%);
+    }
+    details[open] > .overview-summary::after { content: '▴'; }
+    .overview-body { padding-bottom: 6px; }
+
+    /* Prevent any horizontal overflow */
+    #finance-overview-card,
+    .overview-details,
+    .overview-body,
+    .overview-feed {
+        overflow-x: hidden;
+        max-width: 100%;
+    }
+
+    .overview-date-footer {
+        display: none;
+        padding: 10px 12px;
+        border-top: 1px solid var(--border-color);
+        color: var(--text-secondary);
+        font-size: 0.86rem;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
+        line-height: 1.4;
+    }
+
+    /* Payment History Type badges */
+    .badge.type-badge {
+        background: rgba(148, 163, 184, 0.14) !important;
+        border: 1px solid rgba(148, 163, 184, 0.32) !important;
+        color: var(--text-primary) !important;
+        font-size: 0.72rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.02em;
+    }
+    .badge.type-badge.type-SERVER_RENEWAL { background: rgba(249, 115, 22, 0.14) !important; border-color: rgba(249, 115, 22, 0.32) !important; color: #f97316 !important; }
+    .badge.type-badge.type-RENEW { background: rgba(96, 165, 250, 0.14) !important; border-color: rgba(96, 165, 250, 0.32) !important; color: #60a5fa !important; }
+    .badge.type-badge.type-PURCHASE { background: rgba(99, 102, 241, 0.14) !important; border-color: rgba(99, 102, 241, 0.32) !important; color: #6366f1 !important; }
+    .badge.type-badge.type-SERVER_TRRAFIC { background: rgba(251, 113, 133, 0.14) !important; border-color: rgba(251, 113, 133, 0.32) !important; color: #fb7185 !important; }
+    .badge.type-badge.type-SERVER_TRAFFIC { background: rgba(251, 113, 133, 0.14) !important; border-color: rgba(251, 113, 133, 0.32) !important; color: #fb7185 !important; }
+    .badge.type-badge.type-SERVER_COST { background: rgba(248, 113, 113, 0.14) !important; border-color: rgba(248, 113, 113, 0.32) !important; color: #f87171 !important; }
+    .badge.type-badge.type-PAYMENT { background: rgba(74, 222, 128, 0.14) !important; border-color: rgba(74, 222, 128, 0.32) !important; color: #4ade80 !important; }
+
+    .overview-empty {
+        padding: 16px 20px;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+    }
+
+    .finance-table-wrap {
+        overflow-x: auto;
+        min-width: 0;
+        max-width: 100%;
+    }
 
 
-    /* Payment table -> cards on mobile (uses td[data-label]) */
-    @media (max-width: 768px) {
+
+    /* Payment table -> cards on <=1024px (uses td[data-label]) */
+    @media (max-width: 1024px) {
         .finance-table thead { display: none; }
         .finance-table,
         .finance-table tbody { display: block; width: 100%; }
+
+        /* No horizontal scrolling on mobile card-view */
+        .finance-table-wrap { overflow-x: hidden; }
+
+        /* Keep Amount value aligned (avoid dropping low on very small screens) */
+        .finance-table td[data-label="Amount"] {
+            align-items: center;
+        }
+        .finance-table td[data-label="Amount"] .finance-amount {
+            margin-left: auto;
+            white-space: nowrap;
+            line-height: 1.2;
+        }
 
         .finance-table tbody tr {
             display: block;
@@ -39,8 +253,10 @@
 
         .finance-table td[data-label] {
             display: flex !important;
+            flex-direction: row;
+            flex-wrap: nowrap;
             justify-content: space-between;
-            align-items: flex-start;
+            align-items: center;
             gap: 12px;
             width: 100%;
             padding: 12px 14px !important;
@@ -79,6 +295,18 @@
             gap: 16px !important;
             margin-bottom: 16px !important;
         }
+
+        .filters-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+    }
+
+    /* Prevent overview columns from being too tight on tablets */
+    @media (max-width: 900px) {
+        .overview-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
     }
 
     @media (max-width: 820px) {
@@ -113,7 +341,8 @@
             gap: 12px !important;
         }
         .server-actions { width: 100%; }
-        .server-actions button {
+        .server-actions button,
+        .server-actions select {
             width: 100%;
             justify-content: center;
         }
@@ -128,8 +357,8 @@
         }
 
         .modal {
-            width: calc(100vw - 24px) !important;
-            max-width: none !important;
+            width: calc(100% - 24px) !important;
+            max-width: calc(100% - 24px) !important;
             margin: 12px !important;
         }
         .modal .modal-body {
@@ -153,6 +382,150 @@
             grid-template-columns: 1fr !important;
             gap: 12px !important;
         }
+    }
+
+    @media (max-width: 640px) {
+        .overview-feed {
+            padding: 0 14px 10px 14px;
+        }
+        .overview-item {
+            padding: 10px;
+        }
+        .overview-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        /* Mobile: smaller values as requested */
+        .overview-cell[data-kind="income"] .overview-value,
+        .overview-cell[data-kind="costs"] .overview-value,
+        .overview-cell[data-kind="profit"] .overview-value {
+            font-size: 0.7rem;
+        }
+
+        .overview-summary { padding: 14px; }
+        .overview-summary { padding-right: 44px; }
+        .overview-summary::after { right: 14px; font-size: 0.85rem; }
+
+        .overview-summary { flex-wrap: wrap; row-gap: 10px; }
+        .overview-summary-row { flex-wrap: wrap; }
+        .overview-summary-hint { white-space: normal; }
+
+        .overview-picker {
+            padding: 10px 14px 8px 14px;
+        }
+        .overview-picker select {
+            max-width: 100%;
+        }
+    }
+
+    @media (max-width: 420px) {
+        .overview-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    /* Desktop/tablet: 2-column items to reduce height */
+    @media (min-width: 768px) {
+        .overview-feed {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+    }
+
+    /* <=425px: match sketch layout (date rail + stacked metrics) */
+    @media (max-width: 425px) {
+        .overview-dot { display: none; }
+
+        .overview-item {
+            padding: 0;
+            gap: 0;
+            overflow: hidden;
+        }
+
+        .overview-content { width: 100%; }
+
+        .overview-grid {
+            grid-template-columns: 68px 1fr;
+            grid-template-rows: repeat(3, auto);
+            grid-template-areas:
+                "date income"
+                "date costs"
+                "date profit";
+            gap: 0;
+            align-items: stretch;
+            align-content: start;
+        }
+
+        .overview-cell {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .overview-cell[data-kind="date"] {
+            grid-area: date;
+            border-right: 1px solid var(--border-color);
+            border-bottom: none;
+            background: rgba(13, 17, 23, 0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 4px;
+            align-self: stretch;
+        }
+
+        .overview-cell[data-kind="income"] { grid-area: income; }
+        .overview-cell[data-kind="costs"] { grid-area: costs; }
+        .overview-cell[data-kind="profit"] { grid-area: profit; border-bottom: none; }
+
+        .overview-cell[data-kind="income"],
+        .overview-cell[data-kind="costs"],
+        .overview-cell[data-kind="profit"] {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .overview-cell[data-kind="date"] .overview-label { display: none; }
+        .overview-cell[data-kind="date"] .overview-value {
+            display: block;
+            writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            margin: 0;
+            font-size: 0.74rem;
+            line-height: 1;
+            font-weight: 400;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            text-align: center;
+        }
+
+        .overview-cell[data-kind="income"] .overview-label,
+        .overview-cell[data-kind="costs"] .overview-label,
+        .overview-cell[data-kind="profit"] .overview-label {
+            font-size: 0.7rem;
+            line-height: 1.1;
+        }
+
+        .overview-cell[data-kind="income"] .overview-value,
+        .overview-cell[data-kind="costs"] .overview-value,
+        .overview-cell[data-kind="profit"] .overview-value {
+            font-weight: 400;
+        }
+
+        .overview-cell[data-kind="income"] .overview-value,
+        .overview-cell[data-kind="costs"] .overview-value,
+        .overview-cell[data-kind="profit"] .overview-value {
+            line-height: 1.1;
+        }
+
+        /* No footer on sketch layout */
+        .overview-date-footer { display: none; }
+
+        .overview-label { margin-bottom: 0; white-space: nowrap; }
+        .overview-value { font-size: 0.98rem; }
     }
 </style>
 
@@ -209,10 +582,36 @@
         </div>
         <div class="stat-info">
             <span class="stat-label" id="stat-total-label">Total Profit</span>
-            <span class="stat-value" id="stat-total">0 T</span>
+            <span class="stat-value profit" id="stat-total">0 T</span>
             <span class="stat-sub" id="stat-net-delta">Profit vs last month: —</span>
         </div>
     </div>
+</div>
+
+<!-- Overview (Feed-style) -->
+<div class="server-card" id="finance-overview-card" style="margin-bottom: 24px;">
+    <details class="overview-details">
+        <summary class="overview-summary">
+            <div class="overview-summary-title">
+                <div class="overview-summary-row">
+                    <h3>Summary</h3>
+                    <span class="overview-summary-hint">Daily income, costs, and profit for the selected Jalali month.</span>
+                </div>
+            </div>
+        </summary>
+
+        <div class="overview-body">
+            <div class="overview-picker" id="overview-picker" aria-label="Jalali month picker">
+                <label for="overview-month-select">Month</label>
+                <select id="overview-month-select" class="form-select interval-select" aria-label="Select month">
+                    <option value="" selected>Open Summary to load…</option>
+                </select>
+            </div>
+            <div class="overview-feed" id="overview-feed">
+                <div class="overview-empty" id="overview-empty">Open Summary to load overview…</div>
+            </div>
+        </div>
+    </details>
 </div>
 
 
@@ -426,7 +825,7 @@
         </div>
     </div>
     
-    <div style="overflow-x: auto; min-width: 0; max-width: 100%;">
+    <div class="finance-table-wrap">
         <table class="clients-table finance-table" style="width: 100%; border-collapse: collapse;">
             <thead>
                 <tr>
@@ -623,6 +1022,14 @@
     const rangeButtons = document.querySelectorAll('[data-range]');
     const addPaymentBtn = document.getElementById('add-payment-btn');
 
+    const overviewMonthSelect = document.getElementById('overview-month-select');
+    const overviewFeed = document.getElementById('overview-feed');
+    const overviewEmpty = document.getElementById('overview-empty');
+    const overviewDetails = document.querySelector('.overview-details');
+
+    let overviewMonthsLoadedForKey = null;
+    let overviewIsLoading = false;
+
     let currentPage = 1;
     let totalPages = 1;
     let totalItems = 0;
@@ -709,6 +1116,24 @@
         return `${parts.year}/${parts.month}/${parts.day}`;
     };
 
+    const getTodayJalaliParts = () => {
+        if (!formatter) return null;
+        try {
+            const parts = formatter.formatToParts(new Date()).reduce((acc, part) => {
+                if (part.type !== 'literal') acc[part.type] = part.value;
+                return acc;
+            }, {});
+            if (!parts.year || !parts.month || !parts.day) return null;
+            return {
+                year: parseInt(normalizeDigits(parts.year), 10),
+                month: parseInt(normalizeDigits(parts.month), 10),
+                day: parseInt(normalizeDigits(parts.day), 10)
+            };
+        } catch (_) {
+            return null;
+        }
+    };
+
     const updateFiltersFromInputs = () => {
         filters.search = (searchInput ? searchInput.value : '').trim();
         filters.direction = directionSelect ? directionSelect.value : '';
@@ -727,6 +1152,161 @@
         params.append('page', currentPage);
         params.append('limit', perPage);
         return params.toString();
+    };
+
+    const buildOverviewQuery = (extraParams = {}) => {
+        const params = new URLSearchParams();
+        // Reuse a subset of filters (month overview should follow card/user selections)
+        if (filters.card_id) params.append('card_id', filters.card_id);
+        if (filters.user_id) params.append('user_id', filters.user_id);
+        Object.entries(extraParams).forEach(([k, v]) => {
+            if (v !== null && v !== undefined && v !== '') params.append(k, String(v));
+        });
+        return params.toString();
+    };
+
+    const getOverviewKey = () => `${filters.card_id || ''}|${filters.user_id || ''}`;
+
+    const isOverviewOpen = () => !!(overviewDetails && overviewDetails.open);
+
+    const ensureOverviewLoaded = async ({ forceMonthsReload = false } = {}) => {
+        if (!overviewMonthSelect || !overviewFeed) return;
+        if (!isOverviewOpen()) return;
+        if (overviewIsLoading) return;
+
+        overviewIsLoading = true;
+        try {
+            updateFiltersFromInputs();
+            const key = getOverviewKey();
+            const shouldReloadMonths = forceMonthsReload || (overviewMonthsLoadedForKey !== key);
+            if (shouldReloadMonths) {
+                await loadOverviewMonths();
+                overviewMonthsLoadedForKey = key;
+            } else {
+                const ym = parseYM(overviewMonthSelect.value);
+                if (ym) await loadOverviewMonth(ym.year, ym.month);
+            }
+        } finally {
+            overviewIsLoading = false;
+        }
+    };
+
+    const formatYMOption = (ym) => {
+        // ym is YYYY/MM
+        return ym;
+    };
+
+    const parseYM = (value) => {
+        const m = String(value || '').trim().match(/^(\d{4})\/(\d{2})$/);
+        if (!m) return null;
+        return { year: parseInt(m[1], 10), month: parseInt(m[2], 10) };
+    };
+
+    const renderOverview = ({ year, month, labels, series }) => {
+        if (!overviewFeed) return;
+        const income = (series && series.income) || [];
+        const expense = (series && series.expense) || [];
+        const profit = (series && series.profit) || [];
+
+        const today = getTodayJalaliParts();
+        const isCurrentMonth = !!(today && year === today.year && month === today.month);
+        const maxDay = isCurrentMonth ? today.day : Infinity;
+
+        const ordered = (labels || []).map((label, idx) => {
+            const dayInt = parseInt(normalizeDigits(String(label)), 10);
+            return { idx, label: String(label), dayInt: Number.isFinite(dayInt) ? dayInt : 0 };
+        }).filter(x => x.dayInt > 0 && x.dayInt <= maxDay)
+          .sort((a, b) => b.dayInt - a.dayInt);
+
+        const rows = ordered.map(({ idx, label, dayInt }) => {
+            const day = String(label);
+            const fullDateStr = (year && month && day)
+                ? `${String(year).padStart(4, '0')}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`
+                : day;
+            const dayLabel = String(dayInt).padStart(2, '0');
+
+            const inc = Number(income[idx] || 0);
+            const exp = Number(expense[idx] || 0);
+            const prof = Number(profit[idx] || (inc - exp));
+
+            return `
+                <div class="overview-item">
+                    <div class="overview-dot"></div>
+                    <div class="overview-content">
+                        <div class="overview-grid">
+                            <div class="overview-cell" data-kind="date">
+                                <span class="overview-label">Date</span>
+                                <span class="overview-value" title="${escapeAttr(fullDateStr)}">${escapeAttr(dayLabel)}</span>
+                            </div>
+                            <div class="overview-cell" data-kind="income">
+                                <span class="overview-label">Income</span>
+                                <span class="overview-value success">${inc.toLocaleString()} T</span>
+                            </div>
+                            <div class="overview-cell" data-kind="costs">
+                                <span class="overview-label">Costs</span>
+                                <span class="overview-value danger">-${Math.abs(exp).toLocaleString()} T</span>
+                            </div>
+                            <div class="overview-cell" data-kind="profit">
+                                <span class="overview-label">Profit</span>
+                                <span class="overview-value profit">${prof.toLocaleString()} T</span>
+                            </div>
+                        </div>
+                        <div class="overview-date-footer">${escapeAttr(fullDateStr)}</div>
+                    </div>
+                </div>
+            `;
+        });
+
+        if (!rows.length) {
+            overviewFeed.innerHTML = `<div class="overview-empty">No overview data.</div>`;
+            return;
+        }
+
+        overviewFeed.innerHTML = rows.join('');
+    };
+
+    const loadOverviewMonth = async (year, month) => {
+        if (!overviewFeed) return;
+        overviewFeed.innerHTML = `<div class="overview-empty">Loading overview…</div>`;
+
+        const query = buildOverviewQuery({ range: 'month', year, month });
+        const response = await fetch(`/api/finance/overview?${query}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            overviewFeed.innerHTML = `<div class="overview-empty">Failed to load overview.</div>`;
+            return;
+        }
+        renderOverview({ year, month, labels: data.labels, series: data.series });
+    };
+
+    const loadOverviewMonths = async () => {
+        if (!overviewMonthSelect) return;
+        const previousValue = overviewMonthSelect.value;
+        overviewMonthSelect.innerHTML = '<option value="" selected>Loading…</option>';
+
+        const query = buildOverviewQuery({ range: '12m' });
+        const response = await fetch(`/api/finance/overview?${query}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            overviewMonthSelect.innerHTML = '<option value="" selected>Failed to load months</option>';
+            return;
+        }
+
+        const labels = data.labels || [];
+        const currentValue = previousValue;
+
+        overviewMonthSelect.innerHTML = labels.map(label => {
+            const safe = formatYMOption(label);
+            return `<option value="${escapeAttr(safe)}">${escapeAttr(safe)}</option>`;
+        }).join('');
+
+        // Default to latest month
+        const defaultLabel = labels.length ? labels[labels.length - 1] : '';
+        const nextValue = currentValue && labels.includes(currentValue) ? currentValue : defaultLabel;
+        if (nextValue) overviewMonthSelect.value = nextValue;
+
+        const ym = parseYM(overviewMonthSelect.value);
+        if (ym) await loadOverviewMonth(ym.year, ym.month);
     };
 
     const setLoadingState = (message = 'Loading...') => {
@@ -814,19 +1394,17 @@
 
             let typeLabel = '-';
             if (p.type) {
-                let color = 'var(--primary)';
-                let text = p.type;
-                if (p.type === 'payment') color = 'var(--success)';
-                else if (p.type === 'receipt') color = 'var(--warning)';
-                typeLabel = `<span class="badge" style="background:${color}; color:#fff; font-size:0.7rem; font-weight:600;">${String(text).toUpperCase()}</span>`;
+                const typeText = String(p.type).toUpperCase();
+                const typeCss = typeText.replace(/[^A-Z0-9_]/g, '_');
+                typeLabel = `<span class="badge type-badge type-${escapeAttr(typeCss)}">${escapeAttr(typeText)}</span>`;
             }
 
             let cardLabel = '-';
             if (p.card) {
                 const bank = (p.card.bank_name || '').trim();
                 cardLabel = bank
-                    ? `<span style="color: var(--text-primary); font-weight: 500;">${p.card.label}</span><span style="font-size: 0.7rem; color: var(--text-secondary); margin-left: 8px; white-space: nowrap;">${bank}</span>`
-                    : `<span style="color: var(--text-primary); font-weight: 500;">${p.card.label}</span>`;
+                    ? `<span style="color: var(--text-primary); font-weight: 500; min-width:0; overflow:hidden; text-overflow:ellipsis;">${p.card.label}</span><span style="font-size: 0.7rem; color: var(--text-secondary); margin-left: 8px;">${bank}</span>`
+                    : `<span style="color: var(--text-primary); font-weight: 500; min-width:0; overflow:hidden; text-overflow:ellipsis;">${p.card.label}</span>`;
             }
 
             const isEdited = String(p.description || '').toLowerCase().includes('edited by');
@@ -860,15 +1438,15 @@
                     ${userCell}
                     <td data-label="Type" style="padding: 15px;">${typeLabel}</td>
                     <td data-label="Sender" style="padding: 15px;">
-                        <div style="display:flex; flex-direction:row; align-items:center; justify-content:flex-end; text-align:right; gap:8px; width:100%; flex-wrap:nowrap;">
-                            <div style="font-weight: 600; color: var(--text-primary); white-space: nowrap;">${p.sender_name || '-'}</div>
-                            ${p.sender_card ? `<div style="font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap;">${p.sender_card}</div>` : ''}
+                        <div style="display:flex; flex-direction:row; align-items:center; justify-content:flex-end; text-align:right; gap:8px; width:100%; flex-wrap:wrap; min-width:0;">
+                            <div style="font-weight: 600; color: var(--text-primary); min-width:0; overflow:hidden; text-overflow:ellipsis;">${p.sender_name || '-'}</div>
+                            ${p.sender_card ? `<div style="font-size: 0.75rem; color: var(--text-secondary);">${p.sender_card}</div>` : ''}
                         </div>
                     </td>
                     <td data-label="Card" style="padding: 15px; color: var(--text-secondary);">
-                        <div style="display:flex; flex-direction:row; align-items:center; justify-content:flex-end; text-align:right; gap:6px; width:100%; flex-wrap:nowrap;">${cardLabel}</div>
+                        <div style="display:flex; flex-direction:row; align-items:center; justify-content:flex-end; text-align:right; gap:6px; width:100%; flex-wrap:wrap; min-width:0;">${cardLabel}</div>
                     </td>
-                    <td data-label="Amount" style="padding: 15px; color: ${amountColor}; font-weight: bold; direction: ltr;">${amountSign}${amountValue.toLocaleString()} T</td>
+                    <td data-label="Amount" style="padding: 15px; color: ${amountColor}; font-weight: bold; direction: ltr;"><span class="finance-amount">${amountSign}${amountValue.toLocaleString()} T</span></td>
                     <td data-label="Client" style="padding: 15px; color: var(--text-secondary);">${p.client_email || '-'}</td>
                     <td data-label="Status" style="padding: 15px;">${statusBadge}</td>
                     <td data-label="Actions" style="padding: 15px; text-align: right;">
@@ -1009,6 +1587,7 @@
         currentPage = 1;
         loadPayments();
         loadStats();
+        if (isOverviewOpen()) ensureOverviewLoaded({ forceMonthsReload: true });
     });
 
     resetButton.addEventListener('click', (event) => {
@@ -1016,7 +1595,26 @@
         clearFilters();
         loadPayments();
         loadStats();
+        if (isOverviewOpen()) ensureOverviewLoaded({ forceMonthsReload: true });
     });
+
+    if (overviewMonthSelect) {
+        overviewMonthSelect.addEventListener('change', () => {
+            updateFiltersFromInputs();
+            const ym = parseYM(overviewMonthSelect.value);
+            if (!ym) return;
+            loadOverviewMonth(ym.year, ym.month);
+        });
+    }
+
+    if (overviewDetails) {
+        overviewDetails.addEventListener('toggle', () => {
+            if (overviewDetails.open) {
+                if (overviewEmpty) overviewEmpty.textContent = 'Loading overview…';
+                ensureOverviewLoaded({ forceMonthsReload: false });
+            }
+        });
+    }
 
     kindSelect.addEventListener('change', () => updateKindUI());
 
@@ -1312,6 +1910,7 @@
     updateFiltersFromInputs();
     loadStats();
     loadPayments();
+    // Overview is lazy-loaded when Summary is opened
 
     if (!isSuperadmin) {
         const monthLabel = document.getElementById('stat-month-label');
