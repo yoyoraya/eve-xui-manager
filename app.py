@@ -1556,6 +1556,19 @@ def format_bytes_gb_tb(size):
         return f"{gb_val:.2f} GB"
 
 def format_remaining_days(timestamp):
+    # Some code paths (e.g. cached client objects) may pass expiry as string
+    # like "Unlimited" or a numeric string. Normalize to int milliseconds.
+    if isinstance(timestamp, str):
+        ts = timestamp.strip()
+        if not ts:
+            timestamp = 0
+        else:
+            try:
+                timestamp = int(float(ts))
+            except Exception:
+                # Non-numeric strings (e.g. "Unlimited", "Expired ...")
+                timestamp = 0
+
     if timestamp == 0 or timestamp is None:
         return {"text": "Unlimited", "days": -1, "type": "unlimited"}
     if timestamp < 0:
@@ -4919,10 +4932,14 @@ def client_subscription(server_id, sub_id):
     remaining = max(total_limit - total_used, 0) if total_limit > 0 else None
     percentage_used = round((total_used / total_limit) * 100, 2) if total_limit else 0
 
-    expiry_info = format_remaining_days(target_client.get('expiryTime', 0))
+    # When serving from cache, `expiryTime` is already formatted text.
+    expiry_raw_ms = target_client.get('expiryTimestamp', None) if found_in_cache else target_client.get('expiryTime', None)
+    if expiry_raw_ms is None:
+        expiry_raw_ms = target_client.get('expiryTime', 0)
+    expiry_info = format_remaining_days(expiry_raw_ms)
 
     # Prepare fallback headers for client apps (used for both upstream-proxy and manual generation)
-    expiry_time_ms = target_client.get('expiryTime', 0)
+    expiry_time_ms = expiry_raw_ms or 0
     expiry_time_sec = int(expiry_time_ms / 1000) if expiry_time_ms and expiry_time_ms > 0 else 0
     user_info_header = f"upload={up}; download={down}; total={total_limit}; expire={expiry_time_sec}"
     fallback_headers = {
