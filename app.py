@@ -2386,22 +2386,27 @@ def api_refresh_single_server(server_id):
         if user.allowed_servers != '*' and str(server.id) not in user.allowed_servers.split(','):
              return jsonify({"success": False, "error": "Access denied"}), 403
 
-    # Non-blocking: enqueue a refresh job and return cached data immediately.
+    # Non-blocking: optionally enqueue a refresh job and return cached data immediately.
     force = _parse_bool(request.args.get('force'))
     wait = _parse_bool(request.args.get('wait'))
+    mode = (request.args.get('mode') or 'full').strip().lower()
+    enqueue = request.args.get('enqueue')
+    enqueue = _parse_bool(enqueue) if enqueue is not None else (mode != 'cache')
 
-    job = enqueue_refresh_job(mode='full', server_id=server.id, force=force)
+    job = None
+    if enqueue and mode in ('full', 'status'):
+        job = enqueue_refresh_job(mode='full', server_id=server.id, force=force)
 
-    # Optional short wait for UI actions; cap to keep endpoint snappy.
-    if wait and job:
-        start = time.time()
-        while (time.time() - start) < 2.0:
-            with REFRESH_JOBS_LOCK:
-                cur = REFRESH_JOBS.get(job.get('id'))
-                if cur and cur.get('state') in ('done', 'error'):
-                    job = cur
-                    break
-            time.sleep(0.15)
+        # Optional short wait for UI actions; cap to keep endpoint snappy.
+        if wait and job:
+            start = time.time()
+            while (time.time() - start) < 2.0:
+                with REFRESH_JOBS_LOCK:
+                    cur = REFRESH_JOBS.get(job.get('id'))
+                    if cur and cur.get('state') in ('done', 'error'):
+                        job = cur
+                        break
+                time.sleep(0.15)
 
     # Pull this server's cached block (if present)
     cached_inbounds = []
@@ -2421,13 +2426,19 @@ def api_refresh_single_server(server_id):
         except Exception:
             continue
 
+    global_stats = GLOBAL_SERVER_DATA.get('stats') or {}
+    server_count = len(GLOBAL_SERVER_DATA.get('servers_status') or [])
+
     return jsonify({
         "success": True,
         "server_id": server.id,
         "server_name": server.name,
         "inbounds": cached_inbounds,
-        "stats": cached_stats or {},
+        "stats": global_stats,
+        "server_stats": cached_stats or {},
+        "server_count": server_count,
         "panel_type": server.panel_type,
+        "last_update": GLOBAL_SERVER_DATA.get('last_update'),
         "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
         "refresh_job": _summarize_job(job)
     }), (202 if job and job.get('state') in ('queued', 'running') else 200)

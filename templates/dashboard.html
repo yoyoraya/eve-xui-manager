@@ -825,8 +825,10 @@
     let allInboundsData = [];
     let pendingServers = [];
     let refreshController = null;
+    const serverRefreshControllers = new Map(); // serverId -> AbortController
     let activeRefreshJobId = null;
     let refreshJobPollTimer = null;
+    const refreshJobContext = new Map(); // jobId -> { serverId?: number|null }
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
 
     const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days
@@ -894,7 +896,13 @@
         const now = Date.now();
 
         const existing = postActionRefreshState.get(key) || { nextAllowedAt: 0, timer: null };
-        const run = () => refreshData(true, { mode: 'full', force: true, poll: true, serverId: serverId || null });
+        const run = () => {
+            if (serverId !== undefined && serverId !== null && serverId !== '') {
+                refreshServerData(serverId, { mode: 'full', force: true, poll: true, enqueue: true });
+            } else {
+                refreshData(true, { mode: 'full', force: true, poll: true, serverId: null });
+            }
+        };
 
         if (now >= existing.nextAllowedAt) {
             if (existing.timer) {
@@ -919,6 +927,124 @@
         postActionRefreshState.set(key, existing);
     }
 
+    function mergeServerInboundsIntoCache(serverId, serverInbounds) {
+        const sid = parseInt(serverId);
+        if (!Number.isFinite(sid)) return;
+        const newBlock = Array.isArray(serverInbounds) ? serverInbounds : [];
+
+        const merge = (arr) => {
+            const list = Array.isArray(arr) ? arr : [];
+            const firstIdx = list.findIndex(x => parseInt(x?.server_id) === sid);
+            const without = list.filter(x => parseInt(x?.server_id) !== sid);
+            if (firstIdx < 0) return without.concat(newBlock);
+            const insertAt = Math.min(Math.max(firstIdx, 0), without.length);
+            return without.slice(0, insertAt).concat(newBlock, without.slice(insertAt));
+        };
+
+        allInboundsData = merge(allInboundsData);
+    }
+
+    function patchLocalClient(serverId, inboundId, email, patch) {
+        const sid = parseInt(serverId);
+        const iid = String(inboundId);
+        const em = String(email || '').toLowerCase();
+        if (!Number.isFinite(sid) || !iid || !em) return false;
+
+        let changed = false;
+        for (const inbound of (allInboundsData || [])) {
+            if (parseInt(inbound?.server_id) !== sid) continue;
+            if (String(inbound?.id) !== iid) continue;
+            const clients = Array.isArray(inbound.clients) ? inbound.clients : [];
+            const client = clients.find(c => String(c?.email || '').toLowerCase() === em);
+            if (!client) continue;
+
+            if (patch && Object.prototype.hasOwnProperty.call(patch, 'enable')) {
+                client.enable = Boolean(patch.enable);
+                changed = true;
+            }
+            if (patch && Object.prototype.hasOwnProperty.call(patch, 'up')) {
+                const upVal = Number(patch.up) || 0;
+                client.up = upVal;
+                client.up_formatted = formatBytes(upVal);
+                changed = true;
+            }
+            if (patch && Object.prototype.hasOwnProperty.call(patch, 'down')) {
+                const downVal = Number(patch.down) || 0;
+                client.down = downVal;
+                client.down_formatted = formatBytes(downVal);
+                changed = true;
+            }
+            break;
+        }
+
+        if (changed) {
+            applyFilters();
+            const searchInput = document.getElementById('global-search-input');
+            if (searchInput && searchInput.value.trim().length > 0) {
+                performGlobalSearch(true);
+            }
+        }
+        return changed;
+    }
+
+    async function refreshServerData(serverId, options = {}) {
+        const sid = parseInt(serverId);
+        if (!Number.isFinite(sid)) return;
+
+        const force = Boolean(options && options.force);
+        const poll = (options && options.poll !== undefined) ? Boolean(options.poll) : true;
+        const mode = (options && options.mode) ? String(options.mode) : 'cache';
+        const enqueue = (options && options.enqueue !== undefined) ? Boolean(options.enqueue) : (mode !== 'cache');
+
+        // Abort previous server refresh for the same server
+        const prev = serverRefreshControllers.get(String(sid));
+        if (prev) {
+            try { prev.abort(); } catch (e) {}
+        }
+        const controller = new AbortController();
+        serverRefreshControllers.set(String(sid), controller);
+
+        try {
+            const params = new URLSearchParams();
+            if (force) params.set('force', '1');
+            params.set('mode', mode);
+            if (enqueue) params.set('enqueue', '1');
+            const qs = params.toString() ? `?${params.toString()}` : '';
+            const resp = await fetch(`/api/server/${sid}/refresh${qs}`, { signal: controller.signal });
+            const data = await resp.json();
+
+            if (data && data.success) {
+                mergeServerInboundsIntoCache(sid, data.inbounds || []);
+                updateStats(data.stats || {}, data.server_count || (allServers ? allServers.length : 0));
+                applyFilters();
+
+                const searchInput = document.getElementById('global-search-input');
+                if (searchInput && searchInput.value.trim().length > 0) {
+                    performGlobalSearch(true);
+                }
+
+                const jobId = data.refresh_job && data.refresh_job.id;
+                const jobState = data.refresh_job && data.refresh_job.state;
+                if (jobId && poll) {
+                    refreshJobContext.set(jobId, { serverId: sid });
+                    startRefreshJobPolling(jobId, { showErrors: false, serverId: sid });
+                }
+
+                // If this is a foreground refresh, give feedback
+                if (!options.isSilent) {
+                    if (jobId && (jobState === 'queued' || jobState === 'running')) {
+                        showToast('Refresh started');
+                    }
+                }
+            }
+        } catch (e) {
+            if (e && e.name === 'AbortError') return;
+        } finally {
+            const cur = serverRefreshControllers.get(String(sid));
+            if (cur === controller) serverRefreshControllers.delete(String(sid));
+        }
+    }
+
     function stopRefreshJobPolling() {
         activeRefreshJobId = null;
         if (refreshJobPollTimer) {
@@ -927,7 +1053,7 @@
         }
     }
 
-    function startRefreshJobPolling(jobId, { showErrors = false } = {}) {
+    function startRefreshJobPolling(jobId, { showErrors = false, serverId = null } = {}) {
         if (!jobId) return;
         if (activeRefreshJobId === jobId) return;
         activeRefreshJobId = jobId;
@@ -951,7 +1077,14 @@
                     const doneId = activeRefreshJobId;
                     stopRefreshJobPolling();
                     // Pull latest cached snapshot after refresh completes.
-                    await refreshData(true, { mode: 'cache', poll: false });
+                    const ctx = refreshJobContext.get(doneId) || {};
+                    const sid = (serverId !== null && serverId !== undefined) ? serverId : (ctx.serverId ?? null);
+                    if (sid !== null && sid !== undefined) {
+                        await refreshServerData(sid, { mode: 'cache', enqueue: false, poll: false });
+                    } else {
+                        await refreshData(true, { mode: 'cache', poll: false });
+                    }
+                    refreshJobContext.delete(doneId);
                     return;
                 }
 
@@ -959,6 +1092,7 @@
                     const err = payload.job.error || 'Refresh failed';
                     stopRefreshJobPolling();
                     if (showErrors) showToast(err, 'error');
+                    refreshJobContext.delete(jobId);
                     return;
                 }
             } catch (e) {
@@ -1440,6 +1574,8 @@
             const data = await response.json();
             if (data.success) {
                 showToast(enable ? 'Client enabled' : 'Client disabled');
+                // Update UI instantly, then sync from server cache in background.
+                patchLocalClient(serverId, inboundId, email, { enable: enable });
                 queueSilentServerRefresh(serverId);
             } else {
                 showToast(data.error || 'Error', 'error');
@@ -1509,6 +1645,8 @@
                 if (typeof data.remaining_credit !== 'undefined') {
                     updateWalletDisplay(data.remaining_credit);
                 }
+                // Update UI instantly (best-effort), then sync from server cache in background.
+                patchLocalClient(serverId, inboundId, email, { up: 0, down: 0 });
                 queueSilentServerRefresh(serverId);
             } else {
                 showToast(data.error || 'Error', 'error');
