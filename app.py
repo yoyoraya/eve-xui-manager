@@ -304,6 +304,9 @@ def _recompute_global_stats_from_server_statuses(server_statuses):
         "total_clients": 0,
         "active_clients": 0,
         "inactive_clients": 0,
+        "not_started_clients": 0,
+        "unlimited_expiry_clients": 0,
+        "unlimited_volume_clients": 0,
         "upload_raw": 0,
         "download_raw": 0,
     }
