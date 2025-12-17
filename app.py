@@ -96,9 +96,12 @@ def fetch_and_update_server_data(server_id: int):
     if error:
         raise RuntimeError(error)
 
-    inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
+    inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
     if fetch_error:
         raise RuntimeError(fetch_error)
+
+    if persist_detected_panel_type(server, detected_type):
+        app.logger.info(f"Detected panel type for server {server.id} as {detected_type}")
 
     processed, stats = process_inbounds(inbounds, server, admin_user, '*', {})
 
@@ -1368,37 +1371,117 @@ def get_xui_session(server):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
+def persist_detected_panel_type(server, detected_type: str) -> bool:
+    """Persist detected panel type for a Server.
+
+    Only updates when current type is auto/unset to avoid overriding a deliberate manual choice.
+    Returns True if updated.
+    """
+    try:
+        if not server:
+            return False
+        detected = (detected_type or '').strip().lower()
+        if not detected or detected == 'auto':
+            return False
+        current = (getattr(server, 'panel_type', None) or 'auto').strip().lower()
+        if current not in ('', 'auto'):
+            return False
+        if current == detected:
+            return False
+        server.panel_type = detected
+        db.session.commit()
+        return True
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return False
+
 def fetch_inbounds(session_obj, host, panel_type='auto'):
     base, webpath = extract_base_and_webpath(host)
-    panel_api = get_panel_api(panel_type)
-    endpoints = []
-    if panel_api and panel_api.inbounds_list:
-        endpoints.append(panel_api.inbounds_list)
-    endpoints.extend(["/panel/api/inbounds/list", "/xui/API/inbounds/", "/xui/inbound/list"])
-    
-    for ep in endpoints:
+    timeout_sec = 4
+    normalized_type = (panel_type or 'auto').strip().lower()
+
+    # Build a prioritized endpoint map: [(endpoint, detected_panel_type)]
+    endpoints_map = []
+
+    # If panel_type is known, try only its configured endpoint first
+    panel_api = get_panel_api(normalized_type)
+    if normalized_type != 'auto' and panel_api and panel_api.inbounds_list:
+        endpoints_map.append((panel_api.inbounds_list, normalized_type))
+    else:
+        # Auto-discovery: try known panel APIs first (prefer sanaei)
+        try:
+            all_apis = PanelAPI.query.all()
+        except Exception:
+            all_apis = []
+
+        def _api_sort_key(api: 'PanelAPI'):
+            pt = (getattr(api, 'panel_type', '') or '').lower()
+            if pt == 'sanaei':
+                return (0, pt)
+            if pt == 'alireza':
+                return (1, pt)
+            return (2, pt)
+
+        for api in sorted(all_apis, key=_api_sort_key):
+            ep = getattr(api, 'inbounds_list', None)
+            pt = (getattr(api, 'panel_type', None) or '').strip().lower()
+            if ep and pt:
+                endpoints_map.append((ep, pt))
+
+        # Hardcoded fallbacks (covers older panels / missing PanelAPI rows)
+        endpoints_map.extend([
+            ("/panel/api/inbounds/list", "sanaei"),
+            ("/xui/API/inbounds/", "alireza"),
+            ("/xui/inbound/list", "xui"),
+        ])
+
+    # De-duplicate while preserving order
+    seen = set()
+    deduped = []
+    for ep, pt in endpoints_map:
         if not ep:
             continue
+        key = (ep, pt)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((ep, pt))
+
+    for ep, detected_type in deduped:
         try:
             url = ep if ep.startswith('http') else f"{base}{webpath}{ep}"
-            if '/xui/' in ep.lower() and 'api' in ep.lower():
-                resp = session_obj.get(url, verify=False, timeout=10)
-            elif '/xui/' in ep.lower():
-                resp = session_obj.post(url, json={"page": 1, "limit": 100}, verify=False, timeout=10)
+            ep_l = ep.lower()
+
+            # Request strategy per panel flavor
+            if '/xui/' in ep_l and 'api' in ep_l:
+                resp = session_obj.get(url, verify=False, timeout=timeout_sec)
+                if resp.status_code == 405:
+                    resp = session_obj.post(url, verify=False, timeout=timeout_sec)
+            elif '/xui/' in ep_l:
+                resp = session_obj.post(url, json={"page": 1, "limit": 100}, verify=False, timeout=timeout_sec)
             else:
-                resp = session_obj.get(url, verify=False, timeout=10)
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get('success'):
-                    if 'obj' in data: return data['obj'], None
-                    if 'data' in data:
-                        d = data['data']
-                        return d if isinstance(d, list) else d.get('list', []), None
+                resp = session_obj.get(url, verify=False, timeout=timeout_sec)
+
+            if resp.status_code != 200:
+                continue
+
+            data = resp.json()
+            if not isinstance(data, dict) or not data.get('success'):
+                continue
+
+            if 'obj' in data:
+                return data['obj'], None, detected_type
+            if 'data' in data:
+                d = data['data']
+                return (d if isinstance(d, list) else d.get('list', [])), None, detected_type
         except Exception as e:
             app.logger.debug(f"Failed inbounds endpoint {ep}: {str(e)}")
             continue
-    return None, "Failed to fetch inbounds"
+
+    return None, "Failed to fetch inbounds", 'auto'
 
 def generate_client_link(client, inbound, server_host):
     """Generate share links for vmess / vless / trojan / shadowsocks."""
@@ -1831,10 +1914,10 @@ def fetch_worker(server_dict):
         server_obj = SimpleNamespace(**server_dict)
         session_obj, error = get_xui_session(server_obj)
         if error:
-            return server_dict['id'], None, error
+            return server_dict['id'], None, error, 'auto'
         
-        inbounds, fetch_error = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
-        return server_dict['id'], inbounds, fetch_error
+        inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
+        return server_dict['id'], inbounds, fetch_error, detected_type
 
 @app.route('/api/refresh')
 @login_required
@@ -2064,10 +2147,13 @@ def api_refresh_single_server(server_id):
         'json_path': server.json_path
     }
     
-    _, inbounds, error = fetch_worker(server_dict)
+    _, inbounds, error, detected_type = fetch_worker(server_dict)
     
     if error:
         return jsonify({"success": False, "server_id": server.id, "server_name": server.name, "error": error})
+
+    if persist_detected_panel_type(server, detected_type):
+        app.logger.info(f"Detected panel type for server {server.id} as {detected_type}")
 
     processed_inbounds, stats = process_inbounds(inbounds, server, user, allowed_map, assignments)
     
@@ -2203,9 +2289,11 @@ def toggle_client(server_id, inbound_id):
     if error: return jsonify({"success": False, "error": error}), 400
     
     try:
-        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
         if fetch_err:
             return jsonify({"success": False, "error": fetch_err}), 400
+
+        persist_detected_panel_type(server, detected_type)
         target_client, _ = find_client(inbounds, inbound_id, email)
         if not target_client:
             return jsonify({"success": False, "error": "Client not found"}), 404
@@ -2387,9 +2475,11 @@ def edit_client(server_id, inbound_id, email):
         return jsonify({"success": False, "error": error}), 400
         
     try:
-        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
         if fetch_err:
             return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+
+        persist_detected_panel_type(server, detected_type)
             
         target_client, _ = find_client(inbounds, inbound_id, email)
         if not target_client:
@@ -2478,9 +2568,11 @@ def delete_client(server_id, inbound_id, email):
         return jsonify({"success": False, "error": error}), 400
         
     try:
-        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
         if fetch_err:
             return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+
+        persist_detected_panel_type(server, detected_type)
             
         target_client, _ = find_client(inbounds, inbound_id, email)
         if not target_client:
@@ -2614,9 +2706,11 @@ def renew_client(server_id, inbound_id, email):
         return jsonify({"success": False, "error": error}), 400
     
     try:
-        inbounds, fetch_err = fetch_inbounds(session_obj, server.host, server.panel_type)
+        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
         if fetch_err:
             return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+
+        persist_detected_panel_type(server, detected_type)
         target_client, _ = find_client(inbounds, inbound_id, email)
         if not target_client:
             return jsonify({"success": False, "error": "Client not found"}), 404
@@ -4467,10 +4561,12 @@ def client_subscription(server_id, sub_id):
         app.logger.warning(f"Dash sub auth failed for server {server_id}: {login_error}")
         return "Unable to load subscription", 502
 
-    inbounds, fetch_error = fetch_inbounds(session_obj, server.host, server.panel_type)
+    inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
     if fetch_error or not inbounds:
         app.logger.warning(f"Dash sub fetch failed for server {server_id}: {fetch_error}")
         return "Unable to load subscription", 502
+
+    persist_detected_panel_type(server, detected_type)
 
     normalized_sub_id = str(sub_id).strip()
     target_client = None
@@ -5560,12 +5656,15 @@ def fetch_and_update_global_data():
             admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
 
         for srv in servers:
-            res = next((r for r in results if r[0] == srv.id), (srv.id, None, "Timeout"))
-            _, inbounds, error = res
+            res = next((r for r in results if r[0] == srv.id), (srv.id, None, "Timeout", 'auto'))
+            _, inbounds, error, detected_type = res
 
             if error:
                 server_statuses.append({"server_id": srv.id, "success": False, "error": error})
                 continue
+
+            if persist_detected_panel_type(srv, detected_type):
+                app.logger.info(f"Detected panel type for server {srv.id} as {detected_type}")
 
             processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {})
             all_inbounds.extend(processed)
