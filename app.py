@@ -4846,6 +4846,7 @@ def client_subscription(server_id, sub_id):
     normalized_sub_id = str(sub_id).strip()
     target_client = None
     target_inbound = None
+    found_in_cache = False
 
     # === Cache-first path: try to find client in in-memory GLOBAL_SERVER_DATA ===
     try:
@@ -4896,20 +4897,7 @@ def client_subscription(server_id, sub_id):
             if target_client:
                 break
 
-    for inbound in inbounds:
-        try:
-            settings = json.loads(inbound.get('settings', '{}'))
-        except Exception:
-            continue
-        for client in settings.get('clients', []):
-            client_sub_id = str(client.get('subId') or '').strip()
-            client_uuid = str(client.get('id') or '').strip()
-            if normalized_sub_id and (normalized_sub_id == client_sub_id or (not client_sub_id and normalized_sub_id == client_uuid)):
-                target_client = client
-                target_inbound = inbound
-                break
-        if target_client:
-            break
+    # (client search completed either from cache or from fetched inbounds)
 
     if not target_client or not target_inbound:
         return "Subscription not found", 404
