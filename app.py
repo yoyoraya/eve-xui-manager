@@ -405,8 +405,12 @@ app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-prod
 
 # Use SQLite by default, but allow override via DATABASE_URL
 db_url = os.environ.get("DATABASE_URL")
-if not db_url or db_url.startswith("postgresql://"):
-    # Fallback to SQLite if DATABASE_URL is missing or points to the old postgres config
+if db_url:
+    db_url = str(db_url).strip()
+    # Heroku-style scheme; SQLAlchemy expects postgresql://
+    if db_url.startswith("postgres://"):
+        db_url = "postgresql://" + db_url[len("postgres://"):]
+else:
     db_path = os.path.join(app.instance_path, 'servers.db')
     os.makedirs(app.instance_path, exist_ok=True)
     db_url = f"sqlite:///{db_path}"

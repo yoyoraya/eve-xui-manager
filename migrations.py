@@ -12,6 +12,11 @@ import sys
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'servers.db')
 
 
+def _is_postgres_env() -> bool:
+    db_url = (os.environ.get('DATABASE_URL') or '').strip().lower()
+    return db_url.startswith('postgresql://') or db_url.startswith('postgres://')
+
+
 def fix_database():
     if not os.path.exists(DB_PATH):
         print(f"❌ Database file not found at: {DB_PATH}")
@@ -145,6 +150,10 @@ def fix_database():
 
 
 if __name__ == "__main__":
+    if _is_postgres_env():
+        print("ℹ️  DATABASE_URL points to PostgreSQL; skipping SQLite migrations.py")
+        sys.exit(0)
+
     print("\n🔄 Eve X-UI Manager - Database Migration")
     print("=" * 45)
     success = fix_database()
