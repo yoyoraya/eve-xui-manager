@@ -4842,21 +4842,59 @@ def client_subscription(server_id, sub_id):
 
     wants_html_view = str(request.args.get('view', '')).strip().lower() in ('1', 'true', 'yes')
 
-    session_obj, login_error = get_xui_session(server)
-    if login_error or not session_obj:
-        app.logger.warning(f"Dash sub auth failed for server {server_id}: {login_error}")
-        return "Unable to load subscription", 502
-
-    inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
-    if fetch_error or not inbounds:
-        app.logger.warning(f"Dash sub fetch failed for server {server_id}: {fetch_error}")
-        return "Unable to load subscription", 502
-
-    persist_detected_panel_type(server, detected_type)
-
+    # Normalize subscription identifier early
     normalized_sub_id = str(sub_id).strip()
     target_client = None
     target_inbound = None
+
+    # === Cache-first path: try to find client in in-memory GLOBAL_SERVER_DATA ===
+    try:
+        cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds', []) or []
+        # Filter inbounds for this server
+        server_inbounds = [i for i in cached_inbounds if int(i.get('server_id', -1)) == int(server_id)]
+        for inbound in server_inbounds:
+            for client in inbound.get('clients', []):
+                c_sub_id = str(client.get('subId') or '').strip()
+                c_uuid = str(client.get('id') or '').strip()
+                if normalized_sub_id and (normalized_sub_id == c_sub_id or (not c_sub_id and normalized_sub_id == c_uuid)):
+                    target_client = client
+                    target_inbound = inbound
+                    found_in_cache = True
+                    break
+            if target_client:
+                break
+    except Exception:
+        found_in_cache = False
+
+    # === Fallback: if not found in cache, perform live fetch (legacy behavior) ===
+    if not target_client:
+        session_obj, login_error = get_xui_session(server)
+        if login_error or not session_obj:
+            app.logger.warning(f"Dash sub auth failed for server {server_id}: {login_error}")
+            return "Unable to load subscription", 502
+
+        inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+        if fetch_error or not inbounds:
+            app.logger.warning(f"Dash sub fetch failed for server {server_id}: {fetch_error}")
+            return "Unable to load subscription", 502
+
+        persist_detected_panel_type(server, detected_type)
+
+        # Search in raw fetched inbounds (original logic)
+        for inbound in inbounds:
+            try:
+                settings = json.loads(inbound.get('settings', '{}'))
+            except Exception:
+                continue
+            for client in settings.get('clients', []):
+                client_sub_id = str(client.get('subId') or '').strip()
+                client_uuid = str(client.get('id') or '').strip()
+                if normalized_sub_id and (normalized_sub_id == client_sub_id or (not client_sub_id and normalized_sub_id == client_uuid)):
+                    target_client = client
+                    target_inbound = inbound
+                    break
+            if target_client:
+                break
 
     for inbound in inbounds:
         try:
