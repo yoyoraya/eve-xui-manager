@@ -1,3 +1,17 @@
+# Eve - Xui Manager v1.5.1
+
+## [1.5.1] - 2025-12-18
+
+English:
+- Fix: Background refresh jobs run inside Flask `app_context`, fixing cases where background refreshes failed to update cache (renew/reset/actions now reflect in UI without manual refresh).
+- Fix: `setup.sh` and migration scripts updated so Postgres configuration persists across updates (no accidental fallback to SQLite). `migrations.py` now skips SQLite-only checks when `DATABASE_URL` points to Postgres.
+- Improvement: Refresh system made non-blocking with server-scoped jobs + polling; frontend uses cached-first rendering and performs lightweight server refreshes after client actions for faster UX.
+- Fix: Dashboard aggregate counters restored (`unlimited_expiry_clients`, `unlimited_volume_clients`, `not_started_clients`) so summary metrics show correctly.
+- Tweak: Reduced panel login timeout during session creation to avoid long blocking refreshes.
+
+Notes:
+- These changes improve update reliability (Postgres), background job correctness, and dashboard real-time UX. See commits for details.
+
 # Eve - Xui Manager v1.5.0
 
 ## [1.5.0] - 2025-12-16
