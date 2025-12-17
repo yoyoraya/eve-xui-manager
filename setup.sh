@@ -137,40 +137,25 @@ detect_os() {
 }
 
 ensure_python_pkg() {
-    # Check if python is already present
     if command -v "python${PYTHON_VERSION}" >/dev/null 2>&1; then
         return
     fi
     print_warning "python${PYTHON_VERSION} not found, installing..."
-    
-    # 1. Install prerequisites and enable universe
-    print_warning "Installing prerequisites..."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     apt-get install -y software-properties-common gnupg ca-certificates curl lsb-release ubuntu-keyring
     add-apt-repository universe -y
-
-    # 2. Add PPA (Robust method)
-    print_warning "Adding deadsnakes PPA..."
-    # Clean old potential bad lists
     rm -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.list
-    
     if ! add-apt-repository -y ppa:deadsnakes/ppa; then
         print_warning "Standard PPA add failed, switching to manual method..."
     fi
-    
-    # Update lists
     apt-get update
-    
-    # 3. Check if package is actually available, if not force manual entry
     if ! apt-cache show "python${PYTHON_VERSION}" >/dev/null 2>&1; then
         print_warning "Package python${PYTHON_VERSION} not found in PPA. Forcing manual entry..."
         echo "deb http://ppa.launchpad.net/deadsnakes/ppa/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/deadsnakes-manual.list
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F23C5A6CF475977595C89F51BA6932366A755776
         apt-get update
     fi
-    
-    # 4. Install Python
     print_warning "Installing Python ${PYTHON_VERSION}..."
     if ! apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" "python${PYTHON_VERSION}-dev"; then
         print_warning "Failed to install ${PYTHON_VERSION}. Trying Python 3.10 as fallback..."
@@ -186,7 +171,6 @@ ensure_python_pkg() {
 update_system() {
     print_header "Step 1: Update system"
     apt-get update -qq
-    # apt-get upgrade -y -qq # Optional: skipping full upgrade to save time
     print_success "Packages list updated"
 }
 
@@ -227,13 +211,8 @@ prepare_directories() {
 
 clone_or_update_repo() {
     print_header "Step 6: Fetch application"
-    
-    # Fix git dubious ownership
     git config --global --add safe.directory "$APP_DIR" || true
-    
-    # Ensure correct permissions before git operations
     chown -R "$APP_USER:$APP_USER" "$APP_DIR"
-
     if [ -d "$APP_DIR/.git" ]; then
         print_warning "Repository exists, pulling latest changes"
         sudo -u "$APP_USER" git -C "$APP_DIR" fetch --all
@@ -310,7 +289,8 @@ Group=${APP_USER}
 WorkingDirectory=${APP_DIR}
 Environment="PATH=${APP_DIR}/venv/bin:/usr/local/bin:/usr/bin:/bin"
 EnvironmentFile=${ENV_FILE}
-ExecStart=${APP_DIR}/venv/bin/gunicorn --workers 1 --threads 4 --worker-class gthread --bind 0.0.0.0:${APP_PORT} app:app
+# Recommended: increase workers if you have >1 CPU core
+ExecStart=${APP_DIR}/venv/bin/gunicorn --workers 3 --threads 4 --worker-class gthread --bind 0.0.0.0:${APP_PORT} app:app
 Restart=always
 
 [Install]
@@ -353,6 +333,163 @@ setup_certbot_ssl() {
     print_success "SSL Certificate installed!"
 }
 
+# -------------------------------------------------------------
+# AUTOMATED MIGRATION TO POSTGRESQL
+# -------------------------------------------------------------
+migrate_to_postgres() {
+    print_header "Starting Migration to PostgreSQL..."
+
+    # 1. Install PostgreSQL
+    print_warning "Installing PostgreSQL packages..."
+    apt-get update -qq
+    apt-get install -y postgresql postgresql-contrib libpq-dev
+
+    # 2. Fix app.py logic bug
+    print_warning "Patching app.py to support DATABASE_URL..."
+    # The regex removes the bad check: ' or db_url.startswith(\"postgresql://\")'
+    if [ -f "$APP_DIR/app.py" ]; then
+        sed -i 's/or db_url.startswith("postgresql:\/\/")//g' "$APP_DIR/app.py"
+        print_success "Patched app.py successfully."
+    else
+        print_error "app.py not found in $APP_DIR"
+        exit 1
+    fi
+
+    # 3. Setup Database Credentials
+    read -rp "Enter new DB Password for 'eve_manager' user [leave blank to generate]: " DB_PASS_INPUT
+    if [ -z "$DB_PASS_INPUT" ]; then
+        MIG_DB_PASS="$(generate_secret 16 alnum)"
+    else
+        MIG_DB_PASS="$DB_PASS_INPUT"
+    fi
+
+    print_warning "Configuring PostgreSQL Database..."
+    # Create DB and User safely
+    sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME};" || true
+    sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${MIG_DB_PASS}';" || true
+    sudo -u postgres psql -c "ALTER USER ${DB_USER} WITH PASSWORD '${MIG_DB_PASS}';" || true
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" || true
+    
+    # 4. Update .env
+    print_warning "Updating .env file..."
+    NEW_DB_URL="postgresql://${DB_USER}:${MIG_DB_PASS}@localhost/${DB_NAME}"
+    
+    # Ensure DATABASE_URL is updated or added
+    if grep -q "DATABASE_URL" "$ENV_FILE"; then
+        sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${NEW_DB_URL}|" "$ENV_FILE"
+    else
+        echo "DATABASE_URL=${NEW_DB_URL}" >> "$ENV_FILE"
+    fi
+    chown "$APP_USER:$APP_USER" "$ENV_FILE"
+
+    # 5. Create Python Migration Script
+    print_warning "Creating migration script..."
+    cat > "$APP_DIR/migrate_db.py" <<'EOF'
+import os
+import sqlite3
+import sys
+from sqlalchemy import text
+from app import app, db
+from app import (
+    Admin, Server, SubAppConfig, FAQ, Package, SystemConfig, 
+    BankCard, NotificationTemplate, SystemSetting, ManualReceipt, 
+    AutoApprovalWindow, Payment, Transaction, ClientOwnership, PanelAPI
+)
+
+SQLITE_DB_PATH = os.path.join(app.instance_path, 'servers.db')
+
+def get_sqlite_conn():
+    if not os.path.exists(SQLITE_DB_PATH):
+        print(f"❌ SQLite database not found at: {SQLITE_DB_PATH}")
+        sys.exit(1)
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def migrate_table(table_name, model_class, sqlite_conn):
+    print(f"⏳ Migrating table {table_name}...")
+    cursor = sqlite_conn.cursor()
+    try:
+        cursor.execute(f"SELECT * FROM {table_name}")
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError:
+        print(f"⚠️ Table {table_name} missing in SQLite. Skipping.")
+        return
+
+    count = 0
+    for row in rows:
+        data = dict(row)
+        exists = False
+        # Simple existence checks
+        if table_name == 'admins' and db.session.query(Admin).filter_by(username=data['username']).first(): exists = True
+        elif table_name == 'servers' and db.session.query(Server).filter_by(host=data['host']).first(): exists = True
+        elif 'id' in data and db.session.get(model_class, data['id']): exists = True
+
+        if not exists:
+            instance = model_class(**data)
+            db.session.add(instance)
+            count += 1
+    
+    try:
+        db.session.commit()
+        print(f"✅ Added {count} rows to {table_name}.")
+        if count > 0 and 'id' in data:
+            max_id = db.session.query(db.func.max(model_class.id)).scalar() or 0
+            seq_name = f"{table_name}_id_seq"
+            try:
+                db.session.execute(text(f"SELECT setval('{seq_name}', {max_id + 1}, false)"))
+                db.session.commit()
+            except Exception as e:
+                print(f"⚠️ Sequence reset warning for {table_name}: {e}")
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error migrating {table_name}: {e}")
+
+if __name__ == "__main__":
+    print("🚀 Starting Migration to PostgreSQL...")
+    if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+        print("❌ Error: App still configured for SQLite.")
+        sys.exit(1)
+
+    sqlite_conn = get_sqlite_conn()
+    with app.app_context():
+        db.create_all()
+        # Migration Order
+        migrate_table('admins', Admin, sqlite_conn)
+        migrate_table('bank_cards', BankCard, sqlite_conn)
+        migrate_table('servers', Server, sqlite_conn)
+        migrate_table('panel_apis', PanelAPI, sqlite_conn)
+        migrate_table('system_configs', SystemConfig, sqlite_conn)
+        migrate_table('system_settings', SystemSetting, sqlite_conn)
+        migrate_table('sub_app_configs', SubAppConfig, sqlite_conn)
+        migrate_table('faqs', FAQ, sqlite_conn)
+        migrate_table('packages', Package, sqlite_conn)
+        migrate_table('notification_templates', NotificationTemplate, sqlite_conn)
+        migrate_table('auto_approval_windows', AutoApprovalWindow, sqlite_conn)
+        # Dependents
+        migrate_table('manual_receipts', ManualReceipt, sqlite_conn)
+        migrate_table('payments', Payment, sqlite_conn)
+        migrate_table('transactions', Transaction, sqlite_conn)
+        migrate_table('client_ownerships', ClientOwnership, sqlite_conn)
+    print("\n✨ Migration finished successfully!")
+EOF
+
+    chown "$APP_USER:$APP_USER" "$APP_DIR/migrate_db.py"
+
+    # 6. Run Migration Script
+    print_warning "Executing migration script..."
+    # FIX: Export variables from .env so python script can see them!
+    sudo -u "$APP_USER" bash -c "set -a; source $ENV_FILE; set +a; source $APP_DIR/venv/bin/activate && cd $APP_DIR && python3 migrate_db.py"
+
+    # 7. Cleanup & Restart
+    print_warning "Restarting Service..."
+    systemctl restart ${SERVICE_NAME}
+    
+    print_success "Migration to PostgreSQL Complete!"
+    echo -e "DB User: ${DB_USER}"
+    echo -e "DB Pass: ${MIG_DB_PASS}"
+}
+
 update_self() {
     print_header "Updating Installer Script..."
     curl -o "$0" -fsSL "${REPO_URL%.git}/raw/main/setup.sh"
@@ -369,7 +506,8 @@ show_menu() {
     echo "3) Configure SSL (Certbot)"
     echo "4) Update this script"
     echo "5) Uninstall Project"
-    echo "6) Exit"
+    echo -e "${YELLOW}7) Migrate to PostgreSQL (Automatic)${NC}"
+    echo "8) Exit"
     read -rp "Select an option: " choice
     case $choice in
         1)
@@ -406,7 +544,11 @@ show_menu() {
             require_root
             uninstall_project
             ;;
-        6) exit 0 ;;
+        7)
+            require_root
+            migrate_to_postgres
+            ;;
+        6|8) exit 0 ;;
         *) print_error "Invalid option" ;;
     esac
 }
