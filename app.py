@@ -211,31 +211,33 @@ def _run_refresh_job(job_id: str):
         job['started_at'] = _utc_iso_now()
 
     try:
-        with GLOBAL_REFRESH_LOCK:
-            GLOBAL_SERVER_DATA['is_updating'] = True
-            try:
-                mode = (job.get('mode') or 'full').strip().lower()
-                server_id = job.get('server_id')
-                force = bool(job.get('force'))
+        # Important: background threads must run inside app context for SQLAlchemy.
+        with app.app_context():
+            with GLOBAL_REFRESH_LOCK:
+                GLOBAL_SERVER_DATA['is_updating'] = True
+                try:
+                    mode = (job.get('mode') or 'full').strip().lower()
+                    server_id = job.get('server_id')
+                    force = bool(job.get('force'))
 
-                if mode == 'status':
-                    servers_q = Server.query.filter_by(enabled=True)
-                    if server_id:
-                        servers_q = servers_q.filter(Server.id == int(server_id))
-                    servers = servers_q.all()
-                    _update_reachability_status(servers, force=force)
-                else:
-                    if server_id:
-                        try:
-                            fetch_and_update_server_data(int(server_id))
-                            _backoff_record_success(int(server_id))
-                        except Exception as e:
-                            _backoff_record_failure(int(server_id), str(e))
-                            raise
+                    if mode == 'status':
+                        servers_q = Server.query.filter_by(enabled=True)
+                        if server_id:
+                            servers_q = servers_q.filter(Server.id == int(server_id))
+                        servers = servers_q.all()
+                        _update_reachability_status(servers, force=force)
                     else:
-                        fetch_and_update_global_data(force=force)
-            finally:
-                GLOBAL_SERVER_DATA['is_updating'] = False
+                        if server_id:
+                            try:
+                                fetch_and_update_server_data(int(server_id))
+                                _backoff_record_success(int(server_id))
+                            except Exception as e:
+                                _backoff_record_failure(int(server_id), str(e))
+                                raise
+                        else:
+                            fetch_and_update_global_data(force=force)
+                finally:
+                    GLOBAL_SERVER_DATA['is_updating'] = False
 
         with REFRESH_JOBS_LOCK:
             job = REFRESH_JOBS.get(job_id) or {}
