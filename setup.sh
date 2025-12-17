@@ -382,103 +382,13 @@ migrate_to_postgres() {
     fi
     chown "$APP_USER:$APP_USER" "$ENV_FILE"
 
-    # 5. Create Python Migration Script
-    print_warning "Creating migration script..."
-    cat > "$APP_DIR/migrate_db.py" <<'EOF'
-import os
-import sqlite3
-import sys
-from sqlalchemy import text
-from app import app, db
-from app import (
-    Admin, Server, SubAppConfig, FAQ, Package, SystemConfig, 
-    BankCard, NotificationTemplate, SystemSetting, ManualReceipt, 
-    AutoApprovalWindow, Payment, Transaction, ClientOwnership, PanelAPI
-)
-
-SQLITE_DB_PATH = os.path.join(app.instance_path, 'servers.db')
-
-def get_sqlite_conn():
-    if not os.path.exists(SQLITE_DB_PATH):
-        print(f"❌ SQLite database not found at: {SQLITE_DB_PATH}")
-        sys.exit(1)
-    conn = sqlite3.connect(SQLITE_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def migrate_table(table_name, model_class, sqlite_conn):
-    print(f"⏳ Migrating table {table_name}...")
-    cursor = sqlite_conn.cursor()
-    try:
-        cursor.execute(f"SELECT * FROM {table_name}")
-        rows = cursor.fetchall()
-    except sqlite3.OperationalError:
-        print(f"⚠️ Table {table_name} missing in SQLite. Skipping.")
-        return
-
-    count = 0
-    for row in rows:
-        data = dict(row)
-        exists = False
-        # Simple existence checks
-        if table_name == 'admins' and db.session.query(Admin).filter_by(username=data['username']).first(): exists = True
-        elif table_name == 'servers' and db.session.query(Server).filter_by(host=data['host']).first(): exists = True
-        elif 'id' in data and db.session.get(model_class, data['id']): exists = True
-
-        if not exists:
-            instance = model_class(**data)
-            db.session.add(instance)
-            count += 1
-    
-    try:
-        db.session.commit()
-        print(f"✅ Added {count} rows to {table_name}.")
-        if count > 0 and 'id' in data:
-            max_id = db.session.query(db.func.max(model_class.id)).scalar() or 0
-            seq_name = f"{table_name}_id_seq"
-            try:
-                db.session.execute(text(f"SELECT setval('{seq_name}', {max_id + 1}, false)"))
-                db.session.commit()
-            except Exception as e:
-                print(f"⚠️ Sequence reset warning for {table_name}: {e}")
-    except Exception as e:
-        db.session.rollback()
-        print(f"❌ Error migrating {table_name}: {e}")
-
-if __name__ == "__main__":
-    print("🚀 Starting Migration to PostgreSQL...")
-    if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
-        print("❌ Error: App still configured for SQLite.")
-        sys.exit(1)
-
-    sqlite_conn = get_sqlite_conn()
-    with app.app_context():
-        db.create_all()
-        # Migration Order
-        migrate_table('admins', Admin, sqlite_conn)
-        migrate_table('bank_cards', BankCard, sqlite_conn)
-        migrate_table('servers', Server, sqlite_conn)
-        migrate_table('panel_apis', PanelAPI, sqlite_conn)
-        migrate_table('system_configs', SystemConfig, sqlite_conn)
-        migrate_table('system_settings', SystemSetting, sqlite_conn)
-        migrate_table('sub_app_configs', SubAppConfig, sqlite_conn)
-        migrate_table('faqs', FAQ, sqlite_conn)
-        migrate_table('packages', Package, sqlite_conn)
-        migrate_table('notification_templates', NotificationTemplate, sqlite_conn)
-        migrate_table('auto_approval_windows', AutoApprovalWindow, sqlite_conn)
-        # Dependents
-        migrate_table('manual_receipts', ManualReceipt, sqlite_conn)
-        migrate_table('payments', Payment, sqlite_conn)
-        migrate_table('transactions', Transaction, sqlite_conn)
-        migrate_table('client_ownerships', ClientOwnership, sqlite_conn)
-    print("\n✨ Migration finished successfully!")
-EOF
-
-    chown "$APP_USER:$APP_USER" "$APP_DIR/migrate_db.py"
-
-    # 6. Run Migration Script
+    # 5. Run repo-tracked Migration Script
     print_warning "Executing migration script..."
-    # FIX: Export variables from .env so python script can see them!
+    if [ ! -f "$APP_DIR/migrate_db.py" ]; then
+        print_error "migrate_db.py not found in $APP_DIR (update code first)."
+        exit 1
+    fi
+    # Export variables from .env so python script can see DATABASE_URL, etc.
     sudo -u "$APP_USER" bash -c "set -a; source $ENV_FILE; set +a; source $APP_DIR/venv/bin/activate && cd $APP_DIR && python3 migrate_db.py"
 
     # 7. Cleanup & Restart
