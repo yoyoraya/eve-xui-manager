@@ -1400,7 +1400,7 @@ def persist_detected_panel_type(server, detected_type: str) -> bool:
 
 def fetch_inbounds(session_obj, host, panel_type='auto'):
     base, webpath = extract_base_and_webpath(host)
-    timeout_sec = 4
+    timeout_sec = 3
     normalized_type = (panel_type or 'auto').strip().lower()
 
     # Build a prioritized endpoint map: [(endpoint, detected_panel_type)]
@@ -5642,7 +5642,7 @@ def fetch_and_update_global_data():
         } for s in servers]
 
         results = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
             for future in concurrent.futures.as_completed(future_to_id):
                 results.append(future.result())
