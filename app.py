@@ -52,6 +52,247 @@ GLOBAL_SERVER_DATA = {
 # Prevent overlapping forced refreshes (e.g. after rapid UI actions)
 GLOBAL_REFRESH_LOCK = threading.Lock()
 
+# Refresh job tracking (in-memory; per-process)
+REFRESH_JOBS = {}  # job_id -> job dict
+REFRESH_JOBS_LOCK = threading.Lock()
+REFRESH_MAX_JOBS = 50
+
+# Backoff to avoid hammering failing servers during periodic refresh
+REFRESH_BACKOFF = {}  # server_id -> {fail_count:int, next_allowed_at:float, last_error:str, last_failed_at:float}
+REFRESH_MAX_BACKOFF_SEC = 300
+
+
+def _utc_iso_now():
+    return datetime.utcnow().isoformat()
+
+
+def _parse_bool(value) -> bool:
+    return str(value or '').strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+
+
+def _summarize_job(job):
+    if not isinstance(job, dict):
+        return None
+    # keep payload small
+    keys = (
+        'id', 'state', 'mode', 'server_id', 'force',
+        'created_at', 'started_at', 'finished_at',
+        'progress', 'error'
+    )
+    return {k: job.get(k) for k in keys if k in job}
+
+
+def _prune_refresh_jobs_locked():
+    if len(REFRESH_JOBS) <= REFRESH_MAX_JOBS:
+        return
+    # prune oldest finished jobs first
+    jobs_sorted = sorted(REFRESH_JOBS.items(), key=lambda kv: kv[1].get('created_at_ts', 0))
+    to_delete = max(0, len(REFRESH_JOBS) - REFRESH_MAX_JOBS)
+    deleted = 0
+    for job_id, job in jobs_sorted:
+        if deleted >= to_delete:
+            break
+        if job.get('state') in ('done', 'error'):
+            REFRESH_JOBS.pop(job_id, None)
+            deleted += 1
+
+
+def _backoff_get(server_id: int) -> dict:
+    try:
+        return REFRESH_BACKOFF.get(int(server_id)) or {}
+    except Exception:
+        return {}
+
+
+def _backoff_should_skip(server_id: int, now_ts: float) -> bool:
+    info = _backoff_get(server_id)
+    return float(info.get('next_allowed_at', 0) or 0) > float(now_ts)
+
+
+def _backoff_record_failure(server_id: int, error: str):
+    try:
+        sid = int(server_id)
+    except Exception:
+        return
+    now = time.time()
+    info = REFRESH_BACKOFF.get(sid) or {'fail_count': 0, 'next_allowed_at': 0, 'last_error': '', 'last_failed_at': 0}
+    fail_count = int(info.get('fail_count', 0) or 0) + 1
+    # exponential backoff: 5,10,20,40,80,160,300...
+    delay = min(REFRESH_MAX_BACKOFF_SEC, (2 ** min(fail_count, 6)) * 5)
+    info.update({
+        'fail_count': fail_count,
+        'next_allowed_at': now + delay,
+        'last_error': (error or 'Error')[:400],
+        'last_failed_at': now,
+    })
+    REFRESH_BACKOFF[sid] = info
+
+
+def _backoff_record_success(server_id: int):
+    try:
+        sid = int(server_id)
+    except Exception:
+        return
+    if sid in REFRESH_BACKOFF:
+        REFRESH_BACKOFF[sid] = {'fail_count': 0, 'next_allowed_at': 0, 'last_error': '', 'last_failed_at': 0}
+
+
+def _check_server_reachable(server: 'Server', timeout_sec: float = 2.0):
+    try:
+        base, webpath = extract_base_and_webpath(server.host)
+        url = f"{base}{webpath}/login"
+        resp = requests.get(url, timeout=timeout_sec, verify=False, allow_redirects=True)
+        return (resp.status_code < 500), None
+    except Exception as e:
+        return False, str(e)
+
+
+def _update_reachability_status(servers, force: bool = False):
+    now_iso = _utc_iso_now()
+    now_ts = time.time()
+    existing_statuses = GLOBAL_SERVER_DATA.get('servers_status') or []
+    status_map = {}
+    for st in existing_statuses:
+        try:
+            if isinstance(st, dict) and 'server_id' in st:
+                status_map[int(st.get('server_id'))] = st
+        except Exception:
+            continue
+
+    for srv in servers or []:
+        try:
+            sid = int(srv.id)
+        except Exception:
+            continue
+        if not force and _backoff_should_skip(sid, now_ts):
+            info = _backoff_get(sid)
+            st = status_map.get(sid) or {'server_id': sid}
+            st['reachable'] = False
+            st['reachable_error'] = f"Backoff (until {int(info.get('next_allowed_at', 0) or 0)})"
+            st['reachable_checked_at'] = now_iso
+            status_map[sid] = st
+            continue
+
+        ok, err = _check_server_reachable(srv)
+        st = status_map.get(sid) or {'server_id': sid}
+        st['reachable'] = bool(ok)
+        st['reachable_error'] = None if ok else (err or 'Unreachable')
+        st['reachable_checked_at'] = now_iso
+        status_map[sid] = st
+
+        if ok:
+            _backoff_record_success(sid)
+        else:
+            _backoff_record_failure(sid, st['reachable_error'])
+
+    # write back preserving server order (if we can)
+    ordered = []
+    try:
+        id_order = [int(s.id) for s in servers]
+        for sid in id_order:
+            if sid in status_map:
+                ordered.append(status_map[sid])
+        # include any extra statuses that were not part of the requested servers
+        for sid, st in status_map.items():
+            if sid not in set(id_order):
+                ordered.append(st)
+    except Exception:
+        ordered = list(status_map.values())
+    GLOBAL_SERVER_DATA['servers_status'] = ordered
+    GLOBAL_SERVER_DATA['last_update'] = _utc_iso_now()
+
+
+def _run_refresh_job(job_id: str):
+    with REFRESH_JOBS_LOCK:
+        job = REFRESH_JOBS.get(job_id)
+        if not job:
+            return
+        job['state'] = 'running'
+        job['started_at'] = _utc_iso_now()
+
+    try:
+        with GLOBAL_REFRESH_LOCK:
+            GLOBAL_SERVER_DATA['is_updating'] = True
+            try:
+                mode = (job.get('mode') or 'full').strip().lower()
+                server_id = job.get('server_id')
+                force = bool(job.get('force'))
+
+                if mode == 'status':
+                    servers_q = Server.query.filter_by(enabled=True)
+                    if server_id:
+                        servers_q = servers_q.filter(Server.id == int(server_id))
+                    servers = servers_q.all()
+                    _update_reachability_status(servers, force=force)
+                else:
+                    if server_id:
+                        try:
+                            fetch_and_update_server_data(int(server_id))
+                            _backoff_record_success(int(server_id))
+                        except Exception as e:
+                            _backoff_record_failure(int(server_id), str(e))
+                            raise
+                    else:
+                        fetch_and_update_global_data(force=force)
+            finally:
+                GLOBAL_SERVER_DATA['is_updating'] = False
+
+        with REFRESH_JOBS_LOCK:
+            job = REFRESH_JOBS.get(job_id) or {}
+            job['state'] = 'done'
+            job['finished_at'] = _utc_iso_now()
+            REFRESH_JOBS[job_id] = job
+            _prune_refresh_jobs_locked()
+    except Exception as e:
+        with REFRESH_JOBS_LOCK:
+            job = REFRESH_JOBS.get(job_id) or {}
+            job['state'] = 'error'
+            job['error'] = str(e)
+            job['finished_at'] = _utc_iso_now()
+            REFRESH_JOBS[job_id] = job
+            _prune_refresh_jobs_locked()
+
+
+def enqueue_refresh_job(mode: str = 'full', server_id=None, force: bool = False):
+    mode_norm = (mode or 'full').strip().lower()
+    if mode_norm not in ('full', 'status'):
+        mode_norm = 'full'
+
+    sid = None
+    try:
+        if server_id not in (None, '', 'null'):
+            sid = int(server_id)
+    except Exception:
+        sid = None
+
+    scope_key = f"{mode_norm}:{sid if sid is not None else 'all'}"
+    with REFRESH_JOBS_LOCK:
+        for existing in REFRESH_JOBS.values():
+            if existing.get('scope_key') == scope_key and existing.get('state') in ('queued', 'running'):
+                return existing
+
+        job_id = secrets.token_hex(8)
+        job = {
+            'id': job_id,
+            'scope_key': scope_key,
+            'mode': mode_norm,
+            'server_id': sid,
+            'force': bool(force),
+            'state': 'queued',
+            'created_at': _utc_iso_now(),
+            'created_at_ts': time.time(),
+            'started_at': None,
+            'finished_at': None,
+            'progress': {},
+            'error': None,
+        }
+        REFRESH_JOBS[job_id] = job
+        _prune_refresh_jobs_locked()
+
+    t = threading.Thread(target=_run_refresh_job, args=(job_id,), daemon=True)
+    t.start()
+    return job
+
 
 def _recompute_global_stats_from_server_statuses(server_statuses):
     """Recompute aggregate stats from cached per-server stats."""
@@ -1364,7 +1605,8 @@ def get_xui_session(server):
     try:
         base, webpath = extract_base_and_webpath(server.host)
         login_url = f"{base}{webpath}/login"
-        login_resp = session_obj.post(login_url, data={"username": server.username, "password": server.password}, verify=False, timeout=10)
+        # Keep login timeout short so refresh endpoints stay responsive.
+        login_resp = session_obj.post(login_url, data={"username": server.username, "password": server.password}, verify=False, timeout=3)
         if login_resp.status_code == 200 and login_resp.json().get('success'):
             return session_obj, None
         return None, f"Login failed: {login_resp.status_code}"
@@ -1926,44 +2168,33 @@ def api_refresh():
     if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
         ensure_background_threads_started()
 
-    force = str(request.args.get('force', '')).lower() in ('1', 'true', 'yes')
-    wait = str(request.args.get('wait', '')).lower() in ('1', 'true', 'yes')
+    force = _parse_bool(request.args.get('force'))
+    wait = _parse_bool(request.args.get('wait'))
     server_id = request.args.get('server_id')
-    wait_timeout = 12.0
+    mode = (request.args.get('mode') or 'cache').strip().lower()
+    enqueue = request.args.get('enqueue')
+    enqueue = _parse_bool(enqueue) if enqueue is not None else (mode in ('full', 'status'))
+    wait_timeout = 2.0
 
-    # Optionally force-refresh the cache
-    # - If server_id is provided: refresh only that server
-    # - Otherwise: refresh all servers
-    if force:
-        if GLOBAL_REFRESH_LOCK.acquire(blocking=False):
-            try:
-                if not GLOBAL_SERVER_DATA.get('is_updating'):
-                    GLOBAL_SERVER_DATA['is_updating'] = True
-                    try:
-                        if server_id:
-                            fetch_and_update_server_data(int(server_id))
-                        else:
-                            fetch_and_update_global_data()
-                    finally:
-                        GLOBAL_SERVER_DATA['is_updating'] = False
-            finally:
-                GLOBAL_REFRESH_LOCK.release()
+    job = None
+    if enqueue and mode in ('full', 'status'):
+        job = enqueue_refresh_job(mode=mode, server_id=server_id, force=force)
 
-    if wait:
+    if wait and job:
         start = time.time()
-        while GLOBAL_SERVER_DATA.get('is_updating') and (time.time() - start) < wait_timeout:
-            time.sleep(0.2)
+        while (time.time() - start) < wait_timeout:
+            with REFRESH_JOBS_LOCK:
+                cur = REFRESH_JOBS.get(job.get('id'))
+                if cur and cur.get('state') in ('done', 'error'):
+                    job = cur
+                    break
+            time.sleep(0.15)
 
     data = copy.deepcopy(GLOBAL_SERVER_DATA)
-    
-    # If cache is empty, try a synchronous fetch once to avoid blank screen for superadmin
-    if not data.get('inbounds') and not GLOBAL_SERVER_DATA.get('is_updating'):
-        try:
-            fetch_and_update_global_data()
-            data = copy.deepcopy(GLOBAL_SERVER_DATA)
-        except Exception:
-            # fall back to empty response below
-            pass
+
+    # If cache is empty and nothing is running, kick off a refresh job (non-blocking)
+    if not data.get('inbounds') and not GLOBAL_SERVER_DATA.get('is_updating') and not job:
+        job = enqueue_refresh_job(mode='full', server_id=server_id, force=False)
     
     if not data.get('inbounds'):
         return jsonify({
@@ -1974,7 +2205,10 @@ def api_refresh():
                       "total_upload": "0 B", "total_download": "0 B"}, 
             "servers": [],
             "server_count": 0
-        })
+            ,
+            "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
+            "refresh_job": _summarize_job(job)
+        }), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
     user = db.session.get(Admin, session['admin_id'])
     
@@ -1987,8 +2221,10 @@ def api_refresh():
             "stats": data['stats'], 
             "servers": data['servers_status'],
             "server_count": len(data['servers_status']),
-            "last_update": data['last_update']
-        })
+            "last_update": data['last_update'],
+            "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
+            "refresh_job": _summarize_job(job)
+        }), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
     # === حالت ریسلر ===
     # 1. دریافت دسترسی‌های سرور و اینباند
@@ -2107,7 +2343,25 @@ def api_refresh():
         "stats": reseller_stats, 
         "servers": filtered_servers_status,
         "server_count": len(unique_server_ids),
-        "last_update": data['last_update']
+        "last_update": data['last_update'],
+        "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
+        "refresh_job": _summarize_job(job)
+    }), (202 if job and job.get('state') in ('queued', 'running') else 200)
+
+
+@app.route('/api/refresh/job/<job_id>')
+@login_required
+def api_refresh_job(job_id):
+    with REFRESH_JOBS_LOCK:
+        job = REFRESH_JOBS.get(job_id)
+        job_copy = copy.deepcopy(job) if job else None
+    if not job_copy:
+        return jsonify({"success": False, "error": "Job not found"}), 404
+    return jsonify({
+        "success": True,
+        "job": _summarize_job(job_copy),
+        "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
+        "last_update": GLOBAL_SERVER_DATA.get('last_update')
     })
 
 @app.route('/api/servers/list')
@@ -2132,39 +2386,51 @@ def api_refresh_single_server(server_id):
         if user.allowed_servers != '*' and str(server.id) not in user.allowed_servers.split(','):
              return jsonify({"success": False, "error": "Access denied"}), 403
 
-    allowed_map, assignments = get_reseller_access_maps(user) if user.role == 'reseller' else ('*', {})
+    # Non-blocking: enqueue a refresh job and return cached data immediately.
+    force = _parse_bool(request.args.get('force'))
+    wait = _parse_bool(request.args.get('wait'))
 
-    # Fetch data
-    server_dict = {
-        'id': server.id, 
-        'name': server.name, 
-        'host': server.host, 
-        'username': server.username, 
-        'password': server.password, 
-        'panel_type': server.panel_type,
-        'sub_port': server.sub_port,
-        'sub_path': server.sub_path,
-        'json_path': server.json_path
-    }
-    
-    _, inbounds, error, detected_type = fetch_worker(server_dict)
-    
-    if error:
-        return jsonify({"success": False, "server_id": server.id, "server_name": server.name, "error": error})
+    job = enqueue_refresh_job(mode='full', server_id=server.id, force=force)
 
-    if persist_detected_panel_type(server, detected_type):
-        app.logger.info(f"Detected panel type for server {server.id} as {detected_type}")
+    # Optional short wait for UI actions; cap to keep endpoint snappy.
+    if wait and job:
+        start = time.time()
+        while (time.time() - start) < 2.0:
+            with REFRESH_JOBS_LOCK:
+                cur = REFRESH_JOBS.get(job.get('id'))
+                if cur and cur.get('state') in ('done', 'error'):
+                    job = cur
+                    break
+            time.sleep(0.15)
 
-    processed_inbounds, stats = process_inbounds(inbounds, server, user, allowed_map, assignments)
-    
+    # Pull this server's cached block (if present)
+    cached_inbounds = []
+    for inbound in (GLOBAL_SERVER_DATA.get('inbounds') or []):
+        try:
+            if int(inbound.get('server_id', -1)) == int(server.id):
+                cached_inbounds.append(inbound)
+        except Exception:
+            continue
+
+    cached_stats = None
+    for st in (GLOBAL_SERVER_DATA.get('servers_status') or []):
+        try:
+            if int(st.get('server_id', -1)) == int(server.id):
+                cached_stats = st.get('stats')
+                break
+        except Exception:
+            continue
+
     return jsonify({
-        "success": True, 
-        "server_id": server.id, 
+        "success": True,
+        "server_id": server.id,
         "server_name": server.name,
-        "inbounds": processed_inbounds, 
-        "stats": stats,
-        "panel_type": server.panel_type
-    })
+        "inbounds": cached_inbounds,
+        "stats": cached_stats or {},
+        "panel_type": server.panel_type,
+        "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
+        "refresh_job": _summarize_job(job)
+    }), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
 
 @app.route('/settings')
@@ -5623,66 +5889,154 @@ def background_data_fetcher():
     with app.app_context():
         ensure_background_threads_started()
         while True:
-            fetch_and_update_global_data()
+            # Avoid overlapping with a manual refresh job.
+            if GLOBAL_REFRESH_LOCK.acquire(blocking=False):
+                try:
+                    fetch_and_update_global_data(force=False)
+                finally:
+                    try:
+                        GLOBAL_REFRESH_LOCK.release()
+                    except Exception:
+                        pass
             time.sleep(30)
 
 
-def fetch_and_update_global_data():
+def fetch_and_update_global_data(force: bool = False, server_ids=None):
     """یک بار داده‌ها را از سرورها واکشی و در RAM به‌روزرسانی می‌کند."""
     try:
         GLOBAL_SERVER_DATA['is_updating'] = True
 
-        servers = Server.query.filter_by(enabled=True).all()
+        servers_q = Server.query.filter_by(enabled=True)
+        if server_ids:
+            try:
+                ids = [int(x) for x in (server_ids or [])]
+                servers_q = servers_q.filter(Server.id.in_(ids))
+            except Exception:
+                pass
+
+        servers = servers_q.all()
+
+        now_ts = time.time()
+        skipped_ids = set()
+        if not force:
+            for s in servers:
+                try:
+                    if _backoff_should_skip(int(s.id), now_ts):
+                        skipped_ids.add(int(s.id))
+                except Exception:
+                    continue
 
         server_dicts = [{
             'id': s.id, 'name': s.name, 'host': s.host,
             'username': s.username, 'password': s.password,
             'panel_type': s.panel_type, 'sub_port': s.sub_port,
             'sub_path': s.sub_path, 'json_path': s.json_path
-        } for s in servers]
+        } for s in servers if int(s.id) not in skipped_ids]
 
         results = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
-            for future in concurrent.futures.as_completed(future_to_id):
-                results.append(future.result())
+        if server_dicts:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
+                for future in concurrent.futures.as_completed(future_to_id):
+                    results.append(future.result())
 
-        all_inbounds = []
-        total_stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "upload_raw": 0, "download_raw": 0}
-        server_statuses = []
+        results_by_id = {r[0]: r for r in results if isinstance(r, tuple) and len(r) >= 4}
+
+        existing_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+        existing_by_server = defaultdict(list)
+        for inbound in existing_inbounds:
+            try:
+                sid = int(inbound.get('server_id', -1))
+                if sid > 0:
+                    existing_by_server[sid].append(inbound)
+            except Exception:
+                continue
+
+        existing_statuses = GLOBAL_SERVER_DATA.get('servers_status') or []
+        status_map = {}
+        for st in existing_statuses:
+            try:
+                if isinstance(st, dict) and 'server_id' in st:
+                    status_map[int(st.get('server_id'))] = st
+            except Exception:
+                continue
 
         admin_user = Admin.query.filter(or_(Admin.is_superadmin == True, Admin.role == 'superadmin')).first()
         if not admin_user:
             admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
 
+        now_iso = _utc_iso_now()
+        new_by_server = dict(existing_by_server)
+
         for srv in servers:
-            res = next((r for r in results if r[0] == srv.id), (srv.id, None, "Timeout", 'auto'))
+            sid = int(srv.id)
+
+            if sid in skipped_ids:
+                info = _backoff_get(sid)
+                st = status_map.get(sid) or {"server_id": sid}
+                st['reachable'] = False
+                st['reachable_error'] = (info.get('last_error') or 'Backoff')
+                st['reachable_checked_at'] = now_iso
+                st['backoff_until'] = int(info.get('next_allowed_at', 0) or 0)
+                status_map[sid] = st
+                continue
+
+            res = results_by_id.get(sid) or (sid, None, "Timeout", 'auto')
             _, inbounds, error, detected_type = res
 
             if error:
-                server_statuses.append({"server_id": srv.id, "success": False, "error": error})
+                _backoff_record_failure(sid, error)
+                st = status_map.get(sid) or {"server_id": sid}
+                # Keep cached stats if present to avoid UI dropping counts.
+                if isinstance(st.get('stats'), dict) and st.get('stats'):
+                    st['success'] = True
+                else:
+                    st['success'] = False
+                st['error'] = error
+                st['reachable'] = False
+                st['reachable_error'] = error
+                st['reachable_checked_at'] = now_iso
+                status_map[sid] = st
+                # keep existing inbounds block (if any)
                 continue
+
+            _backoff_record_success(sid)
 
             if persist_detected_panel_type(srv, detected_type):
                 app.logger.info(f"Detected panel type for server {srv.id} as {detected_type}")
 
             processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {})
-            all_inbounds.extend(processed)
+            new_by_server[sid] = list(processed or [])
 
-            for k in total_stats:
-                if k in stats and isinstance(total_stats[k], int):
-                    total_stats[k] += stats[k]
+            st = status_map.get(sid) or {"server_id": sid}
+            st.update({
+                "server_id": sid,
+                "success": True,
+                "stats": stats,
+                "panel_type": srv.panel_type,
+                "reachable": True,
+                "reachable_error": None,
+                "reachable_checked_at": now_iso,
+                "error": None
+            })
+            status_map[sid] = st
 
-            server_statuses.append({"server_id": srv.id, "success": True, "stats": stats, "panel_type": srv.panel_type})
+        # Flatten inbounds in stable order (server order)
+        all_inbounds = []
+        for srv in servers:
+            all_inbounds.extend(new_by_server.get(int(srv.id), []))
 
-        total_stats["total_upload"] = format_bytes(total_stats["upload_raw"])
-        total_stats["total_download"] = format_bytes(total_stats["download_raw"])
-        total_stats["total_traffic"] = format_bytes(total_stats["upload_raw"] + total_stats["download_raw"])
+        server_statuses = []
+        for srv in servers:
+            sid = int(srv.id)
+            server_statuses.append(status_map.get(sid) or {"server_id": sid, "success": False, "error": "No data"})
+
+        total_stats = _recompute_global_stats_from_server_statuses(server_statuses)
 
         GLOBAL_SERVER_DATA['inbounds'] = all_inbounds
         GLOBAL_SERVER_DATA['stats'] = total_stats
         GLOBAL_SERVER_DATA['servers_status'] = server_statuses
-        GLOBAL_SERVER_DATA['last_update'] = datetime.utcnow().isoformat()
+        GLOBAL_SERVER_DATA['last_update'] = now_iso
 
     except Exception as e:
         print(f"Background fetch error: {e}")

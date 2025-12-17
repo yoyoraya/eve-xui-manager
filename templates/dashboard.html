@@ -825,6 +825,8 @@
     let allInboundsData = [];
     let pendingServers = [];
     let refreshController = null;
+    let activeRefreshJobId = null;
+    let refreshJobPollTimer = null;
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
 
     const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days
@@ -845,7 +847,8 @@
         syncExpiryFilterCheckboxes();
         // Load servers first to know if we have any
         loadServers().then(() => {
-            refreshData(true).then(() => hideLoading());
+            // Kick off a background refresh (non-blocking) and render cached data immediately.
+            refreshData(true, { mode: 'full', poll: true }).finally(() => hideLoading());
         });
         document.getElementById('global-search-input').addEventListener('input', () => performGlobalSearch(false));
         if (IS_SUPERADMIN) loadResellersForModal();
@@ -870,7 +873,8 @@
     function startAutoRefresh() {
         stopAutoRefresh();
         const interval = parseInt(document.getElementById('refresh-interval').value) * 1000;
-        autoRefreshInterval = setInterval(() => refreshData(true), interval);
+        // Auto refresh should be lightweight: fetch cached payload only.
+        autoRefreshInterval = setInterval(() => refreshData(true, { mode: 'cache', poll: false }), interval);
     }
 
     function stopAutoRefresh() {
@@ -890,7 +894,7 @@
         const now = Date.now();
 
         const existing = postActionRefreshState.get(key) || { nextAllowedAt: 0, timer: null };
-        const run = () => refreshData(true, { force: true, wait: true, serverId: serverId || null });
+        const run = () => refreshData(true, { mode: 'full', force: true, poll: true, serverId: serverId || null });
 
         if (now >= existing.nextAllowedAt) {
             if (existing.timer) {
@@ -915,12 +919,66 @@
         postActionRefreshState.set(key, existing);
     }
 
+    function stopRefreshJobPolling() {
+        activeRefreshJobId = null;
+        if (refreshJobPollTimer) {
+            clearTimeout(refreshJobPollTimer);
+            refreshJobPollTimer = null;
+        }
+    }
+
+    function startRefreshJobPolling(jobId, { showErrors = false } = {}) {
+        if (!jobId) return;
+        if (activeRefreshJobId === jobId) return;
+        activeRefreshJobId = jobId;
+
+        if (refreshJobPollTimer) {
+            clearTimeout(refreshJobPollTimer);
+            refreshJobPollTimer = null;
+        }
+
+        const pollOnce = async () => {
+            if (!activeRefreshJobId) return;
+            try {
+                const resp = await fetch(`/api/refresh/job/${encodeURIComponent(activeRefreshJobId)}`);
+                const payload = await resp.json();
+                if (!payload || !payload.success || !payload.job) {
+                    throw new Error(payload?.error || 'Failed to poll refresh job');
+                }
+
+                const state = payload.job.state;
+                if (state === 'done') {
+                    const doneId = activeRefreshJobId;
+                    stopRefreshJobPolling();
+                    // Pull latest cached snapshot after refresh completes.
+                    await refreshData(true, { mode: 'cache', poll: false });
+                    return;
+                }
+
+                if (state === 'error') {
+                    const err = payload.job.error || 'Refresh failed';
+                    stopRefreshJobPolling();
+                    if (showErrors) showToast(err, 'error');
+                    return;
+                }
+            } catch (e) {
+                // Keep polling; network hiccups shouldn't break the UI.
+            }
+
+            refreshJobPollTimer = setTimeout(pollOnce, 900);
+        };
+
+        pollOnce();
+    }
+
     async function refreshData(isSilent = false, options = {}) {
         const refreshBtn = document.querySelector('.header-controls .btn-primary');
 
         const force = Boolean(options && options.force);
-        const wait = Boolean(options && options.wait);
         const serverId = (options && (options.serverId !== undefined)) ? options.serverId : null;
+        const poll = (options && options.poll !== undefined) ? Boolean(options.poll) : true;
+        const mode = (options && options.mode) ? String(options.mode) : (isSilent ? 'cache' : 'full');
+        const enqueue = (options && options.enqueue !== undefined) ? Boolean(options.enqueue) : (mode !== 'cache');
         
         // Cancel previous request if it exists
         if (refreshController) {
@@ -944,7 +1002,8 @@
         try {
             const params = new URLSearchParams();
             if (force) params.set('force', '1');
-            if (wait) params.set('wait', '1');
+            if (mode) params.set('mode', mode);
+            if (enqueue) params.set('enqueue', '1');
             if (serverId !== null && serverId !== '' && serverId !== undefined) params.set('server_id', String(serverId));
             const qs = params.toString() ? `?${params.toString()}` : '';
             const response = await fetch(`/api/refresh${qs}`, { signal });
@@ -960,8 +1019,20 @@
 
                 updateStats(data.stats, data.servers ? data.servers.length : 0);
                 applyFilters();
-                
-                if (!isSilent) showToast('Data updated successfully');
+
+                const jobId = data.refresh_job && data.refresh_job.id;
+                const jobState = data.refresh_job && data.refresh_job.state;
+                if (jobId && poll) {
+                    startRefreshJobPolling(jobId, { showErrors: !isSilent });
+                }
+
+                if (!isSilent) {
+                    if (jobId && (jobState === 'queued' || jobState === 'running')) {
+                        showToast('Refresh started');
+                    } else {
+                        showToast('Data updated successfully');
+                    }
+                }
                 
                 // If there is an active search, re-run it
                 const searchInput = document.getElementById('global-search-input');

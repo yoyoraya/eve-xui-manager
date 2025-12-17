@@ -501,12 +501,57 @@
     let serverInbounds = {};
     let serversLoaded = false;
     let inboundsLoaded = false;
+    let activeRefreshJobId = null;
+    let refreshJobPollTimer = null;
     
     document.addEventListener('DOMContentLoaded', () => {
         loadAdmins();
         loadServers();
         loadInbounds();
     });
+
+    function stopRefreshJobPolling() {
+        activeRefreshJobId = null;
+        if (refreshJobPollTimer) {
+            clearTimeout(refreshJobPollTimer);
+            refreshJobPollTimer = null;
+        }
+    }
+
+    function startRefreshJobPolling(jobId) {
+        if (!jobId) return;
+        if (activeRefreshJobId === jobId) return;
+        activeRefreshJobId = jobId;
+
+        if (refreshJobPollTimer) {
+            clearTimeout(refreshJobPollTimer);
+            refreshJobPollTimer = null;
+        }
+
+        const pollOnce = async () => {
+            if (!activeRefreshJobId) return;
+            try {
+                const resp = await fetch(`/api/refresh/job/${encodeURIComponent(activeRefreshJobId)}`);
+                const payload = await resp.json();
+                if (payload && payload.success && payload.job) {
+                    if (payload.job.state === 'done') {
+                        stopRefreshJobPolling();
+                        await loadInbounds(true);
+                        return;
+                    }
+                    if (payload.job.state === 'error') {
+                        stopRefreshJobPolling();
+                        return;
+                    }
+                }
+            } catch (e) {
+                // keep polling
+            }
+            refreshJobPollTimer = setTimeout(pollOnce, 900);
+        };
+
+        pollOnce();
+    }
     
     function toggleResellerFields() {
         const role = document.getElementById('admin-role').value;
@@ -529,9 +574,10 @@
         }
     }
 
-    async function loadInbounds() {
+    async function loadInbounds(cacheOnly = false) {
         try {
-            const response = await fetch('/api/refresh');
+            const url = cacheOnly ? '/api/refresh?mode=cache&enqueue=0' : '/api/refresh?mode=full';
+            const response = await fetch(url);
             const data = await response.json();
             if (data && data.inbounds) {
                 serverInbounds = data.inbounds.reduce((acc, inbound) => {
@@ -542,6 +588,11 @@
                 }, {});
                 inboundsLoaded = true;
                 renderServerList();
+
+                const jobId = data.refresh_job && data.refresh_job.id;
+                if (!cacheOnly && jobId) {
+                    startRefreshJobPolling(jobId);
+                }
             }
         } catch (error) {
             console.error('Error loading inbounds:', error);
