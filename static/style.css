@@ -37,6 +37,15 @@ body {
     direction: ltr;
 }
 
+/* Dashboard: ultra-fast disabled filters (no re-render) */
+#inbounds-container.filter-hide-disabled tr.disabled-row {
+    display: none;
+}
+
+#inbounds-container.filter-disabled-only tr:not(.disabled-row) {
+    display: none;
+}
+
 
 
 .app-layout {

@@ -209,13 +209,13 @@
 
             <!-- Hide Disabled Filter -->
             <label class="filter-toggle" title="Hide Disabled Clients">
-                <input type="checkbox" id="hide-disabled-filter" onchange="applyFilters()">
+                <input type="checkbox" id="hide-disabled-filter" onchange="applyDisabledVisibility()">
                 <span class="toggle-track"></span>
                 <span class="toggle-text">Hide Disabled</span>
             </label>
 
             <label class="filter-toggle" title="Show Disabled Clients Only">
-                <input type="checkbox" id="disabled-only-filter" onchange="applyFilters()">
+                <input type="checkbox" id="disabled-only-filter" onchange="applyDisabledVisibility()">
                 <span class="toggle-track"></span>
                 <span class="toggle-text">Disabled only</span>
             </label>
@@ -2543,7 +2543,9 @@
         }
     });
 
-    function applyFilters() {
+    function applyDisabledVisibility() {
+        const container = document.getElementById('inbounds-container');
+
         const disabledOnlyEl = document.getElementById('disabled-only-filter');
         disabledOnlyClients = Boolean(disabledOnlyEl && disabledOnlyEl.checked);
 
@@ -2555,6 +2557,16 @@
             hideDisabledClients = false;
             if (hideDisabledEl) hideDisabledEl.checked = false;
         }
+
+        if (container) {
+            container.classList.toggle('filter-hide-disabled', hideDisabledClients);
+            container.classList.toggle('filter-disabled-only', disabledOnlyClients);
+        }
+    }
+
+    function applyFilters() {
+        // Keep container CSS state in sync even when other filters re-run
+        applyDisabledVisibility();
         
         // If we have search results, filter them
         const searchResultsDiv = document.getElementById('search-results');
@@ -2587,18 +2599,10 @@
             filtered = filtered.filter(i => selectedServerIds.has(i.server_id));
         }
         
-        // 2. Filter clients (Hide Disabled / Disabled Only + Expiry)
-        if (hideDisabledClients || disabledOnlyClients || (selectedExpiryFilters && selectedExpiryFilters.size > 0)) {
+        // 2. Filter clients (Expiry)
+        if (selectedExpiryFilters && selectedExpiryFilters.size > 0) {
             filtered = filtered.map(inbound => {
                 let clients = inbound.clients;
-
-                if (hideDisabledClients) {
-                    clients = clients.filter(c => c.enable);
-                }
-
-                if (disabledOnlyClients) {
-                    clients = clients.filter(c => !c.enable);
-                }
 
                 if (selectedExpiryFilters && selectedExpiryFilters.size > 0) {
                     clients = clients.filter(matchesExpiryFilter);
@@ -2860,16 +2864,6 @@
             filteredResults = filteredResults.filter(r => selectedServerIds.has(r.server_id));
         }
         
-        // Filter by Hide Disabled
-        if (hideDisabledClients) {
-            filteredResults = filteredResults.filter(r => r.client.enable);
-        }
-
-        // Filter by Disabled Only
-        if (disabledOnlyClients) {
-            filteredResults = filteredResults.filter(r => !r.client.enable);
-        }
-
         // Filter by Expiry
         if (selectedExpiryFilters && selectedExpiryFilters.size > 0) {
             filteredResults = filteredResults.filter(r => matchesExpiryFilter(r.client));
@@ -2890,6 +2884,8 @@
         searchResultsText.textContent = `Found ${filteredResults.length} client(s) matching "${query}"` + (results.length !== filteredResults.length ? ` (filtered from ${results.length})` : '');
         
         updateInboundsFiltered(filteredResults);
+        // Apply CSS-only disabled visibility to rendered rows
+        applyDisabledVisibility();
     }
 
     function updateInboundsFiltered(filteredResults) {
