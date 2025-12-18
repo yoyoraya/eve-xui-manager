@@ -46,6 +46,37 @@ body {
     display: none;
 }
 
+/* Dashboard: skeleton loading (UX improvement over spinner) */
+@keyframes skeleton-loading {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--bg-card) 25%,
+        var(--bg-card-hover) 50%,
+        var(--bg-card) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.4s infinite;
+}
+
+.skeleton-line {
+    height: 12px;
+    border-radius: 8px;
+}
+
+.skeleton-pill {
+    height: 22px;
+    border-radius: 999px;
+}
+
+.dashboard-skeleton-card {
+    border: 1px solid var(--border-color);
+}
+
 
 
 .app-layout {

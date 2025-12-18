@@ -842,8 +842,37 @@
     const BASE_COST_DAY = {{ base_cost_day|default(0) }};
     const BASE_COST_GB = {{ base_cost_gb|default(0) }};
 
+    function showDashboardSkeleton(count = 3) {
+        const container = document.getElementById('inbounds-container');
+        if (!container) return;
+
+        const n = Math.max(1, Math.min(8, parseInt(count) || 3));
+        container.innerHTML = Array.from({ length: n }).map(() => `
+            <div class="inbound-card dashboard-skeleton-card">
+                <div class="inbound-header">
+                    <div class="inbound-title" style="gap: 10px; align-items: center;">
+                        <div class="skeleton skeleton-pill" style="width: 64px;"></div>
+                        <div class="skeleton skeleton-line" style="width: 180px; height: 16px;"></div>
+                        <div class="skeleton skeleton-pill" style="width: 56px;"></div>
+                        <div class="skeleton skeleton-pill" style="width: 96px;"></div>
+                    </div>
+                    <div class="inbound-status">
+                        <div class="skeleton skeleton-pill" style="width: 78px; height: 26px;"></div>
+                    </div>
+                </div>
+                <div class="inbound-meta-compact" style="gap: 10px;">
+                    <div class="skeleton skeleton-pill" style="width: 120px; height: 18px;"></div>
+                    <div class="skeleton skeleton-pill" style="width: 110px; height: 18px;"></div>
+                    <div class="skeleton skeleton-pill" style="width: 90px; height: 18px;"></div>
+                    <div class="skeleton skeleton-pill" style="width: 160px; height: 18px;"></div>
+                </div>
+            </div>
+        `).join('');
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
-        showLoading();
+        // Prefer skeleton placeholders over a blocking spinner overlay.
+        showDashboardSkeleton();
         updateExpiryFilterLabel();
         updateExpiryFilterCount();
         syncExpiryFilterCheckboxes();
@@ -1129,7 +1158,7 @@
                 refreshBtn.disabled = true;
                 refreshBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px; border-width: 2px; border-color: rgba(255,255,255,0.2); border-top-color: white;"></div> Refreshing';
             } else {
-                showLoading();
+                showDashboardSkeleton();
             }
         }
         
@@ -1211,7 +1240,7 @@
         if (allServers && allServers.length > 0) {
             const container = document.getElementById('inbounds-container');
             // Only replace if it's currently showing the empty state or nothing
-            if (container.querySelector('.empty-state') || container.innerHTML.trim() === '') {
+            if (container.querySelector('.empty-state') || container.querySelector('.dashboard-skeleton-card') || container.innerHTML.trim() === '') {
                 container.innerHTML = `
                     <div class="empty-state">
                         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
