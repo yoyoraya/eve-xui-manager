@@ -4916,13 +4916,35 @@ def client_subscription(server_id, sub_id):
         return "Subscription not found", 404
 
     client_email = target_client.get('email') or f"user-{normalized_sub_id}"
-    client_stats = target_inbound.get('clientStats') or []
-    up = down = 0
-    for stat in client_stats:
-        if stat.get('email') == target_client.get('email'):
-            up = stat.get('up', 0) or 0
-            down = stat.get('down', 0) or 0
-            break
+
+    def _to_int_or_none(value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return int(value)
+        try:
+            return int(value)
+        except Exception:
+            try:
+                return int(float(str(value).strip()))
+            except Exception:
+                return None
+
+    # Cache path typically stores traffic directly on the client object,
+    # while live-fetch path exposes traffic via inbound.clientStats.
+    up = _to_int_or_none(target_client.get('up'))
+    down = _to_int_or_none(target_client.get('down'))
+
+    if up is None or down is None:
+        client_stats = target_inbound.get('clientStats') or []
+        for stat in client_stats:
+            if stat.get('email') == target_client.get('email'):
+                up = _to_int_or_none(stat.get('up'))
+                down = _to_int_or_none(stat.get('down'))
+                break
+
+    up = up or 0
+    down = down or 0
 
     total_used = (up or 0) + (down or 0)
     try:
