@@ -497,11 +497,21 @@
                         <small style="color: var(--text-secondary);">Adjust to charge the correct amount for this reset.</small>
                     </div>
 
-                    <div class="reset-cost-box">
-                        <span>Wallet Deduction</span>
-                        <div>
-                            <strong id="reset-cost">0</strong>
-                            <span class="wallet-currency">T</span>
+                    <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; align-items: stretch; margin-bottom: 15px;">
+                        <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="reset-free-toggle" onchange="updateResetCost()">
+                                <span class="slider"></span>
+                            </div>
+                            <span>Free</span>
+                        </label>
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(74, 222, 128, 0.3); padding: 8px 12px; border-radius: 8px; margin: 0; min-width: 0;">
+                            <span style="font-size: 0.9rem; color: #4ade80;">Payable</span>
+                            <div style="color: #4ade80; display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; justify-content: flex-end;">
+                                <strong id="reset-cost" style="font-size: 1.1rem;">0</strong>
+                                <span class="wallet-currency" style="font-size: 0.8rem;">T</span>
+                            </div>
                         </div>
                     </div>
                     
@@ -578,11 +588,11 @@
 
             <div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 15px;">
                 <div class="form-group" style="flex:1; margin-bottom: 0;">
-                    <label>Duration (Days)</label>
-                    <input type="number" id="custom-days" class="form-input" value="30" min="1" max="365" oninput="calculateCustomPrice()">
+                    <label>Duration (Days) <small style="color: var(--text-secondary); font-weight: normal;">(0 = Unlimited ∞)</small></label>
+                    <input type="number" id="custom-days" class="form-input" value="30" min="0" max="365" oninput="calculateCustomPrice()">
                 </div>
                 <div class="form-group" style="flex:1; margin-bottom: 0;">
-                    <label>Volume (GB)</label>
+                    <label>Volume (GB) <small style="color: var(--text-secondary); font-weight: normal;">(0 = Unlimited ∞)</small></label>
                     <input type="number" id="custom-volume" class="form-input" value="10" min="0" max="10000" oninput="calculateCustomPrice()">
                 </div>
                 <div style="flex: 1.5; background: rgba(255,255,255,0.05); padding: 0 12px; border-radius: 8px; height: 42px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-color);">
@@ -1623,6 +1633,10 @@
         const defaultGb = bytesToGB(totalBytes) || 50;
         const volInput = document.getElementById('reset-volume');
         volInput.value = defaultGb;
+        
+        const freeToggle = document.getElementById('reset-free-toggle');
+        if (freeToggle) freeToggle.checked = false;
+
         updateResetCost();
         document.getElementById('reset-modal').classList.remove('hidden');
     }
@@ -1637,7 +1651,10 @@
         let volume = parseInt(volInput.value) || 0;
         if (volume < 0) volume = 0;
         volInput.value = volume;
-        const cost = volume * BASE_COST_GB;
+        
+        const isFree = document.getElementById('reset-free-toggle')?.checked || false;
+        const cost = isFree ? 0 : (volume * BASE_COST_GB);
+        
         const costLabel = document.getElementById('reset-cost');
         if (costLabel) costLabel.textContent = Number(cost).toLocaleString();
     }
@@ -1647,10 +1664,11 @@
         const inboundId = document.getElementById('reset-inbound-id').value;
         const email = document.getElementById('reset-email').value;
         const volume = parseInt(document.getElementById('reset-volume').value) || 0;
+        const isFree = document.getElementById('reset-free-toggle')?.checked || false;
         const senderCard = document.getElementById('reset-sender-card')?.value?.trim() || '';
         const destCardId = document.getElementById('reset-dest-card')?.value || '';
 
-        if (USER_ROLE === 'reseller' && BASE_COST_GB > 0 && volume <= 0) {
+        if (!isFree && USER_ROLE === 'reseller' && BASE_COST_GB > 0 && volume <= 0) {
             showToast('Please enter billable volume (GB)', 'error');
             return;
         }
@@ -1662,6 +1680,7 @@
                 body: JSON.stringify({ 
                     email: email, 
                     volume_gb: volume,
+                    is_free: isFree,
                     sender_card: senderCard,
                     card_id: destCardId ? parseInt(destCardId) : null
                 })

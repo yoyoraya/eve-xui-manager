@@ -2679,13 +2679,17 @@ def reset_client_traffic(server_id, inbound_id):
     base_cost_gb = get_config('cost_per_gb', 0)
     user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
     
-    charge_amount = volume_gb * user_cost_gb if volume_gb > 0 else 0
+    is_free = bool(data.get('is_free', False))
+    if is_free:
+        charge_amount = 0
+    else:
+        charge_amount = volume_gb * user_cost_gb if volume_gb > 0 else 0
 
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
         if not ownership:
             return jsonify({"success": False, "error": "Access denied"}), 403
-        if user_cost_gb > 0 and volume_gb <= 0:
+        if not is_free and user_cost_gb > 0 and volume_gb <= 0:
             return jsonify({"success": False, "error": "Billable volume required"}), 400
         if charge_amount > user.credit:
             return jsonify({"success": False, "error": f"Insufficient credit. Required: {charge_amount}, Available: {user.credit}"}), 402
