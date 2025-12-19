@@ -2976,8 +2976,9 @@ def renew_client(server_id, inbound_id, email):
             volume_gb_to_add = int(data.get('volume', 0))
             if volume_gb_to_add < 0:
                 volume_gb_to_add = 0
-            if days_to_add <= 0:
-                return jsonify({"success": False, "error": "Days must be positive"}), 400
+            if days_to_add < 0:
+                days_to_add = 0
+            # 0 days or 0 volume means unlimited; allowed for unlimited users
             
             base_cost_day = get_config('cost_per_day', 0)
             base_cost_gb = get_config('cost_per_gb', 0)
@@ -2986,7 +2987,9 @@ def renew_client(server_id, inbound_id, email):
             user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
             
             price = (days_to_add * user_cost_day) + (volume_gb_to_add * user_cost_gb)
-            description = f"Renew Custom: {days_to_add} Days, {volume_gb_to_add} GB - {email}"
+            days_label = f"{days_to_add} Days" if days_to_add > 0 else "Unlimited Days"
+            vol_label = f"{volume_gb_to_add} GB" if volume_gb_to_add > 0 else "Unlimited Volume"
+            description = f"Renew Custom: {days_label}, {vol_label} - {email}"
     except (ValueError, TypeError):
         return jsonify({"success": False, "error": "Invalid data"}), 400
 
@@ -3015,7 +3018,10 @@ def renew_client(server_id, inbound_id, email):
             return jsonify({"success": False, "error": "Client not found"}), 404
         
         # Calculate new expiry
-        if start_after_first_use:
+        if days_to_add == 0:
+            # 0 days = unlimited expiry
+            new_expiry = 0
+        elif start_after_first_use:
             new_expiry = -1 * (days_to_add * 86400000)
         else:
             current_expiry = target_client.get('expiryTime', 0)
@@ -3032,13 +3038,21 @@ def renew_client(server_id, inbound_id, email):
         if reset_traffic:
             target_client['up'] = 0
             target_client['down'] = 0
-            # If resetting, set limit to new volume (if adding volume) or keep current (if just extending time)
+            # If resetting, set limit to new volume (0 = unlimited)
             if volume_gb_to_add > 0:
                 new_volume = volume_gb_to_add * 1024 * 1024 * 1024
+            elif volume_gb_to_add == 0:
+                new_volume = 0  # unlimited
             else:
                 new_volume = current_volume
         else:
-            new_volume = current_volume + (volume_gb_to_add * 1024 * 1024 * 1024) if volume_gb_to_add > 0 else current_volume
+            # When adding volume: 0 means set to unlimited, >0 means add to current
+            if volume_gb_to_add == 0:
+                new_volume = 0  # unlimited
+            elif volume_gb_to_add > 0:
+                new_volume = current_volume + (volume_gb_to_add * 1024 * 1024 * 1024)
+            else:
+                new_volume = current_volume
         
         # Update client
         target_client['expiryTime'] = new_expiry

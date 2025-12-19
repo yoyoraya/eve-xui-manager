@@ -384,11 +384,11 @@
 
             <div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 15px;">
                 <div class="form-group" style="flex:1; margin-bottom: 0;">
-                    <label>Duration (Days)</label>
-                    <input type="number" id="renew-custom-days" class="form-input" value="30" min="1" max="365" oninput="calculateRenewCustomPrice()">
+                    <label>Duration (Days) <small style="color: var(--text-secondary); font-weight: normal;">(0 = Unlimited ∞)</small></label>
+                    <input type="number" id="renew-custom-days" class="form-input" value="30" min="0" max="365" oninput="calculateRenewCustomPrice()">
                 </div>
                 <div class="form-group" style="flex:1; margin-bottom: 0;">
-                    <label>Volume (GB)</label>
+                    <label>Volume (GB) <small style="color: var(--text-secondary); font-weight: normal;">(0 = Unlimited ∞)</small></label>
                     <input type="number" id="renew-custom-volume" class="form-input" value="10" min="0" max="10000" oninput="calculateRenewCustomPrice()">
                 </div>
                 <div style="flex: 1.5; background: rgba(255,255,255,0.05); padding: 0 12px; border-radius: 8px; height: 42px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-color);">
@@ -1797,10 +1797,7 @@
         } else {
             const customDays = parseInt(document.getElementById('renew-custom-days').value) || 0;
             const customVolume = parseInt(document.getElementById('renew-custom-volume').value) || 0;
-            if (customDays <= 0) {
-                showToast('Days must be greater than 0', 'error');
-                return;
-            }
+            // 0 days or 0 volume is valid and means unlimited
             payload.days = customDays;
             payload.volume = customVolume;
         }
@@ -2009,7 +2006,7 @@
         let vol = parseInt(document.getElementById('renew-custom-volume').value) || 0;
         if (days < 0) days = 0;
         if (vol < 0) vol = 0;
-        // BASE_COST_DAY and BASE_COST_GB are now user-specific (calculated in backend)
+        // 0 days or 0 volume means unlimited (no charge for unlimited)
         return (days * BASE_COST_DAY) + (vol * BASE_COST_GB);
     }
 
