@@ -377,7 +377,7 @@
             <div style="display: flex; gap: 10px;">
                 <div class="form-group" style="flex: 1;">
                     <label>Username</label>
-                    <input type="text" id="admin-username" placeholder="Username">
+                    <input type="text" id="admin-username" placeholder="Username" oninput="this.value = this.value.toLowerCase().replace(/\s/g, '').replace(/[\u0600-\u06FF]/g, '')">
                 </div>
                 
                 <div class="form-group" style="flex: 1;">
@@ -1110,8 +1110,11 @@
         const costDayRaw = document.getElementById('admin-cost-day').value.replace(/,/g, '');
         const costGbRaw = document.getElementById('admin-cost-gb').value.replace(/,/g, '');
 
+        let username = document.getElementById('admin-username').value.trim().toLowerCase();
+        username = username.replace(/\s/g, '').replace(/[\u0600-\u06FF]/g, '');
+
         const data = {
-            username: document.getElementById('admin-username').value,
+            username: username,
             password: document.getElementById('admin-password').value,
             role: role,
             telegram_id: document.getElementById('admin-telegram-id').value,

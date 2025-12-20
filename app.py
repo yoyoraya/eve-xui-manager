@@ -2108,7 +2108,8 @@ def login():
     if 'admin_id' in session: return redirect(url_for('dashboard'))
     if request.method == 'POST':
         data = request.form if request.form else request.json
-        user = Admin.query.filter_by(username=data.get('username'), enabled=True).first()
+        username = data.get('username', '').strip().lower()
+        user = Admin.query.filter_by(username=username, enabled=True).first()
         if user and user.check_password(data.get('password')):
             session.permanent = True
             session['admin_id'] = user.id
@@ -2759,14 +2760,22 @@ def reset_client_traffic(server_id, inbound_id):
 @login_required
 def edit_client(server_id, inbound_id, email):
     user = db.session.get(Admin, session['admin_id'])
-    if not user or not user.is_superadmin:
-        return jsonify({"success": False, "error": "Access denied"}), 403
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
     
     server = Server.query.get_or_404(server_id)
+    
+    # Check ownership for resellers
+    if user.role == 'reseller':
+        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
+        if not ownership:
+            return jsonify({"success": False, "error": "Access denied"}), 403
     
     try:
         data = request.get_json() or {}
         new_email = data.get('new_email', '').strip()
+        new_total_gb = data.get('totalGB')
+        new_expiry_time = data.get('expiryTime')
     except:
         return jsonify({"success": False, "error": "Invalid data"}), 400
 
@@ -2788,11 +2797,38 @@ def edit_client(server_id, inbound_id, email):
         if not target_client:
             return jsonify({"success": False, "error": "Client not found"}), 404
             
+        # Check for duplicate email on the same server (excluding current client)
+        if new_email != email:
+            for ib in inbounds:
+                settings = ib.get('settings', '{}')
+                if isinstance(settings, str):
+                    try:
+                        settings = json.loads(settings)
+                    except:
+                        settings = {}
+                clients = settings.get('clients', [])
+                for c in clients:
+                    if c.get('email') == new_email:
+                        return jsonify({"success": False, "error": f"Client with email '{new_email}' already exists on this server."}), 400
+
         # Extract ID before modification to ensure we target the correct client
         client_id = target_client.get('id', target_client.get('password', email))
         
         # Update email
         target_client['email'] = new_email
+        
+        # Only superadmin can edit volume and expiry
+        if user.is_superadmin:
+            if new_total_gb is not None:
+                try:
+                    target_client['totalGB'] = int(float(new_total_gb) * 1024 * 1024 * 1024)
+                except (ValueError, TypeError):
+                    pass
+            if new_expiry_time is not None:
+                try:
+                    target_client['expiryTime'] = int(new_expiry_time)
+                except (ValueError, TypeError):
+                    pass
         
         update_payload = {
             "id": inbound_id,
@@ -3158,11 +3194,23 @@ def get_admins():
 @superadmin_required
 def add_admin():
     data = request.json
-    if Admin.query.filter_by(username=data['username']).first():
+    username = data.get('username', '').strip().lower()
+    
+    if not username:
+        return jsonify({"success": False, "error": "Username is required"}), 400
+    
+    if ' ' in username:
+        return jsonify({"success": False, "error": "Username cannot contain spaces"}), 400
+        
+    # Check for Persian characters
+    if any(u'\u0600' <= c <= u'\u06FF' for c in username):
+        return jsonify({"success": False, "error": "Persian characters are not allowed"}), 400
+
+    if Admin.query.filter_by(username=username).first():
         return jsonify({"success": False, "error": "Username exists"}), 400
     
     new_admin = Admin(
-        username=data['username'],
+        username=username,
         role=data.get('role', 'reseller'),
         is_superadmin=(data.get('role') == 'superadmin'),
         credit=int(data.get('credit', 0)),
@@ -3355,6 +3403,9 @@ def add_client(server_id, inbound_id):
     
     data = request.json or {}
     email = data.get('email', '').strip()
+    
+    if not email: return jsonify({"success": False, "error": "Email is required"})
+
     mode = data.get('mode', 'custom')
     start_after_first_use = bool(data.get('start_after_first_use', False))
     is_free = bool(data.get('free', False))
