@@ -962,6 +962,7 @@
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
 
     const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days
+    const expandedInboundKeys = new Set(); // `${server_id}:${inbound_id}` -> expanded client list
     let expiryLessThanDays = 7;
     let disabledOnlyClients = false;
 
@@ -1478,7 +1479,11 @@
             return;
         }
         
-        html += inbounds.map(inbound => `
+        html += inbounds.map(inbound => {
+            const inboundKey = `${inbound.server_id}:${inbound.id}`;
+            const isExpanded = expandedInboundKeys.has(inboundKey);
+            const toggleCount = inbound.clients.length;
+            return `
             <div class="inbound-card ${!inbound.enable ? 'disabled' : ''}">
                 <div class="inbound-header">
                     <div class="inbound-title">
@@ -1503,13 +1508,12 @@
 
                 ${inbound.clients.length > 0 ? `
                 <div class="clients-section">
-                    <button class="toggle-clients" onclick="toggleClients(this)">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                        </svg>
-                        Show Clients (${inbound.clients.length})
+                    <button class="toggle-clients" data-inbound-key="${inboundKey}" onclick="toggleClients(this, event)">
+                        ${isExpanded
+                            ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg> Hide Clients (${toggleCount})`
+                            : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${toggleCount})`}
                     </button>
-                    <div class="clients-list hidden">
+                    <div class="clients-list ${isExpanded ? '' : 'hidden'}">
                         <div class="clients-table-wrapper">
                             <table class="clients-table">
                                 <thead>
@@ -1608,7 +1612,8 @@
                 </div>
                 ` : ''}
             </div>
-        `).join('');
+        `;
+        }).join('');
 
         // Add placeholders for pending servers
         if (typeof pendingServers !== 'undefined' && pendingServers.length > 0) {
@@ -1627,10 +1632,23 @@
         container.innerHTML = html;
     }
 
-    function toggleClients(btn) {
+    function toggleClients(btn, ev) {
+        if (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+        }
         const clientsList = btn.nextElementSibling;
         const isHidden = clientsList.classList.contains('hidden');
         clientsList.classList.toggle('hidden');
+
+        const inboundKey = btn && btn.dataset ? btn.dataset.inboundKey : null;
+        if (inboundKey) {
+            if (isHidden) {
+                expandedInboundKeys.add(inboundKey);
+            } else {
+                expandedInboundKeys.delete(inboundKey);
+            }
+        }
         
         const count = clientsList.querySelectorAll('tbody tr').length;
         btn.innerHTML = isHidden 
