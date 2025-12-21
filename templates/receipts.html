@@ -552,8 +552,8 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/persian-date@latest/dist/persian-date.min.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/@majidh1/jalalidatepicker/dist/jalalidatepicker.min.css">
-<script src="https://unpkg.com/@majidh1/jalalidatepicker/dist/jalalidatepicker.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='jalalidatepicker.min.css') }}">
+<script src="{{ url_for('static', filename='jalalidatepicker.min.js') }}"></script>
 
 <script>
     const isSuperadmin = JSON.parse('{{ (is_superadmin)|tojson }}');

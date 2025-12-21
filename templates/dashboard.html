@@ -477,6 +477,24 @@
     </div>
 </div>
 
+<div class="modal-overlay hidden" id="renew-success-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2>Renewal Successful</h2>
+            <button class="modal-close" onclick="closeRenewSuccessModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="renew-prev-state" style="margin-bottom: 15px; font-size: 0.85rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; direction: ltr;">
+            </div>
+            <div id="renew-success-text" style="white-space: pre-wrap; margin-bottom: 20px; font-size: 1.1rem; line-height: 1.6; background: var(--bg-dark); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); direction: ltr; text-align: left;"></div>
+            <button class="btn btn-primary w-full" onclick="copyRenewSuccessText()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                Copy Text
+            </button>
+        </div>
+    </div>
+</div>
+
         <div class="modal-overlay hidden" id="reset-modal">
             <div class="modal modal-sm">
                 <div class="modal-header">
@@ -787,8 +805,8 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/persian-date@latest/dist/persian-date.min.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/@majidh1/jalalidatepicker/dist/jalalidatepicker.min.css">
-<script src="https://unpkg.com/@majidh1/jalalidatepicker/dist/jalalidatepicker.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='jalalidatepicker.min.css') }}">
+<script src="{{ url_for('static', filename='jalalidatepicker.min.js') }}"></script>
 
 <style>
     /* Jalali Datepicker Dark Theme Overrides */
@@ -951,6 +969,11 @@
     const USER_ROLE = "{{ role }}";
     let selectedPackageId = null;
     let selectedRenewPackageId = null;
+    let selectedRenewPackageDays = 0;
+    let selectedRenewPackageVolume = 0;
+    let selectedRenewPackageName = '';
+    let currentClientExpiryText = '';
+    let currentClientRemainingVolume = '';
     const BASE_COST_DAY = {{ base_cost_day|default(0) }};
     const BASE_COST_GB = {{ base_cost_gb|default(0) }};
 
@@ -1849,6 +1872,9 @@
         document.getElementById('renew-inbound-id').value = inboundId;
         document.getElementById('renew-email').value = email;
         document.getElementById('renew-client-email').textContent = email;
+        
+        currentClientExpiryText = expiryText || '';
+        currentClientRemainingVolume = remainingFormatted || '';
 
         const statusEl = document.getElementById('renew-client-status');
         if (statusEl) {
@@ -1923,6 +1949,9 @@
         document.getElementById('renew-custom-days').value = 30;
         document.getElementById('renew-custom-volume').value = 10;
         selectedRenewPackageId = null;
+        selectedRenewPackageDays = 0;
+        selectedRenewPackageVolume = 0;
+        selectedRenewPackageName = '';
         loadRenewPackages();
         calculateRenewCustomPrice();
         document.getElementById('renew-modal').classList.remove('hidden');
@@ -1930,6 +1959,17 @@
 
     function closeRenewModal() {
         document.getElementById('renew-modal').classList.add('hidden');
+    }
+
+    function closeRenewSuccessModal() {
+        document.getElementById('renew-success-modal').classList.add('hidden');
+    }
+
+    function copyRenewSuccessText() {
+        const text = document.getElementById('renew-success-text').innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Copied to clipboard');
+        });
     }
 
     async function submitRenewal() {
@@ -1975,8 +2015,31 @@
             
             const data = await response.json();
             if (data.success) {
-                showToast('Client renewed');
                 closeRenewModal();
+                
+                let finalDays = 0;
+                let finalVolume = 0;
+                if (usePackage) {
+                    finalDays = selectedRenewPackageDays;
+                    finalVolume = selectedRenewPackageVolume;
+                } else {
+                    finalDays = parseInt(document.getElementById('renew-custom-days').value) || 0;
+                    finalVolume = parseInt(document.getElementById('renew-custom-volume').value) || 0;
+                }
+
+                const prevHtml = `
+                    <span style="color: #818cf8; font-weight: 600;">${email}</span>
+                    <span style="color: var(--text-secondary);">—</span>
+                    <span>${currentClientExpiryText || 'Unlimited'}</span>
+                    <span style="color: var(--text-secondary);">•</span>
+                    <span class="server-badge" style="background: rgba(99, 102, 241, 0.1); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.2); padding: 2px 8px; border-radius: 4px;">Remaining: ${currentClientRemainingVolume || 'Unlimited'}</span>
+                `;
+                document.getElementById('renew-prev-state').innerHTML = prevHtml;
+
+                const successText = `🔰${email}\n⌛${finalDays} Days 📊${finalVolume}GB\nتمدید شد`;
+                document.getElementById('renew-success-text').innerText = successText;
+                document.getElementById('renew-success-modal').classList.remove('hidden');
+
                 if (typeof data.remaining_credit !== 'undefined') {
                     updateWalletDisplay(data.remaining_credit);
                 }
@@ -2119,7 +2182,7 @@
             }
 
             container.innerHTML = pkgs.map(p => `
-                <div class="pkg-card" data-package-id="${p.id}" data-package-price="${p.price}" onclick="selectRenewPackage(this, ${p.id}, ${p.price})"
+                <div class="pkg-card" data-package-id="${p.id}" data-package-price="${p.price}" onclick="selectRenewPackage(this, ${p.id}, ${p.price}, ${p.days}, ${p.volume}, '${p.name}')"
                      style="border: 1px solid var(--border-color); padding: 8px; border-radius: 6px; cursor: pointer; transition: 0.2s; background: var(--bg-dark); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-height: 60px;">
                     <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; line-height: 1.2; color: var(--text-secondary);">${p.name}</div>
                     <div style="color: #4ade80; font-weight: bold; font-size: 0.8rem;">${p.price.toLocaleString()} T</div>
@@ -2141,7 +2204,7 @@
         }
     }
 
-    function selectRenewPackage(el, id, price) {
+    function selectRenewPackage(el, id, price, days, volume, name) {
         const alreadySelected = selectedRenewPackageId === id;
         document.querySelectorAll('#renew-packages-list .pkg-card').forEach(card => {
             card.style.borderColor = 'var(--border-color)';
@@ -2150,11 +2213,17 @@
 
         if (alreadySelected) {
             selectedRenewPackageId = null;
+            selectedRenewPackageDays = 0;
+            selectedRenewPackageVolume = 0;
+            selectedRenewPackageName = '';
             refreshRenewPriceDisplay();
             return;
         }
 
         selectedRenewPackageId = id;
+        selectedRenewPackageDays = days;
+        selectedRenewPackageVolume = volume;
+        selectedRenewPackageName = name;
         el.style.borderColor = 'var(--primary)';
         el.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
         refreshRenewPriceDisplay(price);
