@@ -61,6 +61,10 @@ REFRESH_MAX_JOBS = 50
 REFRESH_BACKOFF = {}  # server_id -> {fail_count:int, next_allowed_at:float, last_error:str, last_failed_at:float}
 REFRESH_MAX_BACKOFF_SEC = 300
 
+# Session cache for X-UI panels to speed up API calls
+XUI_SESSION_CACHE = {}  # server_id -> {'session': requests.Session, 'expiry': float}
+XUI_SESSION_TTL = 600  # 10 minutes cache
+
 
 def _utc_iso_now():
     return datetime.utcnow().isoformat()
@@ -937,18 +941,28 @@ CLIENT_DELETE_FALLBACKS = [
 def collect_endpoint_templates(panel_type, attr_name, fallbacks):
     """Return ordered list of endpoint templates for the requested action."""
     templates = []
-    panel_api = get_panel_api(panel_type)
+
+    normalized = (panel_type or 'auto').strip().lower()
+
+    # If panel type is known, prefer its configured endpoint first.
+    panel_api = get_panel_api(normalized)
     if panel_api:
         value = getattr(panel_api, attr_name, None)
         if value:
             templates.append(value)
+
+    # Fast path: try hardcoded fallbacks early (especially important for panel_type='auto').
+    for item in (fallbacks or []):
+        if item and item not in templates:
+            templates.append(item)
+
+    # Finally, include any configured endpoints from other panel types.
+    # This keeps compatibility with custom PanelAPI rows without making 'auto' slow.
     for api in PanelAPI.query.all():
         value = getattr(api, attr_name, None)
         if value and value not in templates:
             templates.append(value)
-    for item in fallbacks:
-        if item not in templates:
-            templates.append(item)
+
     return templates
 
 
@@ -1623,6 +1637,15 @@ def extract_base_and_webpath(host_url):
     return base, webpath
 
 def get_xui_session(server):
+    # Try to reuse session from cache
+    now = time.time()
+    if server.id in XUI_SESSION_CACHE:
+        cached = XUI_SESSION_CACHE[server.id]
+        if now < cached['expiry']:
+            return cached['session'], None
+        else:
+            XUI_SESSION_CACHE.pop(server.id, None)
+
     session_obj = requests.Session()
     try:
         base, webpath = extract_base_and_webpath(server.host)
@@ -1630,6 +1653,11 @@ def get_xui_session(server):
         # Keep login timeout short so refresh endpoints stay responsive.
         login_resp = session_obj.post(login_url, data={"username": server.username, "password": server.password}, verify=False, timeout=3)
         if login_resp.status_code == 200 and login_resp.json().get('success'):
+            # Cache the successful session
+            XUI_SESSION_CACHE[server.id] = {
+                'session': session_obj,
+                'expiry': now + XUI_SESSION_TTL
+            }
             return session_obj, None
         return None, f"Login failed: {login_resp.status_code}"
     except Exception as e:
@@ -2055,7 +2083,8 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                     "dash_sub_url": dash_sub_url,
                     "server_id": server.id,
                     "inbound_id": inbound.get('id'),
-                    "link": generate_client_link(client, inbound, server.host)
+                    "link": generate_client_link(client, inbound, server.host),
+                    "raw_client": client  # Store original object for faster updates
                 }
                 processed_clients.append(client_data)
                 
@@ -2585,18 +2614,33 @@ def toggle_client(server_id, inbound_id):
         if price > user.credit:
             return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
     
+    # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
+    target_client = None
+    cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    for ib in cached_inbounds:
+        try:
+            if int(ib.get('server_id', -1)) == int(server.id) and int(ib.get('id', -1)) == int(inbound_id):
+                for c in ib.get('clients', []):
+                    if c.get('email') == email and 'raw_client' in c:
+                        target_client = copy.deepcopy(c['raw_client'])
+                        break
+        except (ValueError, TypeError):
+            continue
+        if target_client: break
+
     session_obj, error = get_xui_session(server)
     if error: return jsonify({"success": False, "error": error}), 400
     
     try:
-        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
-        if fetch_err:
-            return jsonify({"success": False, "error": fetch_err}), 400
-
-        persist_detected_panel_type(server, detected_type)
-        target_client, _ = find_client(inbounds, inbound_id, email)
         if not target_client:
-            return jsonify({"success": False, "error": "Client not found"}), 404
+            inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+            if fetch_err:
+                return jsonify({"success": False, "error": fetch_err}), 400
+
+            persist_detected_panel_type(server, detected_type)
+            target_client, _ = find_client(inbounds, inbound_id, email)
+            if not target_client:
+                return jsonify({"success": False, "error": "Client not found"}), 404
         
         target_client['enable'] = bool(enable)
         client_identifier = target_client.get('id') or target_client.get('password') or target_client.get('email')
@@ -2902,20 +2946,35 @@ def delete_client(server_id, inbound_id, email):
         if not ownership:
             return jsonify({"success": False, "error": "Access denied"}), 403
             
+    # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
+    target_client = None
+    cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    for ib in cached_inbounds:
+        try:
+            if int(ib.get('server_id', -1)) == int(server.id) and int(ib.get('id', -1)) == int(inbound_id):
+                for c in ib.get('clients', []):
+                    if c.get('email') == email and 'raw_client' in c:
+                        target_client = copy.deepcopy(c['raw_client'])
+                        break
+        except (ValueError, TypeError):
+            continue
+        if target_client: break
+
     session_obj, error = get_xui_session(server)
     if error:
         return jsonify({"success": False, "error": error}), 400
         
     try:
-        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
-        if fetch_err:
-            return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
-
-        persist_detected_panel_type(server, detected_type)
-            
-        target_client, _ = find_client(inbounds, inbound_id, email)
         if not target_client:
-            return jsonify({"success": False, "error": "Client not found"}), 404
+            inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+            if fetch_err:
+                return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+
+            persist_detected_panel_type(server, detected_type)
+                
+            target_client, _ = find_client(inbounds, inbound_id, email)
+            if not target_client:
+                return jsonify({"success": False, "error": "Client not found"}), 404
             
         client_id = target_client.get('id', target_client.get('password', email))
         
@@ -2976,16 +3035,45 @@ def delete_client(server_id, inbound_id, email):
 @login_required
 def renew_client(server_id, inbound_id, email):
     """Renew client expiry and/or volume"""
+    t0 = time.perf_counter()
+    timing = {
+        "total_ms": None,
+        "used_cache_client": False,
+        "login_ms": None,
+        "fetch_inbounds_ms": None,
+        "update_post_ms": None,
+        "reset_traffic_ms": None,
+        "update_endpoint": None,
+        "update_status": None,
+    }
+
+    def _finish(payload: dict, status_code: int = 200):
+        try:
+            timing["total_ms"] = int((time.perf_counter() - t0) * 1000)
+        except Exception:
+            timing["total_ms"] = None
+        if isinstance(payload, dict):
+            payload.setdefault("timing", timing)
+        # Log only slow renews (keeps logs clean)
+        try:
+            if timing.get("total_ms") is not None and timing["total_ms"] >= 2000:
+                app.logger.info(
+                    f"Renew timing: server={server_id}, inbound={inbound_id}, email={email}, timing={timing}"
+                )
+        except Exception:
+            pass
+        return jsonify(payload), status_code
+
     user = db.session.get(Admin, session['admin_id'])
     if not user:
-        return jsonify({"success": False, "error": "User not found"}), 401
+        return _finish({"success": False, "error": "User not found"}, 401)
     
     server = Server.query.get_or_404(server_id)
     
     try:
         data = request.get_json() or {}
     except:
-        return jsonify({"success": False, "error": "Invalid data"}), 400
+        return _finish({"success": False, "error": "Invalid data"}, 400)
 
     start_after_first_use = bool(data.get('start_after_first_use', False))
     reset_traffic = bool(data.get('reset_traffic', False))
@@ -3004,13 +3092,13 @@ def renew_client(server_id, inbound_id, email):
             pkg_id = data.get('package_id')
             package = db.session.get(Package, pkg_id) if pkg_id else None
             if not package or not getattr(package, 'enabled', True):
-                return jsonify({"success": False, "error": "Invalid package selected"}), 400
+                return _finish({"success": False, "error": "Invalid package selected"}, 400)
             days_to_add = int(package.days or 0)
             volume_gb_to_add = int(package.volume or 0)
             price = calculate_reseller_price(user, package=package)
             description = f"Renew Package: {package.name} - {email}"
             if days_to_add <= 0:
-                return jsonify({"success": False, "error": "Package is misconfigured"}), 400
+                return _finish({"success": False, "error": "Package is misconfigured"}, 400)
         else:
             days_to_add = int(data.get('days', 0))
             volume_gb_to_add = int(data.get('volume', 0))
@@ -3031,7 +3119,7 @@ def renew_client(server_id, inbound_id, email):
             vol_label = f"{volume_gb_to_add} GB" if volume_gb_to_add > 0 else "Unlimited Volume"
             description = f"Renew Custom: {days_label}, {vol_label} - {email}"
     except (ValueError, TypeError):
-        return jsonify({"success": False, "error": "Invalid data"}), 400
+        return _finish({"success": False, "error": "Invalid data"}, 400)
 
     if is_free:
         price = 0
@@ -3039,23 +3127,44 @@ def renew_client(server_id, inbound_id, email):
     if user.role == 'reseller':
         ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
         if not ownership:
-            return jsonify({"success": False, "error": "Access denied"}), 403
+            return _finish({"success": False, "error": "Access denied"}, 403)
         if price > 0 and user.credit < price:
-            return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
+            return _finish({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}, 402)
     
+    # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
+    target_client = None
+    cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    for ib in cached_inbounds:
+        try:
+            if int(ib.get('server_id', -1)) == int(server.id) and int(ib.get('id', -1)) == int(inbound_id):
+                for c in ib.get('clients', []):
+                    if c.get('email') == email and 'raw_client' in c:
+                        target_client = copy.deepcopy(c['raw_client'])
+                        timing["used_cache_client"] = True
+                        break
+        except (ValueError, TypeError):
+            continue
+        if target_client: break
+
+    t_login0 = time.perf_counter()
     session_obj, error = get_xui_session(server)
+    timing["login_ms"] = int((time.perf_counter() - t_login0) * 1000)
     if error:
-        return jsonify({"success": False, "error": error}), 400
+        return _finish({"success": False, "error": error}, 400)
     
     try:
-        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
-        if fetch_err:
-            return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
-
-        persist_detected_panel_type(server, detected_type)
-        target_client, _ = find_client(inbounds, inbound_id, email)
         if not target_client:
-            return jsonify({"success": False, "error": "Client not found"}), 404
+            # Fallback to fetching from panel if not in cache
+            t_fetch0 = time.perf_counter()
+            inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+            timing["fetch_inbounds_ms"] = int((time.perf_counter() - t_fetch0) * 1000)
+            if fetch_err:
+                return _finish({"success": False, "error": "Failed to fetch inbounds"}, 400)
+
+            persist_detected_panel_type(server, detected_type)
+            target_client, _ = find_client(inbounds, inbound_id, email)
+            if not target_client:
+                return _finish({"success": False, "error": "Client not found"}, 404)
         
         # Calculate new expiry
         if days_to_add == 0:
@@ -3116,6 +3225,7 @@ def renew_client(server_id, inbound_id, email):
 
         templates = collect_endpoint_templates(server.panel_type, 'client_update', CLIENT_UPDATE_FALLBACKS)
         errors = []
+        t_update0 = time.perf_counter()
         for template in templates:
             full_url = build_panel_url(server.host, template, replacements)
             if not full_url:
@@ -3126,6 +3236,9 @@ def renew_client(server_id, inbound_id, email):
                 errors.append(f"{template}: {exc}")
                 continue
             if resp.status_code == 200:
+                timing["update_post_ms"] = int((time.perf_counter() - t_update0) * 1000)
+                timing["update_endpoint"] = template
+                timing["update_status"] = resp.status_code
                 try:
                     resp_json = resp.json()
                     if isinstance(resp_json, dict) and resp_json.get('success') is False:
@@ -3138,6 +3251,7 @@ def renew_client(server_id, inbound_id, email):
                 # because updateClient usually ignores 'up'/'down' fields.
                 if reset_traffic:
                     reset_templates = collect_endpoint_templates(server.panel_type, 'client_reset_traffic', CLIENT_RESET_FALLBACKS)
+                    t_reset0 = time.perf_counter()
                     for r_template in reset_templates:
                         r_url = build_panel_url(server.host, r_template, replacements)
                         if not r_url: continue
@@ -3155,6 +3269,7 @@ def renew_client(server_id, inbound_id, email):
                             # but we try our best to reset traffic.
                         except:
                             pass
+                    timing["reset_traffic_ms"] = int((time.perf_counter() - t_reset0) * 1000)
 
                 sender_card = data.get('sender_card', '') or ''
                 card_id = data.get('card_id')
@@ -3172,17 +3287,19 @@ def renew_client(server_id, inbound_id, email):
                         log_transaction(user.id, price, 'renew', "User Renewal (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
                     db.session.commit()
 
-                return jsonify({"success": True})
+                return _finish({"success": True})
 
             errors.append(f"{template}: {resp.status_code}")
+            timing["update_endpoint"] = template
+            timing["update_status"] = resp.status_code
             if resp.status_code != 404:
                 break
 
         app.logger.warning(f"Renew failed for {email}: {'; '.join(errors)}")
-        return jsonify({"success": False, "error": "Client update endpoint returned error"}), 400
+        return _finish({"success": False, "error": "Client update endpoint returned error"}, 400)
     except Exception as e:
         app.logger.error(f"Renew error: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 400
+        return _finish({"success": False, "error": str(e)}, 400)
 
 @app.route('/api/admins', methods=['GET'])
 @superadmin_required
