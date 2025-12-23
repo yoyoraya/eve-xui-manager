@@ -5177,7 +5177,26 @@ def client_subscription(server_id, sub_id):
 
     # Prepare User-Agent check
     user_agent = (request.headers.get('User-Agent') or '').lower()
-    agent_tokens = ['v2ray', 'xray', 'streisand', 'shadowrocket', 'nekoray', 'nekobox', 'clash', 'sing-box', 'sagernet', 'v2box', 'hiddify']
+    # Comprehensive list of V2Ray/Xray client user-agents
+    agent_tokens = [
+        # --- Universal / Core ---
+        'v2ray', 'xray', 'shadowsocks', 'clash', 'sing-box', 'tuic', 'hysteria',
+        
+        # --- Hiddify Family (Covers Next, NG, Clash) ---
+        'hiddify', 
+        
+        # --- iOS Clients ---
+        'shadowrocket', 'streisand', 'v2box', 'kitsunebi', 'quantumult', 
+        'surge', 'loon', 'stash', 'fair', 'pepi', 'i2ray', 'foxray', 'potatso',
+        'oneclick',
+        
+        # --- Android Clients ---
+        'v2rayng', 'sagernet', 'nekobox', 'matsuri', 'bifrostv', 
+        'igniter', 'hap', 'anxray', 'surfboard', 'v2raytun', 'mahsa', 'napstarnet',
+        
+        # --- Desktop (Windows, Mac, Linux) ---
+        'nekoray', 'v2rayn', 'v2raya', 'qv2ray', 'mellow', 'flclash', 'furious'
+    ]
     wants_b64 = request.args.get('format', '').lower() == 'b64'
     accept = (request.headers.get('Accept') or '').lower()
     accept_prefers_html = ('text/html' in accept) or ('application/xhtml+xml' in accept)
