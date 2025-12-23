@@ -5179,12 +5179,10 @@ def client_subscription(server_id, sub_id):
     user_agent = (request.headers.get('User-Agent') or '').lower()
     # Comprehensive list of V2Ray/Xray client user-agents
     agent_tokens = [
-        # --- Universal / Core ---
+        # --- Universal / Cross Platform ---
         'v2ray', 'xray', 'shadowsocks', 'clash', 'sing-box', 'tuic', 'hysteria',
-        
-        # --- Hiddify Family (Covers Next, NG, Clash) ---
-        'hiddify', 
-        
+        'hiddify', 'happ',  # <--- 'happ' placed in universal/cross-platform
+
         # --- iOS Clients ---
         'shadowrocket', 'streisand', 'v2box', 'kitsunebi', 'quantumult', 
         'surge', 'loon', 'stash', 'fair', 'pepi', 'i2ray', 'foxray', 'potatso',
@@ -5192,7 +5190,7 @@ def client_subscription(server_id, sub_id):
         
         # --- Android Clients ---
         'v2rayng', 'sagernet', 'nekobox', 'matsuri', 'bifrostv', 
-        'igniter', 'hap', 'anxray', 'surfboard', 'v2raytun', 'mahsa', 'napstarnet',
+        'igniter', 'anxray', 'surfboard', 'v2raytun', 'mahsa', 'napstarnet',
         
         # --- Desktop (Windows, Mac, Linux) ---
         'nekoray', 'v2rayn', 'v2raya', 'qv2ray', 'mellow', 'flclash', 'furious'
