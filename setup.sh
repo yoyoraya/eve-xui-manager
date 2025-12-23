@@ -303,12 +303,57 @@ EOF
 }
 
 setup_nginx() {
-    print_header "Step 10: Nginx configuration"
+    print_header "Step 10: Nginx configuration (with Gzip)"
+    
+    # Ensure domain exists to prevent errors during update
+    if [ -z "$DOMAIN" ]; then
+        if [ -f "/etc/nginx/sites-available/${SERVICE_NAME}" ]; then
+            # Try to read domain from previous config
+            DOMAIN=$(grep "server_name" /etc/nginx/sites-available/${SERVICE_NAME} | head -n 1 | awk '{print $2}' | tr -d ';')
+        fi
+        # If still empty, ask
+        if [ -z "$DOMAIN" ]; then
+             ask_domain
+        fi
+    fi
+
     rm -f /etc/nginx/sites-enabled/default
     cat > /etc/nginx/sites-available/${SERVICE_NAME} <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
+
+    # --- Gzip Compression Settings ---
+    gzip on;
+    gzip_disable "msie6";
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_buffers 16 8k;
+    gzip_http_version 1.1;
+    gzip_min_length 256;
+    gzip_types
+        application/atom+xml
+        application/geo+json
+        application/javascript
+        application/x-javascript
+        application/json
+        application/ld+json
+        application/manifest+json
+        application/rdf+xml
+        application/rss+xml
+        application/xhtml+xml
+        application/xml
+        font/eot
+        font/otf
+        font/ttf
+        image/svg+xml
+        text/css
+        text/javascript
+        text/plain
+        text/xml;
+    # ---------------------------------
+
     location / {
         proxy_pass http://127.0.0.1:${APP_PORT};
         proxy_set_header Host \$host;
@@ -320,7 +365,7 @@ server {
 EOF
     ln -sf /etc/nginx/sites-available/${SERVICE_NAME} /etc/nginx/sites-enabled/
     nginx -t && systemctl restart nginx
-    print_success "Nginx configured"
+    print_success "Nginx configured with Gzip enabled"
 }
 
 setup_certbot_ssl() {
@@ -443,10 +488,12 @@ show_menu() {
             ;;
         2)
             require_root
+            detect_os
             clone_or_update_repo
             setup_python_env
+            setup_nginx
             systemctl restart ${SERVICE_NAME}
-            print_success "Updated and restarted"
+            print_success "Updated, Gzip checked, and service restarted"
             ;;
         3) require_root; setup_certbot_ssl ;;
         4) update_self ;;
