@@ -94,6 +94,18 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating system_settings table: {e}")
 
+        # 4b) Create system_configs table if missing (used for app config like support + channels)
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS system_configs (
+                key VARCHAR(50) PRIMARY KEY,
+                value TEXT
+            )
+            ''')
+            print("✅ Table 'system_configs' checked/created.")
+        except Exception as e:
+            print(f"⚠️  Error creating system_configs table: {e}")
+
         # 5) Create payments table if missing
         try:
             c.execute('''

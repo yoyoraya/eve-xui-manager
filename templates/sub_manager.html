@@ -76,6 +76,17 @@
                         <input type="text" id="support-whatsapp" class="form-input" value="{{ support_whatsapp }}" placeholder="e.g., 989123456789">
                         <small style="color: var(--text-secondary);">Enter number with country code (e.g., 98...)</small>
                     </div>
+
+                    <div class="form-group">
+                        <label>Telegram Channel Link</label>
+                        <input type="text" id="channel-telegram" class="form-input" value="{{ channel_telegram }}" placeholder="https://t.me/yourchannel">
+                        <small style="color: var(--text-secondary);">You can also enter just the channel id (without @).</small>
+                    </div>
+                    <div class="form-group">
+                        <label>WhatsApp Channel Link</label>
+                        <input type="text" id="channel-whatsapp" class="form-input" value="{{ channel_whatsapp }}" placeholder="https://whatsapp.com/channel/...">
+                        <small style="color: var(--text-secondary);">Paste the full WhatsApp Channel link.</small>
+                    </div>
                     <div class="form-actions" style="display: flex; justify-content: flex-end;">
                         <button class="btn btn-primary" onclick="saveContactInfo()">Save Contact Info</button>
                     </div>
@@ -871,6 +882,8 @@
     async function saveContactInfo() {
         const telegram = document.getElementById('support-telegram').value;
         const whatsapp = document.getElementById('support-whatsapp').value;
+        const channelTelegram = document.getElementById('channel-telegram').value;
+        const channelWhatsapp = document.getElementById('channel-whatsapp').value;
 
         try {
             const response = await fetch('/api/system-config', {
@@ -878,7 +891,9 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     'support_telegram': telegram,
-                    'support_whatsapp': whatsapp
+                    'support_whatsapp': whatsapp,
+                    'channel_telegram': channelTelegram,
+                    'channel_whatsapp': channelWhatsapp
                 })
             });
             

@@ -603,7 +603,7 @@ class Package(db.Model):
 class SystemConfig(db.Model):
     __tablename__ = 'system_configs'
     key = db.Column(db.String(50), primary_key=True)
-    value = db.Column(db.String(200))
+    value = db.Column(db.Text)
 
 
 RECEIPT_STATUS_PENDING = 'pending'
@@ -1012,6 +1012,16 @@ with app.app_context():
             print("Added sender_name column to transactions table")
     except Exception as e:
         print(f"Migration error (transactions.sender_name): {e}")
+
+    # Ensure system_configs.value can store long URLs (PostgreSQL only)
+    try:
+        if db.engine.dialect.name == 'postgresql':
+            with db.engine.connect() as conn:
+                conn.execute(text('ALTER TABLE system_configs ALTER COLUMN value TYPE TEXT'))
+                conn.commit()
+            print("Ensured system_configs.value is TEXT")
+    except Exception as e:
+        print(f"Migration error (system_configs.value TEXT): {e}")
     
     # Initialize PanelAPI data
     if not PanelAPI.query.first():
@@ -5277,13 +5287,36 @@ def client_subscription(server_id, sub_id):
     # Get support info
     support_telegram = db.session.get(SystemConfig, 'support_telegram')
     support_whatsapp = db.session.get(SystemConfig, 'support_whatsapp')
+
+    # Get channel links
+    channel_telegram = db.session.get(SystemConfig, 'channel_telegram')
+    channel_whatsapp = db.session.get(SystemConfig, 'channel_whatsapp')
+
+    def _normalize_url(raw: str, *, default_prefix: str | None = None) -> str:
+        val = (raw or '').strip()
+        if not val:
+            return ''
+        if val.startswith('@'):
+            val = val[1:].strip()
+        if val.startswith('http://') or val.startswith('https://'):
+            return val
+        if val.startswith('t.me/') or val.startswith('telegram.me/'):
+            return f"https://{val}"
+        if default_prefix:
+            return f"{default_prefix}{val}"
+        return f"https://{val}"
     
     support_info = {
         'telegram': support_telegram.value if support_telegram else '',
         'whatsapp': support_whatsapp.value if support_whatsapp else ''
     }
 
-    return render_template('subscription.html', client=client_payload, apps=apps_payload, faqs=faqs_payload, support=support_info)
+    channels_info = {
+        'telegram': _normalize_url(channel_telegram.value if channel_telegram else '', default_prefix='https://t.me/'),
+        'whatsapp': _normalize_url(channel_whatsapp.value if channel_whatsapp else '')
+    }
+
+    return render_template('subscription.html', client=client_payload, apps=apps_payload, faqs=faqs_payload, support=support_info, channels=channels_info)
 
 @app.route('/sub-manager')
 @superadmin_required
@@ -5292,13 +5325,17 @@ def sub_manager_page():
     
     support_telegram = db.session.get(SystemConfig, 'support_telegram')
     support_whatsapp = db.session.get(SystemConfig, 'support_whatsapp')
+    channel_telegram = db.session.get(SystemConfig, 'channel_telegram')
+    channel_whatsapp = db.session.get(SystemConfig, 'channel_whatsapp')
     
     return render_template('sub_manager.html',
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
                          role=session.get('role', 'admin'),
                          support_telegram=support_telegram.value if support_telegram else '',
-                         support_whatsapp=support_whatsapp.value if support_whatsapp else '')
+                         support_whatsapp=support_whatsapp.value if support_whatsapp else '',
+                         channel_telegram=channel_telegram.value if channel_telegram else '',
+                         channel_whatsapp=channel_whatsapp.value if channel_whatsapp else '')
 
 @app.route('/api/sub-apps', methods=['GET'])
 def get_sub_apps():
