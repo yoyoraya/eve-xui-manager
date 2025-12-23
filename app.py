@@ -11,6 +11,7 @@ import secrets
 import string
 import shutil
 import glob
+import subprocess
 import threading
 import time
 import concurrent.futures
@@ -441,6 +442,70 @@ os.makedirs(RECEIPTS_DIR, exist_ok=True)
 
 BACKUP_DIR = os.path.join(app.instance_path, 'backups')
 os.makedirs(BACKUP_DIR, exist_ok=True)
+
+
+def _db_uri() -> str:
+    return (app.config.get('SQLALCHEMY_DATABASE_URI') or '').strip()
+
+
+def _is_sqlite_db() -> bool:
+    return _db_uri().startswith('sqlite:')
+
+
+def _is_postgres_db() -> bool:
+    return _db_uri().startswith('postgresql:')
+
+
+def _pg_dump_backup(dest_path: str) -> None:
+    """Create a PostgreSQL backup using pg_dump (custom format).
+
+    Requires `pg_dump` to be available in PATH on the server.
+    """
+    pg_dump_bin = shutil.which('pg_dump')
+    if not pg_dump_bin:
+        raise RuntimeError("pg_dump not found in PATH. Install postgresql-client (pg_dump) on the server.")
+
+    uri = _db_uri()
+    parsed = urlparse(uri)
+
+    env = os.environ.copy()
+    if parsed.password:
+        env['PGPASSWORD'] = parsed.password
+
+    # Custom format is compact and best for pg_restore.
+    cmd = [
+        pg_dump_bin,
+        '--format=custom',
+        '--compress=9',
+        '--no-owner',
+        '--no-privileges',
+        '--file', dest_path,
+        '--dbname', uri,
+    ]
+    subprocess.run(cmd, check=True, env=env)
+
+
+def _create_database_backup_file(prefix: str) -> str:
+    """Create a DB backup in BACKUP_DIR and return filename."""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    if _is_sqlite_db():
+        db_path = os.path.join(app.instance_path, 'servers.db')
+        if not os.path.exists(db_path):
+            raise FileNotFoundError('Database file not found')
+
+        filename = f'{prefix}_{timestamp}.db'
+        dest = os.path.join(BACKUP_DIR, filename)
+        shutil.copy2(db_path, dest)
+        return filename
+
+    if _is_postgres_db():
+        filename = f'{prefix}_{timestamp}.dump'
+        dest = os.path.join(BACKUP_DIR, filename)
+        _pg_dump_backup(dest)
+        return filename
+
+    raise RuntimeError('Unsupported database backend for backup')
 
 limiter = Limiter(
     app=app,
@@ -5952,12 +6017,16 @@ def get_active_template():
 def list_backups():
     backups = []
     if os.path.exists(BACKUP_DIR):
-        files = glob.glob(os.path.join(BACKUP_DIR, '*.db'))
+        patterns = ('*.db', '*.dump', '*.sql')
+        files = []
+        for pat in patterns:
+            files.extend(glob.glob(os.path.join(BACKUP_DIR, pat)))
         files.sort(key=os.path.getmtime, reverse=True)
         for f in files:
             name = os.path.basename(f)
             size = os.path.getsize(f)
             date = datetime.fromtimestamp(os.path.getmtime(f)).strftime('%Y-%m-%d %H:%M:%S')
+            restore_supported = _is_sqlite_db() and name.lower().endswith('.db')
             
             # Determine type
             if name.startswith('upload_'):
@@ -5969,22 +6038,14 @@ def list_backups():
             else:
                 b_type = 'System'
                 
-            backups.append({'name': name, 'size': size, 'date': date, 'type': b_type})
-    return jsonify({'success': True, 'backups': backups})
+                backups.append({'name': name, 'size': size, 'date': date, 'type': b_type, 'restore_supported': restore_supported})
+            return jsonify({'success': True, 'backups': backups, 'restore_supported': _is_sqlite_db()})
 
 @app.route('/api/backups', methods=['POST'])
 @login_required
 def create_backup():
     try:
-        db_path = os.path.join(app.instance_path, 'servers.db')
-        if not os.path.exists(db_path):
-             return jsonify({'success': False, 'error': 'Database file not found'})
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'backup_{timestamp}.db'
-        dest = os.path.join(BACKUP_DIR, filename)
-        
-        shutil.copy2(db_path, dest)
+        filename = _create_database_backup_file('backup')
         return jsonify({'success': True, 'message': 'Backup created', 'filename': filename})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -5998,7 +6059,11 @@ def upload_backup():
     if file.filename == '':
         return jsonify({'success': False, 'error': 'No selected file'})
     
-    if file and file.filename.endswith('.db'):
+    allowed_exts = {'.db', '.dump', '.sql'}
+    _, ext = os.path.splitext(file.filename or '')
+    ext = (ext or '').lower()
+
+    if file and ext in allowed_exts:
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             safe_name = secure_filename(file.filename)
@@ -6007,7 +6072,7 @@ def upload_backup():
             return jsonify({'success': True, 'message': 'Backup uploaded successfully'})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
-    return jsonify({'success': False, 'error': 'Invalid file type. Only .db files allowed'})
+    return jsonify({'success': False, 'error': 'Invalid file type. Allowed: .db, .dump, .sql'})
 
 @app.route('/api/settings/backup', methods=['GET'])
 @login_required
@@ -6123,6 +6188,12 @@ def restore_backup(filename):
         return jsonify({'success': False, 'error': 'Backup not found'}), 404
         
     try:
+        if not _is_sqlite_db():
+            return jsonify({
+                'success': False,
+                'error': 'Restore via web UI is only supported for SQLite. For PostgreSQL use pg_restore/psql on the server.'
+            }), 400
+
         db_path = os.path.join(app.instance_path, 'servers.db')
         # Create a safety backup before restore
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -6391,13 +6462,13 @@ def run_scheduler():
                             should_backup = True
                             
                     if should_backup:
-                        db_path = os.path.join(app.instance_path, 'servers.db')
-                        if os.path.exists(db_path):
-                            timestamp = now.strftime('%Y%m%d_%H%M%S')
-                            filename = f'auto_{timestamp}.db'
-                            dest = os.path.join(BACKUP_DIR, filename)
-                            shutil.copy2(db_path, dest)
-                            
+                        try:
+                            filename = _create_database_backup_file('auto')
+                        except Exception as e:
+                            print(f"Auto backup failed: {e}")
+                            filename = None
+
+                        if filename:
                             # Update last backup time
                             if not last_backup:
                                 last_backup = SystemSetting(key='last_auto_backup', value=now.isoformat())
