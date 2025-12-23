@@ -318,7 +318,100 @@ setup_nginx() {
     fi
 
     rm -f /etc/nginx/sites-enabled/default
-    cat > /etc/nginx/sites-available/${SERVICE_NAME} <<EOF
+    SSL_FULLCHAIN="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+    SSL_PRIVKEY="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+
+    if [ -f "$SSL_FULLCHAIN" ] && [ -f "$SSL_PRIVKEY" ]; then
+        cat > /etc/nginx/sites-available/${SERVICE_NAME} <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    # --- Gzip Compression Settings ---
+    gzip on;
+    gzip_disable "msie6";
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_buffers 16 8k;
+    gzip_http_version 1.1;
+    gzip_min_length 256;
+    gzip_types
+        application/atom+xml
+        application/geo+json
+        application/javascript
+        application/x-javascript
+        application/json
+        application/ld+json
+        application/manifest+json
+        application/rdf+xml
+        application/rss+xml
+        application/xhtml+xml
+        application/xml
+        font/eot
+        font/otf
+        font/ttf
+        image/svg+xml
+        text/css
+        text/javascript
+        text/plain
+        text/xml;
+    # ---------------------------------
+
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate ${SSL_FULLCHAIN};
+    ssl_certificate_key ${SSL_PRIVKEY};
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # --- Gzip Compression Settings ---
+    gzip on;
+    gzip_disable "msie6";
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_buffers 16 8k;
+    gzip_http_version 1.1;
+    gzip_min_length 256;
+    gzip_types
+        application/atom+xml
+        application/geo+json
+        application/javascript
+        application/x-javascript
+        application/json
+        application/ld+json
+        application/manifest+json
+        application/rdf+xml
+        application/rss+xml
+        application/xhtml+xml
+        application/xml
+        font/eot
+        font/otf
+        font/ttf
+        image/svg+xml
+        text/css
+        text/javascript
+        text/plain
+        text/xml;
+    # ---------------------------------
+
+    location / {
+        proxy_pass http://127.0.0.1:${APP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+    else
+        cat > /etc/nginx/sites-available/${SERVICE_NAME} <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
@@ -363,6 +456,7 @@ server {
     }
 }
 EOF
+    fi
     ln -sf /etc/nginx/sites-available/${SERVICE_NAME} /etc/nginx/sites-enabled/
     nginx -t && systemctl restart nginx
     print_success "Nginx configured with Gzip enabled"
