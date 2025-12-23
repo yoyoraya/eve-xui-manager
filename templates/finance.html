@@ -94,9 +94,9 @@
         }
     }
 
-    .overview-value.success { color: var(--success); }
-    .overview-value.danger { color: var(--danger); }
-    .overview-value.profit { color: var(--warning); }
+    .overview-value.success, .summary-value.success { color: var(--success); }
+    .overview-value.danger, .summary-value.danger { color: var(--danger); }
+    .overview-value.profit, .summary-value.profit { color: var(--warning); }
 
     /* Collapsible Summary */
     .overview-details { width: 100%; }
@@ -527,6 +527,56 @@
         .overview-label { margin-bottom: 0; white-space: nowrap; }
         .overview-value { font-size: 0.98rem; }
     }
+
+    /* Monthly Summary Block */
+    .overview-monthly-summary {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        padding: 0 20px 16px 20px;
+        border-bottom: 1px solid var(--border-color);
+        margin-bottom: 16px;
+    }
+
+    .monthly-summary-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+    }
+
+    .summary-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+    }
+
+    .summary-value {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    @media (max-width: 640px) {
+        .overview-monthly-summary {
+            grid-template-columns: 1fr;
+            padding: 0 14px 12px 14px;
+            gap: 8px;
+        }
+        .monthly-summary-item {
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+        }
+        .summary-value {
+            font-size: 1rem;
+        }
+    }
 </style>
 
 
@@ -607,6 +657,23 @@
                     <option value="" selected>Open Summary to load…</option>
                 </select>
             </div>
+
+            <!-- Monthly Summary Totals -->
+            <div class="overview-monthly-summary" id="overview-monthly-summary" style="display: none;">
+                <div class="monthly-summary-item">
+                    <span class="summary-label">Total Income</span>
+                    <span class="summary-value success" id="monthly-total-income">0 T</span>
+                </div>
+                <div class="monthly-summary-item">
+                    <span class="summary-label">Total Costs</span>
+                    <span class="summary-value danger" id="monthly-total-costs">0 T</span>
+                </div>
+                <div class="monthly-summary-item">
+                    <span class="summary-label">Total Profit</span>
+                    <span class="summary-value profit" id="monthly-total-profit">0 T</span>
+                </div>
+            </div>
+
             <div class="overview-feed" id="overview-feed">
                 <div class="overview-empty" id="overview-empty">Open Summary to load overview…</div>
             </div>
@@ -1208,6 +1275,23 @@
         const expense = (series && series.expense) || [];
         const profit = (series && series.profit) || [];
 
+        // Calculate Monthly Totals
+        const totalInc = income.reduce((a, b) => a + Number(b || 0), 0);
+        const totalExp = expense.reduce((a, b) => a + Number(b || 0), 0);
+        const totalProf = profit.reduce((a, b) => a + Number(b || 0), 0);
+
+        const summaryBlock = document.getElementById('overview-monthly-summary');
+        const incEl = document.getElementById('monthly-total-income');
+        const expEl = document.getElementById('monthly-total-costs');
+        const profEl = document.getElementById('monthly-total-profit');
+
+        if (summaryBlock) {
+            summaryBlock.style.display = (labels && labels.length) ? 'grid' : 'none';
+            if (incEl) incEl.textContent = totalInc.toLocaleString() + ' T';
+            if (expEl) expEl.textContent = '-' + Math.abs(totalExp).toLocaleString() + ' T';
+            if (profEl) profEl.textContent = totalProf.toLocaleString() + ' T';
+        }
+
         const today = getTodayJalaliParts();
         const isCurrentMonth = !!(today && year === today.year && month === today.month);
         const maxDay = isCurrentMonth ? today.day : Infinity;
@@ -1268,6 +1352,9 @@
     const loadOverviewMonth = async (year, month) => {
         if (!overviewFeed) return;
         overviewFeed.innerHTML = `<div class="overview-empty">Loading overview…</div>`;
+
+        const summaryBlock = document.getElementById('overview-monthly-summary');
+        if (summaryBlock) summaryBlock.style.display = 'none';
 
         const query = buildOverviewQuery({ range: 'month', year, month });
         const response = await fetch(`/api/finance/overview?${query}`);
