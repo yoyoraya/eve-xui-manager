@@ -18,6 +18,27 @@ import concurrent.futures
 import magic
 from collections import defaultdict
 from types import SimpleNamespace
+import sys
+
+# bleach is required for HTML sanitization. Provide a clear runtime message
+# if it's missing so developers running `py app.py` without the project's
+# virtualenv get actionable instructions.
+try:
+    import bleach
+except ModuleNotFoundError:
+    bleach = None
+    if __name__ == '__main__':
+        sys.stderr.write('\nMissing required package: bleach\n')
+        sys.stderr.write('Install into the project venv or activate it before running.\n')
+        sys.stderr.write('To activate venv in PowerShell:\n')
+        sys.stderr.write('  .\\.venv\\Scripts\\Activate.ps1\n')
+        sys.stderr.write('Then run: python app.py\n')
+        sys.stderr.write('Or run directly with the venv python:\n')
+        sys.stderr.write('  .\\venv\\Scripts\\python.exe app.py\n\n')
+        sys.exit(1)
+    else:
+        # If imported as a library, raise a clearer error at import time
+        raise
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 import copy
@@ -60,6 +81,38 @@ REFRESH_JOBS_LOCK = threading.Lock()
 REFRESH_MAX_JOBS = 50
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+# Allowed HTML tags and attributes for FAQ content (XSS Prevention)
+ALLOWED_FAQ_TAGS = [
+    'a', 'abbr', 'acronym', 'b', 'blockquote', 'code', 'em', 'i', 'li', 'ol', 'strong', 'ul',
+    'p', 'br', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'img', 'hr'
+]
+ALLOWED_FAQ_ATTRIBUTES = {
+    'a': ['href', 'title', 'target'],
+    'abbr': ['title'],
+    'acronym': ['title'],
+    'img': ['src', 'alt', 'title', 'width', 'height', 'class'],
+    'span': ['class', 'style'],
+    'div': ['class', 'style'],
+    'p': ['class', 'style'],
+}
+ALLOWED_FAQ_STYLES = ['color', 'background-color', 'font-size', 'text-align', 'direction']
+
+
+def sanitize_html(content, tags=None, attributes=None, styles=None):
+    """Sanitize HTML content to prevent XSS."""
+    if content is None:
+        return None
+    if not isinstance(content, str):
+        content = str(content)
+    
+    return bleach.clean(
+        content,
+        tags=tags if tags is not None else [],
+        attributes=attributes if attributes is not None else {},
+        styles=styles if styles is not None else [],
+        strip=True
+    )
 
 # Backoff to avoid hammering failing servers during periodic refresh
 REFRESH_BACKOFF = {}  # server_id -> {fail_count:int, next_allowed_at:float, last_error:str, last_failed_at:float}
@@ -1160,7 +1213,16 @@ with app.app_context():
             enabled=True,
             allowed_servers='*'
         )
-        initial_password = os.environ.get("INITIAL_ADMIN_PASSWORD", "admin")
+        initial_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+        if not initial_password:
+            initial_password = secrets.token_urlsafe(12)
+            print("\n" + "!"*60)
+            print("  CRITICAL SECURITY NOTICE")
+            print(f"  Initial admin created with username: {initial_username}")
+            print(f"  Generated secure password: {initial_password}")
+            print("  PLEASE SAVE THIS PASSWORD IMMEDIATELY!")
+            print("!"*60 + "\n")
+            
         default_admin.set_password(initial_password)
         db.session.add(default_admin)
         
@@ -3469,7 +3531,7 @@ def add_admin():
         discount_percent=int(data.get('discount_percent', 0)),
         custom_cost_per_day=int(data.get('custom_cost_per_day')) if data.get('custom_cost_per_day') is not None else None,
         custom_cost_per_gb=int(data.get('custom_cost_per_gb')) if data.get('custom_cost_per_gb') is not None else None,
-        telegram_id=data.get('telegram_id')
+        telegram_id=sanitize_html(data.get('telegram_id'))
     )
     new_admin.set_password(password)
     db.session.add(new_admin)
@@ -3497,7 +3559,7 @@ def update_admin(admin_id):
         admin.custom_cost_per_day = int(data['custom_cost_per_day']) if data['custom_cost_per_day'] is not None else None
     if 'custom_cost_per_gb' in data: 
         admin.custom_cost_per_gb = int(data['custom_cost_per_gb']) if data['custom_cost_per_gb'] is not None else None
-    if 'telegram_id' in data: admin.telegram_id = data['telegram_id']
+    if 'telegram_id' in data: admin.telegram_id = sanitize_html(data['telegram_id'])
     db.session.commit()
     return jsonify({"success": True})
 
@@ -3529,9 +3591,9 @@ def add_server():
     
     data = request.json
     server = Server(
-        name=data['name'],
-        host=data['host'],
-        username=data['username'],
+        name=sanitize_html(data['name']),
+        host=sanitize_html(data['host']),
+        username=sanitize_html(data['username']),
         password=data['password'],
         panel_type=data.get('panel_type', 'auto'),
         sub_path=data.get('sub_path', '/sub/'),
@@ -3550,9 +3612,9 @@ def update_server(server_id):
     
     server = Server.query.get_or_404(server_id)
     data = request.json
-    server.name = data.get('name', server.name)
-    server.host = data.get('host', server.host)
-    server.username = data.get('username', server.username)
+    server.name = sanitize_html(data.get('name', server.name))
+    server.host = sanitize_html(data.get('host', server.host))
+    server.username = sanitize_html(data.get('username', server.username))
     server.password = data.get('password', server.password)
     server.panel_type = data.get('panel_type', server.panel_type)
     server.sub_path = data.get('sub_path', server.sub_path)
@@ -5508,15 +5570,19 @@ def create_sub_app():
     if SubAppConfig.query.filter_by(app_code=app_code).first():
         return jsonify({'success': False, 'error': 'App code already exists'}), 400
         
+    # Sanitize descriptions to prevent XSS
+    desc_fa = sanitize_html(data.get('description_fa', ''))
+    desc_en = sanitize_html(data.get('description_en', ''))
+
     new_app = SubAppConfig(
         app_code=app_code,
-        name=data.get('name'),
+        name=sanitize_html(data.get('name')),
         os_type=data.get('os_type', 'android'),
         is_enabled=data.get('is_enabled', True),
-        title_fa=data.get('title_fa'),
-        description_fa=data.get('description_fa'),
-        title_en=data.get('title_en'),
-        description_en=data.get('description_en'),
+        title_fa=sanitize_html(data.get('title_fa')),
+        description_fa=desc_fa,
+        title_en=sanitize_html(data.get('title_en')),
+        description_en=desc_en,
         download_link=data.get('download_link'),
         store_link=data.get('store_link'),
         tutorial_link=data.get('tutorial_link')
@@ -5548,13 +5614,15 @@ def update_sub_app(app_id):
             return jsonify({'success': False, 'error': 'App code already exists'}), 400
         app_config.app_code = new_app_code
         
-    if 'name' in data: app_config.name = data['name']
+    if 'name' in data: app_config.name = sanitize_html(data['name'])
     if 'os_type' in data: app_config.os_type = data['os_type']
     if 'is_enabled' in data: app_config.is_enabled = data['is_enabled']
-    if 'title_fa' in data: app_config.title_fa = data['title_fa']
-    if 'description_fa' in data: app_config.description_fa = data['description_fa']
-    if 'title_en' in data: app_config.title_en = data['title_en']
-    if 'description_en' in data: app_config.description_en = data['description_en']
+    if 'title_fa' in data: app_config.title_fa = sanitize_html(data['title_fa'])
+    if 'description_fa' in data:
+        app_config.description_fa = sanitize_html(data['description_fa'])
+    if 'title_en' in data: app_config.title_en = sanitize_html(data['title_en'])
+    if 'description_en' in data:
+        app_config.description_en = sanitize_html(data['description_en'])
     if 'download_link' in data: app_config.download_link = data['download_link']
     if 'store_link' in data: app_config.store_link = data['store_link']
     if 'tutorial_link' in data: app_config.tutorial_link = data['tutorial_link']
@@ -5597,9 +5665,17 @@ def create_faq():
     if not data.get('title'):
         return jsonify({'success': False, 'error': 'Title is required'}), 400
         
+    # Sanitize HTML content to prevent XSS
+    content = sanitize_html(
+        data.get('content', ''),
+        tags=ALLOWED_FAQ_TAGS,
+        attributes=ALLOWED_FAQ_ATTRIBUTES,
+        styles=ALLOWED_FAQ_STYLES
+    )
+
     new_faq = FAQ(
-        title=data.get('title'),
-        content=data.get('content'),
+        title=sanitize_html(data.get('title')),
+        content=content,
         image_url=data.get('image_url'),
         video_url=data.get('video_url'),
         platform=data.get('platform', 'android'),
@@ -5625,8 +5701,15 @@ def update_faq(faq_id):
     if not data:
         return jsonify({'success': False, 'error': 'No data provided'}), 400
         
-    if 'title' in data: faq.title = data['title']
-    if 'content' in data: faq.content = data['content']
+    if 'title' in data: faq.title = sanitize_html(data['title'])
+    if 'content' in data:
+        # Sanitize HTML content to prevent XSS
+        faq.content = sanitize_html(
+            data['content'],
+            tags=ALLOWED_FAQ_TAGS,
+            attributes=ALLOWED_FAQ_ATTRIBUTES,
+            styles=ALLOWED_FAQ_STYLES
+        )
     if 'image_url' in data: faq.image_url = data['image_url']
     if 'video_url' in data: faq.video_url = data['video_url']
     if 'platform' in data: faq.platform = data['platform']
@@ -5686,10 +5769,11 @@ def update_system_config():
     try:
         for key, value in data.items():
             config = db.session.get(SystemConfig, key)
+            sanitized_value = sanitize_html(str(value))
             if config:
-                config.value = str(value)
+                config.value = sanitized_value
             else:
-                config = SystemConfig(key=key, value=str(value))
+                config = SystemConfig(key=key, value=sanitized_value)
                 db.session.add(config)
         
         db.session.commit()
@@ -5741,14 +5825,15 @@ def create_bank_card():
     label = (data.get('label') or '').strip()
     if not label:
         return jsonify({'success': False, 'error': 'Label is required'}), 400
+    
     card = BankCard(
-        label=label,
-        bank_name=(data.get('bank_name') or '').strip() or None,
-        owner_name=(data.get('owner_name') or '').strip() or None,
-        card_number=(data.get('card_number') or '').strip() or None,
-        iban=(data.get('iban') or '').strip() or None,
-        account_number=(data.get('account_number') or '').strip() or None,
-        notes=(data.get('notes') or '').strip() or None,
+        label=sanitize_html(label),
+        bank_name=sanitize_html((data.get('bank_name') or '').strip() or None),
+        owner_name=sanitize_html((data.get('owner_name') or '').strip() or None),
+        card_number=sanitize_html((data.get('card_number') or '').strip() or None),
+        iban=sanitize_html((data.get('iban') or '').strip() or None),
+        account_number=sanitize_html((data.get('account_number') or '').strip() or None),
+        notes=sanitize_html((data.get('notes') or '').strip() or None),
         is_active=bool(data.get('is_active', True))
     )
     db.session.add(card)
@@ -5765,7 +5850,9 @@ def update_bank_card(card_id):
     for field in ('label', 'bank_name', 'owner_name', 'card_number', 'iban', 'account_number', 'notes'):
         if field in data:
             value = data.get(field)
-            setattr(card, field, value.strip() if isinstance(value, str) else value)
+            if isinstance(value, str):
+                value = sanitize_html(value.strip())
+            setattr(card, field, value)
     if 'is_active' in data:
         card.is_active = bool(data.get('is_active'))
     db.session.commit()
