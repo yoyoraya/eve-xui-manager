@@ -59,6 +59,8 @@ REFRESH_JOBS = {}  # job_id -> job dict
 REFRESH_JOBS_LOCK = threading.Lock()
 REFRESH_MAX_JOBS = 50
 
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
 # Backoff to avoid hammering failing servers during periodic refresh
 REFRESH_BACKOFF = {}  # server_id -> {fail_count:int, next_allowed_at:float, last_error:str, last_failed_at:float}
 REFRESH_MAX_BACKOFF_SEC = 300
@@ -5633,6 +5635,12 @@ def upload_file():
         return jsonify({'success': False, 'error': 'No selected file'}), 400
         
     if file:
+        file.seek(0, os.SEEK_END)
+        file_length = file.tell()
+        file.seek(0)
+        if file_length > MAX_FILE_SIZE:
+            return jsonify({'success': False, 'error': 'File too large'}), 413
+
         filename = secure_filename(f"{uuid.uuid4().hex[:8]}_{file.filename}")
         upload_folder = os.path.join(app.static_folder, 'uploads')
         os.makedirs(upload_folder, exist_ok=True)
@@ -5799,6 +5807,13 @@ def upload_receipt():
     slip_file = request.files.get('file')
     if not slip_file or not slip_file.filename:
         return jsonify({'success': False, 'error': 'Receipt image is required'}), 400
+
+    slip_file.seek(0, os.SEEK_END)
+    file_length = slip_file.tell()
+    slip_file.seek(0)
+    if file_length > MAX_FILE_SIZE:
+        return jsonify({'success': False, 'error': 'File too large'}), 413
+
     if not allowed_receipt_file(slip_file):
         return jsonify({'success': False, 'error': 'Unsupported file type'}), 400
     stored_path = save_receipt_file(slip_file)
@@ -6113,6 +6128,12 @@ def upload_backup():
     file = request.files['file']
     if file.filename == '':
         return jsonify({'success': False, 'error': 'No selected file'})
+    
+    file.seek(0, os.SEEK_END)
+    file_length = file.tell()
+    file.seek(0)
+    if file_length > MAX_FILE_SIZE:
+        return jsonify({'success': False, 'error': 'File too large'}), 413
     
     allowed_exts = {'.db', '.dump', '.sql'}
     _, ext = os.path.splitext(file.filename or '')
