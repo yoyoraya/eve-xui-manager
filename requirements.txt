@@ -11,3 +11,6 @@ werkzeug>=3.1.4
 python-magic>=0.4.27
 bleach>=6.0.0
 cryptography>=42.0.0
+
+# Windows note: `python-magic` may require `libmagic`.
+# If MIME sniffing is needed on Windows, install `python-magic-bin`.

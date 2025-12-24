@@ -15,7 +15,10 @@ import subprocess
 import threading
 import time
 import concurrent.futures
-import magic
+try:
+    import magic  # python-magic (requires libmagic on many platforms)
+except Exception:
+    magic = None
 from collections import defaultdict
 from types import SimpleNamespace
 import sys
@@ -2021,18 +2024,29 @@ def allowed_receipt_file(file_storage):
     if not file_storage or not file_storage.filename or '.' not in file_storage.filename:
         return False
     
-    # Check actual file type
-    try:
-        file_bytes = file_storage.read(2048)
-        file_storage.seek(0)
-        mime = magic.from_buffer(file_bytes, mime=True)
-    except Exception:
-        return False
+    # Check actual file type (best-effort). On some platforms (notably Windows)
+    # python-magic may be installed without libmagic, so we fall back to
+    # extension-only checks instead of crashing the app.
+    mime = None
+    if magic is not None:
+        try:
+            file_bytes = file_storage.read(2048)
+            file_storage.seek(0)
+            mime = magic.from_buffer(file_bytes, mime=True)
+        except Exception:
+            mime = None
     
     allowed_mimes = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf'}
     
     ext = file_storage.filename.rsplit('.', 1)[1].lower()
-    return ext in RECEIPT_ALLOWED_EXTENSIONS and mime in allowed_mimes
+    if ext not in RECEIPT_ALLOWED_EXTENSIONS:
+        return False
+
+    # If we couldn't detect MIME, allow based on extension only.
+    if not mime:
+        return True
+
+    return mime in allowed_mimes
 
 def save_receipt_file(file_storage):
     if not file_storage or not allowed_receipt_file(file_storage):
