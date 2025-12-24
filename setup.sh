@@ -49,6 +49,20 @@ print(''.join(secrets.choice(alphabet) for _ in range(length)))
 PY
 }
 
+generate_fernet_key() {
+    # Fernet key: urlsafe base64 of 32 random bytes
+    if ! command -v python3 >/dev/null 2>&1; then
+        # Fallback: openssl random -> base64 -> urlsafe transform
+        openssl rand -base64 32 | tr '+/' '-_' | tr -d '=' | head -c 43
+        echo=
+        return
+    fi
+    python3 - <<'PY'
+import base64, os
+print(base64.urlsafe_b64encode(os.urandom(32)).decode())
+PY
+}
+
 # ------------------------- Config --------------------------
 APP_NAME="Eve X-UI Manager"
 SERVICE_NAME="eve-manager"
@@ -66,6 +80,7 @@ DB_NAME="eve_manager_db"
 DB_USER="eve_manager"
 DB_PASS="$(generate_secret 20 alnum)"
 SESSION_SECRET="$(generate_secret 64 hex)"
+SERVER_PASSWORD_KEY="$(generate_fernet_key)"
 ADMIN_USERNAME_DEFAULT="admin"
 ADMIN_USERNAME="$ADMIN_USERNAME_DEFAULT"
 ADMIN_PASS="$(generate_secret 12 alnum)"
@@ -262,11 +277,22 @@ create_env_file() {
     print_header "Step 8: Environment variables"
     if [ -f "$ENV_FILE" ]; then
         print_warning "Existing .env detected, keeping current values"
+        # Backfill required secrets without overwriting existing values
+        if ! grep -q '^SESSION_SECRET=' "$ENV_FILE"; then
+            echo "SESSION_SECRET=${SESSION_SECRET}" >> "$ENV_FILE"
+        fi
+        if ! grep -q '^SERVER_PASSWORD_KEY=' "$ENV_FILE"; then
+            echo "SERVER_PASSWORD_KEY=${SERVER_PASSWORD_KEY}" >> "$ENV_FILE"
+        fi
+        chown "$APP_USER:$APP_USER" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        print_success "Environment file updated (missing keys added)"
         return
     fi
     cat > "$ENV_FILE" <<EOF
 FLASK_ENV=${ENVIRONMENT}
 SESSION_SECRET=${SESSION_SECRET}
+SERVER_PASSWORD_KEY=${SERVER_PASSWORD_KEY}
 INITIAL_ADMIN_USERNAME=${ADMIN_USERNAME}
 INITIAL_ADMIN_PASSWORD=${ADMIN_PASS}
 API_PORT=${APP_PORT}
