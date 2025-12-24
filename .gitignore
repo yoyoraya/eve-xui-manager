@@ -48,6 +48,23 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Test and Debug scripts
+test_access.py
+test_access2.py
+test_parse.py
+test_reseller_maps.py
+inspect_db.py
+inspect_all_db.py
+check_tx.py
+fix_transaction_categories.py
+tmp_tx_response.txt
+tmp_finance_stats.txt
+
+# Environment specific
+.replit
+replit.md
+uv.lock
+
 # Cache
 .cache/
 *.pyc
