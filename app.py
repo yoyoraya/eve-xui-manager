@@ -436,8 +436,11 @@ def add_security_headers(response):
     response.headers.setdefault(
         'Content-Security-Policy',
         "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
-        "img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-        "script-src 'self' 'unsafe-inline'; connect-src 'self'"
+        "img-src 'self' data:; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://code.jquery.com; "
+        "connect-src 'self'"
     )
     return response
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
