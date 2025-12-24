@@ -54,6 +54,7 @@ Thumbs.db
 
 # Assets
 attached_assets/
+static/tailwind.generated.css
 
 # Database
 instance/
