@@ -225,6 +225,40 @@
     <div id="search-results" style="display: none; margin-bottom: 20px; padding: 12px 16px; background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 12px; font-size: 0.9rem; color: #e0e7ff;">
         <span id="search-results-text"></span>
     </div>
+    <div id="bulk-actions-container" style="display:none; margin-bottom: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);">
+        <strong>Bulk Actions</strong>
+        <span id="bulk-selected-count" style="margin-left: 10px; font-size: 0.9em; color: var(--text-secondary);">0 selected</span>
+
+        <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+            <select id="bulk-action-select" class="form-select" style="max-width: 200px;" onchange="onBulkActionChanged()">
+                <option value="">Select Action</option>
+                <option value="enable">Enable</option>
+                <option value="disable">Disable</option>
+                <option value="delete">Delete</option>
+                {% if is_superadmin %}
+                <option value="assign_owner">Assign Owner</option>
+                {% endif %}
+            </select>
+
+            {% if is_superadmin %}
+            <div id="bulk-reseller-container" style="display:none;">
+                <select id="bulk-reseller-select" class="form-select" style="max-width: 220px;">
+                    <option value="">Select Reseller</option>
+                </select>
+            </div>
+            {% endif %}
+
+            <button class="btn btn-primary" onclick="executeBulkAction()">Apply</button>
+            <button class="btn btn-secondary" onclick="clearBulkSelection()">Clear</button>
+        </div>
+
+        <div id="bulk-progress" style="display:none; margin-top: 10px;">
+            <div style="height: 8px; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 999px; overflow: hidden;">
+                <div id="bulk-progress-bar" style="height: 8px; width: 0%; background: var(--primary);"></div>
+            </div>
+            <div id="bulk-progress-text" style="margin-top: 6px; font-size: 0.85rem; color: var(--text-secondary);">0/0</div>
+        </div>
+    </div>
     <div class="inbounds-list" id="inbounds-container">
         <div class="empty-state" id="empty-state">
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -966,6 +1000,9 @@
     let expiryLessThanDays = 7;
     let disabledOnlyClients = false;
 
+    // Persist bulk selections across refresh/re-render
+    const bulkSelectedClientKeys = new Set(); // key = `${server_id}:${inbound_id}:${emailLower}`
+
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
     let selectedPackageId = null;
@@ -1056,7 +1093,11 @@
             refreshData(true, { mode: 'full', poll: true }).finally(() => hideLoading());
         });
         document.getElementById('global-search-input').addEventListener('input', () => performGlobalSearch(false));
-        if (IS_SUPERADMIN) loadResellersForModal();
+        if (IS_SUPERADMIN) {
+            loadResellersForModal();
+            loadResellersForBulk();
+        }
+        onBulkActionChanged();
     });
 
     function toggleAutoRefresh() {
@@ -1128,6 +1169,39 @@
             run();
         }, delay);
         postActionRefreshState.set(key, existing);
+    }
+
+    function makeBulkClientKey(serverId, inboundId, email) {
+        const sid = parseInt(serverId);
+        const iid = parseInt(inboundId);
+        const em = String(email || '').trim().toLowerCase();
+        return `${sid}:${iid}:${em}`;
+    }
+
+    function applyBulkSelectionToDOM() {
+        const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
+        const byInbound = new Map();
+
+        boxes.forEach(cb => {
+            const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
+            cb.checked = bulkSelectedClientKeys.has(key);
+            const inboundKey = cb.dataset.inboundKey;
+            if (!byInbound.has(inboundKey)) byInbound.set(inboundKey, []);
+            byInbound.get(inboundKey).push(cb);
+        });
+
+        // Update each inbound's select-all checkbox based on children
+        document.querySelectorAll('.select-all-clients').forEach(sa => {
+            const onChangeAttr = sa.getAttribute('onchange') || '';
+            const match = onChangeAttr.match(/toggleSelectAllClients\('([^']+)'/);
+            const inboundKey = match ? match[1] : null;
+            if (!inboundKey || !byInbound.has(inboundKey)) {
+                sa.checked = false;
+                return;
+            }
+            const children = byInbound.get(inboundKey);
+            sa.checked = children.length > 0 && children.every(cb => cb.checked);
+        });
     }
 
     function mergeServerInboundsIntoCache(serverId, serverInbounds) {
@@ -1518,6 +1592,12 @@
                             <table class="clients-table">
                                 <thead>
                                     <tr>
+                                        <th style="width: 34px;">
+                                            <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
+                                                <input type="checkbox" class="select-all-clients" onchange="toggleSelectAllClients('${inboundKey}', this.checked)">
+                                                <span class="checkmark"></span>
+                                            </label>
+                                        </th>
                                         <th>Email</th>
                                         <th>Status</th>
                                         <th>Expiry</th>
@@ -1529,6 +1609,12 @@
                                 <tbody>
                                     ${inbound.clients.map(client => `
                                     <tr class="${!client.enable ? 'disabled-row' : ''}">
+                                        <td class="select-cell">
+                                            <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
+                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inboundKey}" data-server-id="${client.server_id}" data-inbound-id="${client.inbound_id}" data-email="${client.email}" onchange="onBulkClientCheckboxChanged(this)">
+                                                <span class="checkmark"></span>
+                                            </label>
+                                        </td>
                                         <td class="email-cell">${client.email}</td>
                                         <td>
                                             ${client.enable 
@@ -1630,6 +1716,8 @@
         }
         
         container.innerHTML = html;
+        applyBulkSelectionToDOM();
+        updateBulkUI();
     }
 
     function toggleClients(btn, ev) {
@@ -3210,6 +3298,12 @@
                             <table class="clients-table">
                                 <thead>
                                     <tr>
+                                        <th style="width: 34px;">
+                                            <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
+                                                <input type="checkbox" class="select-all-clients" onchange="toggleSelectAllClients('${inbound.server_id}:${inbound.id}', this.checked)">
+                                                <span class="checkmark"></span>
+                                            </label>
+                                        </th>
                                         <th>Email</th>
                                         <th>Status</th>
                                         <th>Expiry</th>
@@ -3221,6 +3315,12 @@
                                 <tbody>
                                     ${inbound.clients.map(client => `
                                     <tr class="${!client.enable ? 'disabled-row' : ''}">
+                                        <td class="select-cell">
+                                            <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
+                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inbound.server_id}:${inbound.id}" data-server-id="${inbound.server_id}" data-inbound-id="${inbound.id}" data-email="${client.email}" onchange="onBulkClientCheckboxChanged(this)">
+                                                <span class="checkmark"></span>
+                                            </label>
+                                        </td>
                                         <td class="email-cell">${client.email}</td>
                                         <td>
                                             ${client.enable 
@@ -3305,6 +3405,202 @@
         `).join('');
         
         container.innerHTML = html;
+
+        applyBulkSelectionToDOM();
+        updateBulkUI();
+    }
+
+    function getSelectedClientsForBulk() {
+        // Prefer persisted selection; intersect with currently-present boxes.
+        const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
+        const selected = [];
+        boxes.forEach(cb => {
+            const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
+            if (!bulkSelectedClientKeys.has(key)) return;
+            selected.push({
+                server_id: parseInt(cb.dataset.serverId),
+                inbound_id: parseInt(cb.dataset.inboundId),
+                email: cb.dataset.email
+            });
+        });
+        return selected.filter(x => x.server_id && (x.inbound_id || x.inbound_id === 0) && x.email);
+    }
+
+    function updateBulkUI() {
+        const container = document.getElementById('bulk-actions-container');
+        const countEl = document.getElementById('bulk-selected-count');
+        if (!container || !countEl) return;
+        const selected = getSelectedClientsForBulk();
+        countEl.textContent = `${selected.length} selected`;
+        container.style.display = selected.length > 0 ? 'block' : 'none';
+    }
+
+    function onBulkClientCheckboxChanged(el) {
+        if (!el) return;
+        const key = makeBulkClientKey(el.dataset.serverId, el.dataset.inboundId, el.dataset.email);
+        if (el.checked) bulkSelectedClientKeys.add(key);
+        else bulkSelectedClientKeys.delete(key);
+        applyBulkSelectionToDOM();
+        updateBulkUI();
+    }
+
+    function toggleSelectAllClients(inboundKey, checked) {
+        const boxes = document.querySelectorAll('.client-bulk-checkbox');
+        boxes.forEach(cb => {
+            if (cb.dataset.inboundKey !== inboundKey) return;
+            cb.checked = checked;
+            const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
+            if (checked) bulkSelectedClientKeys.add(key);
+            else bulkSelectedClientKeys.delete(key);
+        });
+        applyBulkSelectionToDOM();
+        updateBulkUI();
+    }
+
+    function clearBulkSelection() {
+        document.querySelectorAll('.client-bulk-checkbox').forEach(cb => cb.checked = false);
+        document.querySelectorAll('.select-all-clients').forEach(cb => cb.checked = false);
+        bulkSelectedClientKeys.clear();
+        updateBulkUI();
+    }
+
+    function setBulkProgress(visible, processed = 0, total = 0) {
+        const wrap = document.getElementById('bulk-progress');
+        const bar = document.getElementById('bulk-progress-bar');
+        const text = document.getElementById('bulk-progress-text');
+        if (!wrap || !bar || !text) return;
+        wrap.style.display = visible ? 'block' : 'none';
+        const safeTotal = Math.max(0, parseInt(total || 0));
+        const safeProcessed = Math.max(0, Math.min(parseInt(processed || 0), safeTotal || 0));
+        const pct = safeTotal > 0 ? Math.round((safeProcessed / safeTotal) * 100) : 0;
+        bar.style.width = `${pct}%`;
+        text.textContent = `${safeProcessed}/${safeTotal}`;
+    }
+
+    function onBulkActionChanged() {
+        const action = document.getElementById('bulk-action-select')?.value;
+        const resellerContainer = document.getElementById('bulk-reseller-container');
+        if (resellerContainer) {
+            resellerContainer.style.display = (typeof IS_SUPERADMIN !== 'undefined' && IS_SUPERADMIN && action === 'assign_owner') ? 'block' : 'none';
+        }
+    }
+
+    async function loadResellersForBulk() {
+        const select = document.getElementById('bulk-reseller-select');
+        if (!select) return;
+        try {
+            const response = await fetch('/api/admins');
+            const admins = await response.json();
+            const resellers = admins.filter(a => a.role === 'reseller');
+
+            const options = ['<option value="">Select Reseller</option>'].concat(
+                resellers.map(r => `<option value="${r.id}">${r.username}</option>`)
+            );
+            select.innerHTML = options.join('');
+        } catch (error) {
+            console.error('Error loading resellers for bulk:', error);
+            select.innerHTML = '<option value="">Error loading resellers</option>';
+        }
+    }
+
+    async function executeBulkAction() {
+        const action = document.getElementById('bulk-action-select')?.value;
+        if (!action) {
+            showToast('Please select an action', 'error');
+            return;
+        }
+
+        const clients = getSelectedClientsForBulk();
+        if (!clients.length) {
+            showToast('Please select at least one client', 'error');
+            return;
+        }
+
+        const data = {};
+        if (action === 'assign_owner') {
+            const resellerId = document.getElementById('bulk-reseller-select')?.value;
+            if (!resellerId) {
+                showToast('Please select a reseller', 'error');
+                return;
+            }
+            data.reseller_id = parseInt(resellerId);
+        }
+
+        try {
+            setBulkProgress(true, 0, clients.length);
+
+            const response = await fetch('/api/client/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, clients, data })
+            });
+
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                setBulkProgress(false);
+                showToast(result.error || 'Bulk action failed', 'error');
+                return;
+            }
+
+            const jobId = result.job_id;
+            if (!jobId) {
+                setBulkProgress(false);
+                showToast('Bulk action failed (missing job id)', 'error');
+                return;
+            }
+
+            const pollStart = Date.now();
+            const pollMaxMs = 10 * 60 * 1000;
+            const poll = async () => {
+                try {
+                    if ((Date.now() - pollStart) > pollMaxMs) {
+                        setBulkProgress(false);
+                        showToast('Bulk action is taking too long. Please refresh.', 'error');
+                        return;
+                    }
+
+                    const stResp = await fetch(`/api/client/bulk/job/${jobId}`);
+                    const st = await stResp.json();
+                    if (!stResp.ok || !st.success) {
+                        setBulkProgress(false);
+                        showToast(st.error || 'Bulk progress error', 'error');
+                        return;
+                    }
+
+                    const job = st.job || {};
+                    const progress = job.progress || {};
+                    const total = progress.total || clients.length;
+                    const processed = progress.processed || 0;
+                    setBulkProgress(true, processed, total);
+
+                    if (job.state === 'done') {
+                        setBulkProgress(false);
+                        const successCount = progress.success || 0;
+                        const failedCount = progress.failed || 0;
+                        showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}`);
+                        refreshData();
+                        return;
+                    }
+                    if (job.state === 'error') {
+                        setBulkProgress(false);
+                        showToast(job.error || 'Bulk action failed', 'error');
+                        return;
+                    }
+
+                    setTimeout(poll, 600);
+                } catch (e) {
+                    console.error('Bulk poll error:', e);
+                    setBulkProgress(false);
+                    showToast('Bulk action failed', 'error');
+                }
+            };
+
+            poll();
+        } catch (error) {
+            console.error('Bulk action error:', error);
+            setBulkProgress(false);
+            showToast('Bulk action failed', 'error');
+        }
     }
 
     function toggleResellerDropdown() {

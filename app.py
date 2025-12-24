@@ -52,7 +52,7 @@ from urllib.parse import urlparse, quote, urlencode
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.6.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 # Simple in-memory cache for update checks
@@ -79,6 +79,11 @@ GLOBAL_REFRESH_LOCK = threading.Lock()
 REFRESH_JOBS = {}  # job_id -> job dict
 REFRESH_JOBS_LOCK = threading.Lock()
 REFRESH_MAX_JOBS = 50
+
+# Bulk job tracking (in-memory; per-process)
+BULK_JOBS = {}  # job_id -> job dict
+BULK_JOBS_LOCK = threading.Lock()
+BULK_MAX_JOBS = 50
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -141,6 +146,195 @@ def _summarize_job(job):
         'progress', 'error'
     )
     return {k: job.get(k) for k in keys if k in job}
+
+
+def _summarize_bulk_job(job):
+    if not isinstance(job, dict):
+        return None
+    keys = (
+        'id', 'state', 'action',
+        'created_at', 'started_at', 'finished_at',
+        'progress', 'error'
+    )
+    return {k: job.get(k) for k in keys if k in job}
+
+
+def _prune_bulk_jobs_locked():
+    if len(BULK_JOBS) <= BULK_MAX_JOBS:
+        return
+    jobs_sorted = sorted(BULK_JOBS.items(), key=lambda kv: kv[1].get('created_at_ts', 0))
+    to_delete = max(0, len(BULK_JOBS) - BULK_MAX_JOBS)
+    deleted = 0
+    for job_id, job in jobs_sorted:
+        if deleted >= to_delete:
+            break
+        if job.get('state') in ('done', 'error'):
+            BULK_JOBS.pop(job_id, None)
+            deleted += 1
+
+
+def _run_bulk_job(job_id: str):
+    with BULK_JOBS_LOCK:
+        job = BULK_JOBS.get(job_id)
+        if not job:
+            return
+        job['state'] = 'running'
+        job['started_at'] = _utc_iso_now()
+
+    try:
+        with app.app_context():
+            job = None
+            with BULK_JOBS_LOCK:
+                job = BULK_JOBS.get(job_id) or {}
+
+            action = job.get('action')
+            clients = job.get('clients') or []
+            data = job.get('data') or {}
+            user_id = job.get('user_id')
+
+            user = db.session.get(Admin, user_id)
+            if not user:
+                raise RuntimeError('User not found')
+
+            reseller_id = None
+            if action == 'assign_owner':
+                reseller_id = data.get('reseller_id')
+                try:
+                    reseller_id = int(reseller_id)
+                except (TypeError, ValueError):
+                    reseller_id = None
+                if not reseller_id:
+                    raise RuntimeError('reseller_id required')
+                reseller = db.session.get(Admin, reseller_id)
+                if not reseller or reseller.role != 'reseller':
+                    raise RuntimeError('Invalid reseller')
+
+            server_ids = []
+            for item in clients:
+                if isinstance(item, dict) and 'server_id' in item:
+                    server_ids.append(item.get('server_id'))
+            normalized_server_ids = []
+            for sid in server_ids:
+                try:
+                    normalized_server_ids.append(int(sid))
+                except (TypeError, ValueError):
+                    continue
+            normalized_server_ids = list({sid for sid in normalized_server_ids})
+            servers_by_id = {}
+            if normalized_server_ids:
+                for s in Server.query.filter(Server.id.in_(normalized_server_ids)).all():
+                    servers_by_id[s.id] = s
+
+            for item in clients:
+                client_ref = item
+                if not isinstance(item, dict):
+                    with BULK_JOBS_LOCK:
+                        j = BULK_JOBS.get(job_id) or {}
+                        pr = j.get('progress') or {}
+                        pr['processed'] = int(pr.get('processed', 0) or 0) + 1
+                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
+                        j['progress'] = pr
+                        BULK_JOBS[job_id] = j
+                    continue
+
+                try:
+                    server_id = int(item.get('server_id'))
+                    inbound_id = int(item.get('inbound_id'))
+                    email = (item.get('email') or '').strip()
+                except (TypeError, ValueError):
+                    server_id = None
+                    inbound_id = None
+                    email = ''
+
+                if not server_id or inbound_id is None or not email:
+                    with BULK_JOBS_LOCK:
+                        j = BULK_JOBS.get(job_id) or {}
+                        pr = j.get('progress') or {}
+                        pr['processed'] = int(pr.get('processed', 0) or 0) + 1
+                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
+                        j['progress'] = pr
+                        errs = j.get('errors') or []
+                        if len(errs) < 50:
+                            errs.append({'client': client_ref, 'error': 'server_id, inbound_id and email are required'})
+                        j['errors'] = errs
+                        BULK_JOBS[job_id] = j
+                    continue
+
+                server = servers_by_id.get(server_id)
+                if not server:
+                    with BULK_JOBS_LOCK:
+                        j = BULK_JOBS.get(job_id) or {}
+                        pr = j.get('progress') or {}
+                        pr['processed'] = int(pr.get('processed', 0) or 0) + 1
+                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
+                        j['progress'] = pr
+                        errs = j.get('errors') or []
+                        if len(errs) < 50:
+                            errs.append({'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email}, 'error': 'Server not found'})
+                        j['errors'] = errs
+                        BULK_JOBS[job_id] = j
+                    continue
+
+                ok = False
+                err = None
+
+                if action in ('enable', 'disable'):
+                    ok, err, _status = _toggle_client_core(user, server, inbound_id, email, action == 'enable')
+                elif action == 'delete':
+                    ok, err, _status = _delete_client_core(user, server, inbound_id, email)
+                elif action == 'assign_owner':
+                    existing = ClientOwnership.query.filter_by(reseller_id=reseller_id, server_id=server_id, client_email=email).first()
+                    if existing:
+                        ok = False
+                        err = 'Client already assigned'
+                    else:
+                        ownership = ClientOwnership(
+                            reseller_id=reseller_id,
+                            server_id=server_id,
+                            inbound_id=inbound_id,
+                            client_email=email
+                        )
+                        db.session.add(ownership)
+                        try:
+                            db.session.commit()
+                            ok = True
+                        except Exception as exc:
+                            db.session.rollback()
+                            ok = False
+                            err = str(exc)
+                else:
+                    ok = False
+                    err = 'Invalid action'
+
+                with BULK_JOBS_LOCK:
+                    j = BULK_JOBS.get(job_id) or {}
+                    pr = j.get('progress') or {}
+                    pr['processed'] = int(pr.get('processed', 0) or 0) + 1
+                    if ok:
+                        pr['success'] = int(pr.get('success', 0) or 0) + 1
+                    else:
+                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
+                        errs = j.get('errors') or []
+                        if len(errs) < 50:
+                            errs.append({'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email}, 'error': err or 'Failed'})
+                        j['errors'] = errs
+                    j['progress'] = pr
+                    BULK_JOBS[job_id] = j
+
+        with BULK_JOBS_LOCK:
+            job = BULK_JOBS.get(job_id) or {}
+            job['state'] = 'done'
+            job['finished_at'] = _utc_iso_now()
+            BULK_JOBS[job_id] = job
+            _prune_bulk_jobs_locked()
+    except Exception as e:
+        with BULK_JOBS_LOCK:
+            job = BULK_JOBS.get(job_id) or {}
+            job['state'] = 'error'
+            job['error'] = str(e)
+            job['finished_at'] = _utc_iso_now()
+            BULK_JOBS[job_id] = job
+            _prune_bulk_jobs_locked()
 
 
 def _prune_refresh_jobs_locked():
@@ -2782,59 +2976,84 @@ def toggle_client(server_id, inbound_id):
     user = db.session.get(Admin, session['admin_id'])
     if not user:
         return jsonify({"success": False, "error": "User not found"}), 401
-    
+
     server = Server.query.get_or_404(server_id)
-    
+
     try:
         data = request.get_json() or {}
         email = data.get('email')
         enable = data.get('enable', True)
         if not email:
             return jsonify({"success": False, "error": "Email required"}), 400
-    except:
+    except Exception:
         return jsonify({"success": False, "error": "Invalid JSON"}), 400
-    
-    price = 0
-    description = f"Toggle client {email} to {enable}"
 
-    if user.role == 'reseller':
-        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
-        if not ownership:
-            return jsonify({"success": False, "error": "Access denied"}), 403
-        if price > user.credit:
-            return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
-    
-    # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
+    ok, error_message, status_code = _toggle_client_core(user, server, inbound_id, email, enable)
+    if ok:
+        response = {"success": True}
+        if user.role == 'reseller':
+            response["remaining_credit"] = user.credit
+        return jsonify(response)
+    return jsonify({"success": False, "error": error_message}), status_code
+
+
+def _get_cached_raw_client(server_id: int, inbound_id: int, email: str):
     target_client = None
     cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
     for ib in cached_inbounds:
         try:
-            if int(ib.get('server_id', -1)) == int(server.id) and int(ib.get('id', -1)) == int(inbound_id):
+            if int(ib.get('server_id', -1)) == int(server_id) and int(ib.get('id', -1)) == int(inbound_id):
                 for c in ib.get('clients', []):
                     if c.get('email') == email and 'raw_client' in c:
                         target_client = copy.deepcopy(c['raw_client'])
                         break
         except (ValueError, TypeError):
             continue
-        if target_client: break
+        if target_client:
+            break
+    return target_client
+
+
+def _has_client_access(user, server_id: int, email: str) -> bool:
+    if not user:
+        return False
+    if user.role != 'reseller':
+        return True
+    ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
+    return bool(ownership)
+
+
+def _toggle_client_core(user, server, inbound_id: int, email: str, enable: bool):
+    """Core implementation for toggling a client; returns (ok, error, status_code)."""
+    price = 0
+    description = f"Toggle client {email} to {enable}"
+
+    if not _has_client_access(user, server.id, email):
+        return False, "Access denied", 403
+
+    if user.role == 'reseller' and price > user.credit:
+        return False, f"Insufficient credit. Required: {price}, Available: {user.credit}", 402
+
+    target_client = _get_cached_raw_client(server.id, inbound_id, email)
 
     session_obj, error = get_xui_session(server)
-    if error: return jsonify({"success": False, "error": error}), 400
-    
+    if error:
+        return False, error, 400
+
     try:
         if not target_client:
             inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
             if fetch_err:
-                return jsonify({"success": False, "error": fetch_err}), 400
+                return False, fetch_err, 400
 
             persist_detected_panel_type(server, detected_type)
             target_client, _ = find_client(inbounds, inbound_id, email)
             if not target_client:
-                return jsonify({"success": False, "error": "Client not found"}), 404
-        
+                return False, "Client not found", 404
+
         target_client['enable'] = bool(enable)
         client_identifier = target_client.get('id') or target_client.get('password') or target_client.get('email')
-        
+
         payload = {
             "id": inbound_id,
             "settings": json.dumps({"clients": [target_client]})
@@ -2873,19 +3092,17 @@ def toggle_client(server_id, inbound_id):
                     user.credit -= price
                     log_transaction(user.id, -price, 'renew', description or f"Renew client {email}", server_id=server.id)
                     db.session.commit()
-                response = {"success": True}
-                if user.role == 'reseller':
-                    response["remaining_credit"] = user.credit
-                return jsonify(response)
+                return True, None, 200
 
             errors.append(f"{template}: {resp.status_code}")
             if resp.status_code != 404:
                 break
+
         app.logger.warning(f"Toggle failed for {email}: {'; '.join(errors)}")
-        return jsonify({"success": False, "error": "Client update endpoint returned error"}), 400
-    except Exception as e:
-        app.logger.error(f"Toggle error: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 400
+        return False, "Client update endpoint returned error", 400
+    except Exception as exc:
+        app.logger.error(f"Toggle error: {str(exc)}")
+        return False, str(exc), 400
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/reset', methods=['POST'])
 @login_required
@@ -3128,59 +3345,52 @@ def delete_client(server_id, inbound_id, email):
     user = db.session.get(Admin, session['admin_id'])
     if not user:
         return jsonify({"success": False, "error": "User not found"}), 401
-    
+
     server = Server.query.get_or_404(server_id)
-    
-    if user.role == 'reseller':
-        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
-        if not ownership:
-            return jsonify({"success": False, "error": "Access denied"}), 403
-            
-    # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
-    target_client = None
-    cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
-    for ib in cached_inbounds:
-        try:
-            if int(ib.get('server_id', -1)) == int(server.id) and int(ib.get('id', -1)) == int(inbound_id):
-                for c in ib.get('clients', []):
-                    if c.get('email') == email and 'raw_client' in c:
-                        target_client = copy.deepcopy(c['raw_client'])
-                        break
-        except (ValueError, TypeError):
-            continue
-        if target_client: break
+
+    ok, error_message, status_code = _delete_client_core(user, server, inbound_id, email)
+    if ok:
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": error_message}), status_code
+
+
+def _delete_client_core(user, server, inbound_id: int, email: str):
+    """Core implementation for deleting a client; returns (ok, error, status_code)."""
+    if not _has_client_access(user, server.id, email):
+        return False, "Access denied", 403
+
+    target_client = _get_cached_raw_client(server.id, inbound_id, email)
 
     session_obj, error = get_xui_session(server)
     if error:
-        return jsonify({"success": False, "error": error}), 400
-        
+        return False, error, 400
+
     try:
         if not target_client:
             inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
             if fetch_err:
-                return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+                return False, "Failed to fetch inbounds", 400
 
             persist_detected_panel_type(server, detected_type)
-                
             target_client, _ = find_client(inbounds, inbound_id, email)
             if not target_client:
-                return jsonify({"success": False, "error": "Client not found"}), 404
-            
+                return False, "Client not found", 404
+
         client_id = target_client.get('id', target_client.get('password', email))
-        
+
         replacements = {
             'id': inbound_id,
             'inbound_id': inbound_id,
             'inboundId': inbound_id,
             'clientId': client_id,
             'client_id': client_id,
-            'email': email 
+            'email': email
         }
-        
+
         templates = collect_endpoint_templates(server.panel_type, 'client_delete', CLIENT_DELETE_FALLBACKS)
         errors = []
         success = False
-        
+
         for template in templates:
             full_url = build_panel_url(server.host, template, replacements)
             if not full_url:
@@ -3190,7 +3400,7 @@ def delete_client(server_id, inbound_id, email):
             except Exception as exc:
                 errors.append(f"{template}: {exc}")
                 continue
-                
+
             if resp.status_code == 200:
                 try:
                     resp_json = resp.json()
@@ -3199,27 +3409,120 @@ def delete_client(server_id, inbound_id, email):
                         continue
                 except ValueError:
                     pass
-                
+
                 success = True
                 break
-            
+
             errors.append(f"{template}: {resp.status_code}")
-            
+
         if success:
-            # Remove ownership if exists
-            ClientOwnership.query.filter_by(server_id=server_id, client_email=email).delete()
+            ClientOwnership.query.filter_by(server_id=server.id, client_email=email).delete()
             db.session.commit()
-            
-            log_transaction(user.id, 0, 'delete_client', f"Deleted client {email}", server_id=server.id, client_email=email)
-            
-            return jsonify({"success": True})
-        else:
-            app.logger.warning(f"Delete client failed for {email}: {'; '.join(errors)}")
-            return jsonify({"success": False, "error": "Delete failed"}), 400
-            
-    except Exception as e:
-        app.logger.error(f"Delete client error: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 400
+
+            try:
+                log_transaction(user.id, 0, 'delete_client', f"Deleted client {email}", server_id=server.id, client_email=email)
+            except Exception:
+                pass
+
+            return True, None, 200
+
+        app.logger.warning(f"Delete client failed for {email}: {'; '.join(errors)}")
+        return False, "Delete failed", 400
+
+    except Exception as exc:
+        app.logger.error(f"Delete client error: {str(exc)}")
+        return False, str(exc), 400
+
+
+@app.route('/api/client/bulk', methods=['POST'])
+@login_required
+def bulk_client_action():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+
+    try:
+        payload = request.get_json() or {}
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    action = payload.get('action')
+    clients = payload.get('clients')
+    data = payload.get('data') or {}
+
+    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner'}
+    if action not in allowed_actions:
+        return jsonify({"success": False, "error": "Invalid action"}), 400
+    if not isinstance(clients, list) or len(clients) == 0:
+        return jsonify({"success": False, "error": "Clients list required"}), 400
+
+    reseller_id = None
+    if action == 'assign_owner':
+        if not session.get('is_superadmin', False):
+            return jsonify({"success": False, "error": "Access denied"}), 403
+        reseller_id = data.get('reseller_id')
+        try:
+            reseller_id = int(reseller_id)
+        except (TypeError, ValueError):
+            reseller_id = None
+        if not reseller_id:
+            return jsonify({"success": False, "error": "reseller_id required"}), 400
+        reseller = db.session.get(Admin, reseller_id)
+        if not reseller or reseller.role != 'reseller':
+            return jsonify({"success": False, "error": "Invalid reseller"}), 400
+
+    # Enqueue as an async job so the UI can show progress.
+    job_id = secrets.token_hex(8)
+    job = {
+        'id': job_id,
+        'state': 'queued',
+        'action': action,
+        'clients': clients,
+        'data': data,
+        'user_id': user.id,
+        'created_at': _utc_iso_now(),
+        'created_at_ts': time.time(),
+        'started_at': None,
+        'finished_at': None,
+        'progress': {
+            'total': len(clients),
+            'processed': 0,
+            'success': 0,
+            'failed': 0,
+        },
+        'errors': [],
+        'error': None,
+    }
+    with BULK_JOBS_LOCK:
+        BULK_JOBS[job_id] = job
+        _prune_bulk_jobs_locked()
+
+    t = threading.Thread(target=_run_bulk_job, args=(job_id,), daemon=True)
+    t.start()
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/client/bulk/job/<job_id>', methods=['GET'])
+@login_required
+def bulk_client_job(job_id):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 401
+
+    with BULK_JOBS_LOCK:
+        job = BULK_JOBS.get(job_id)
+        if not job:
+            return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+        # Simple access control: only the job owner or superadmin can view
+        try:
+            if int(job.get('user_id') or 0) != int(user.id) and not session.get('is_superadmin', False):
+                return jsonify({'success': False, 'error': 'Access denied'}), 403
+        except Exception:
+            if not session.get('is_superadmin', False):
+                return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+        return jsonify({'success': True, 'job': _summarize_bulk_job(job)})
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew', methods=['POST'])
 @login_required
