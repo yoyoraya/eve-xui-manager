@@ -355,6 +355,52 @@
         margin-left: auto;
     }
 
+    /* Password Requirements UX */
+    .password-requirements {
+        margin-top: 10px;
+        padding: 12px;
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        transition: all 0.3s ease;
+    }
+    
+    .password-requirements.hidden {
+        display: none;
+    }
+
+    .requirement {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        transition: color 0.2s ease;
+    }
+
+    .requirement svg {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+    }
+
+    .requirement.valid {
+        color: var(--success);
+    }
+
+    .requirement.invalid {
+        color: #ef4444;
+    }
+
+    .requirement .status-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
     @keyframes fadeIn {
         from { opacity: 0; transform: translateY(-5px); }
         to { opacity: 1; transform: translateY(0); }
@@ -382,7 +428,29 @@
                 
                 <div class="form-group" style="flex: 1;">
                     <label>Password</label>
-                    <input type="password" id="admin-password" placeholder="Leave empty to keep current">
+                    <input type="password" id="admin-password" placeholder="Leave empty to keep current" oninput="validatePasswordUX(this.value)">
+                    <div id="password-requirements" class="password-requirements hidden">
+                        <div class="requirement" data-req="length">
+                            <span class="status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle></svg></span>
+                            Min 8 chars
+                        </div>
+                        <div class="requirement" data-req="upper">
+                            <span class="status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle></svg></span>
+                            Uppercase
+                        </div>
+                        <div class="requirement" data-req="lower">
+                            <span class="status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle></svg></span>
+                            Lowercase
+                        </div>
+                        <div class="requirement" data-req="number">
+                            <span class="status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle></svg></span>
+                            Number
+                        </div>
+                        <div class="requirement" data-req="special">
+                            <span class="status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle></svg></span>
+                            Special char
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -498,6 +566,42 @@
 <script>
     let admins = [];
     let allServers = [];
+
+    function validatePasswordUX(password) {
+        const requirementsDiv = document.getElementById('password-requirements');
+        if (!password) {
+            requirementsDiv.classList.add('hidden');
+            return true;
+        }
+        requirementsDiv.classList.remove('hidden');
+
+        const checks = {
+            length: password.length >= 8,
+            upper: /[A-Z]/.test(password),
+            lower: /[a-z]/.test(password),
+            number: /[0-9]/.test(password),
+            special: /[^A-Za-z0-9]/.test(password)
+        };
+
+        let allValid = true;
+        for (const [req, valid] of Object.entries(checks)) {
+            const el = document.querySelector(`.requirement[data-req="${req}"]`);
+            const icon = el.querySelector('.status-icon');
+            
+            if (valid) {
+                el.classList.remove('invalid');
+                el.classList.add('valid');
+                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+            } else {
+                el.classList.remove('valid');
+                el.classList.add('invalid');
+                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+                allValid = false;
+            }
+        }
+        return allValid;
+    }
+
     let serverInbounds = {};
     let serversLoaded = false;
     let inboundsLoaded = false;
@@ -992,6 +1096,7 @@
         document.getElementById('admin-username').value = '';
         document.getElementById('admin-username').disabled = false;
         document.getElementById('admin-password').value = '';
+        validatePasswordUX(''); // Reset UX
         document.getElementById('admin-role').value = 'reseller';
         document.getElementById('admin-telegram-id').value = '';
         document.getElementById('admin-credit').value = '0';
@@ -1016,6 +1121,7 @@
         document.getElementById('admin-username').value = admin.username;
         document.getElementById('admin-username').disabled = true;
         document.getElementById('admin-password').value = '';
+        validatePasswordUX(''); // Reset UX
         document.getElementById('admin-role').value = admin.role || 'admin';
         document.getElementById('admin-telegram-id').value = admin.telegram_id || '';
         document.getElementById('admin-credit').value = (admin.credit || 0).toLocaleString();
@@ -1113,9 +1219,19 @@
         let username = document.getElementById('admin-username').value.trim().toLowerCase();
         username = username.replace(/\s/g, '').replace(/[\u0600-\u06FF]/g, '');
 
+        const password = document.getElementById('admin-password').value;
+        
+        // Validate password if it's a new user or if password is being changed
+        if (!id || password) {
+            if (!validatePasswordUX(password)) {
+                showToast('Password does not meet requirements', 'error');
+                return;
+            }
+        }
+
         const data = {
             username: username,
-            password: document.getElementById('admin-password').value,
+            password: password,
             role: role,
             telegram_id: document.getElementById('admin-telegram-id').value,
             credit: parseInt(creditRaw) || 0,
