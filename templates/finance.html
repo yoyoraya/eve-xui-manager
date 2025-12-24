@@ -8,6 +8,7 @@
 
 
 <style>
+<style nonce="{{ csp_nonce }}">
     /* ===== Finance page: responsive helpers ===== */
     html, body { overflow-x: hidden; }
     .stats-grid { min-width: 0; max-width: 100%; }
@@ -688,7 +689,7 @@
 
 
 <!-- Filters -->
-<style>
+<style nonce="{{ csp_nonce }}">
     .filters-card {
         background: rgba(13, 17, 23, 0.85);
         border: 1px solid var(--border-color);

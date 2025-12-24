@@ -854,7 +854,7 @@ def add_security_headers(response):
         "img-src 'self' data:; "
         "font-src 'self' data: https://fonts.gstatic.com; "
         # Avoid breaking existing inline style attributes for now; keep attr allowed separately.
-        "style-src 'self' https://fonts.googleapis.com https://cdn.quilljs.com; "
+        f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com https://cdn.quilljs.com; "
         "style-src-attr 'unsafe-inline'; "
         # Remove unsafe-inline from script-src; allow inline event handlers separately.
         f"script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "

@@ -14,7 +14,7 @@
 {% endblock %}
 
 {% block content %}
-<style>
+<style nonce="{{ csp_nonce }}">
     /* Server Selection Styles */
     .server-selection-wrapper {
         width: 100%;

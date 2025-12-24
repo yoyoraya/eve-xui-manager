@@ -842,7 +842,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='jalalidatepicker.min.css') }}">
 <script src="{{ url_for('static', filename='jalalidatepicker.min.js') }}"></script>
 
-<style>
+<style nonce="{{ csp_nonce }}">
     /* Jalali Datepicker Dark Theme Overrides */
     jdp-container {
         background-color: var(--bg-card) !important;
