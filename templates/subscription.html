@@ -4,9 +4,60 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Subscription - {{ client.email }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link href="{{ url_for('static', filename='tailwind.generated.css', v=2) }}" rel="stylesheet">
-    <link href="{{ url_for('static', filename='subscription.css', v=2) }}" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Vazirmatn', 'sans-serif'],
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+                    },
+                    colors: {
+                        bg: '#0B1121',       /* پس‌زمینه خیلی تیره */
+                        card: '#151E32',     /* رنگ کارت‌ها */
+                        primary: '#6366f1',  /* رنگ اصلی بنفش */
+                        accent: '#8b5cf6',   /* رنگ دوم */
+                        success: '#10b981',  /* سبز موفقیت */
+                        text: '#e2e8f0',     /* رنگ متن */
+                        muted: '#64748b',    /* رنگ متن فرعی */
+                        border: '#1e293b'    /* رنگ حاشیه */
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0B1121; color: #e2e8f0; }
+        .glass-effect {
+            background: rgba(21, 30, 50, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .user-avatar {
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+        }
+        .progress-bar-glow {
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+        }
+        /* Tab Animations */
+        .tab-content {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* مخفی کردن اسکرول‌بار اما حفظ قابلیت اسکرول */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    </style>
 </head>
 <body class="min-h-screen flex justify-center items-start pt-10 pb-10 px-4 bg-bg font-sans">
 
@@ -58,7 +109,7 @@
             </div>
 
             <div class="h-3 w-full bg-bg rounded-full overflow-hidden mb-6 border border-white/5">
-                <div id="used-progress" class="h-full bg-gradient-to-r from-primary to-accent rounded-full progress-bar-glow relative transition-all duration-1000 ease-out" data-width="{{ [client.percentage_used, 100]|min }}"></div>
+                <div class="h-full bg-gradient-to-r from-primary to-accent rounded-full progress-bar-glow relative transition-all duration-1000 ease-out" style="width: {{ [client.percentage_used, 100]|min }}%"></div>
             </div>
 
             <div class="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
@@ -143,7 +194,7 @@
                 <div class="flex-1 px-3 flex items-center overflow-hidden">
                     <div class="truncate text-sm text-muted font-mono">{{ client.subscription_url }}</div>
                 </div>
-                <button type="button" data-action="copyLink" class="bg-primary hover:bg-accent text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap">
+                <button onclick="copyLink('subLink')" class="bg-primary hover:bg-accent text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     COPY
                 </button>
@@ -152,15 +203,15 @@
 
             <!-- OS Platform Tabs -->
             <div class="flex items-center gap-2 mb-6 border-b border-white/10 pb-3 overflow-x-auto no-scrollbar">
-                <button type="button" data-action="switchOsTab" data-os="android" id="os-tab-android" class="os-tab-btn active flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors">
+                <button onclick="switchOsTab('android')" id="os-tab-android" class="os-tab-btn active flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9997.4482.9997.9993.0001.5511-.4486.9997-.9997.9997m-11.046 0c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9997.4482.9997.9993 0 .5511-.4486.9997-.9997.9997m11.4045-6.02l1.9973-3.4592a.416.416 0 0 0-.1521-.5676.416.416 0 0 0-.5676.1521l-2.0223 3.503C15.5902 8.2439 13.8533 7.8508 12 7.8508s-3.5902.3931-5.1367 1.0989L4.841 5.4467a.4161.4161 0 0 0-.5677-.1521.4157.4157 0 0 0-.1521.5676l1.9973 3.4592C2.6889 11.1867.3432 14.6589 0 18.761h24c-.3435-4.1021-2.6892-7.5743-6.1185-9.4396"/></svg>
                     Android
                 </button>
-                <button type="button" data-action="switchOsTab" data-os="ios" id="os-tab-ios" class="os-tab-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                <button onclick="switchOsTab('ios')" id="os-tab-ios" class="os-tab-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                     iOS
                 </button>
-                <button type="button" data-action="switchOsTab" data-os="windows" id="os-tab-windows" class="os-tab-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                <button onclick="switchOsTab('windows')" id="os-tab-windows" class="os-tab-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
                     Windows
                 </button>
@@ -179,15 +230,15 @@
             
             <!-- FAQ Platform Tabs -->
             <div class="flex items-center gap-2 mb-4 border-b border-white/10 pb-3 overflow-x-auto no-scrollbar">
-                <button type="button" data-action="switchFAQPlatform" data-platform="android" id="faq-tab-android" class="faq-platform-btn active flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors">
+                <button onclick="switchFAQPlatform('android')" id="faq-tab-android" class="faq-platform-btn active flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9997.4482.9997.9993.0001.5511-.4486.9997-.9997.9997m-11.046 0c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9997.4482.9997.9993 0 .5511-.4486.9997-.9997.9997m11.4045-6.02l1.9973-3.4592a.416.416 0 0 0-.1521-.5676.416.416 0 0 0-.5676.1521l-2.0223 3.503C15.5902 8.2439 13.8533 7.8508 12 7.8508s-3.5902.3931-5.1367 1.0989L4.841 5.4467a.4161.4161 0 0 0-.5677-.1521.4157.4157 0 0 0-.1521.5676l1.9973 3.4592C2.6889 11.1867.3432 14.6589 0 18.761h24c-.3435-4.1021-2.6892-7.5743-6.1185-9.4396"/></svg>
                     Android
                 </button>
-                <button type="button" data-action="switchFAQPlatform" data-platform="ios" id="faq-tab-ios" class="faq-platform-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                <button onclick="switchFAQPlatform('ios')" id="faq-tab-ios" class="faq-platform-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                     iOS
                 </button>
-                <button type="button" data-action="switchFAQPlatform" data-platform="windows" id="faq-tab-windows" class="faq-platform-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                <button onclick="switchFAQPlatform('windows')" id="faq-tab-windows" class="faq-platform-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
                     Windows
                 </button>
@@ -197,7 +248,7 @@
         </div>
 
         <div class="bg-card rounded-lg border border-border overflow-hidden transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
-            <button type="button" data-action="toggleConfig" class="w-full flex items-center justify-between p-5 text-left bg-card hover:bg-bg/50 transition-colors">
+            <button onclick="toggleConfig()" class="w-full flex items-center justify-between p-5 text-left bg-card hover:bg-bg/50 transition-colors">
                 <span class="flex items-center gap-2 font-semibold text-white">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
                     Manual Configuration
@@ -207,7 +258,7 @@
             <div id="configContent" class="hidden p-5 pt-0 border-t border-white/5 bg-bg/30">
                 <div class="space-y-3 mt-4">
                     {% for config in client.configs %}
-                    <div class="relative group cursor-pointer" data-action="copyConfig" data-config="{{ config|e }}">
+                    <div class="relative group cursor-pointer" onclick="copyToClipboard('{{ config }}')">
                         <div class="bg-bg border border-border rounded-lg p-3 pr-10 font-mono text-xs text-muted truncate transition-colors group-hover:border-primary/50 group-hover:text-text">
                             {{ config }}
                         </div>
@@ -234,7 +285,208 @@
         Copied to clipboard!
     </div>
 
-    <div id="sub-data" class="hidden" data-apps='{{ apps|tojson|e }}' data-faqs='{{ faqs|tojson|e }}'></div>
-    <script src="{{ url_for('static', filename='subscription.js', v=2) }}" defer></script>
+    <script>
+        const apps = {{ apps|tojson }};
+        const faqs = {{ faqs|tojson }};
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            renderApps('android');
+            renderFAQs();
+        });
+
+        function initializeTabs() {
+            // This function is called by the DOMContentLoaded listener above via renderApps/renderFAQs
+            // But we also have a separate listener for initializeTabs in the original code.
+            // Let's remove the duplicate listener if it exists or merge them.
+            // The original code had: document.addEventListener('DOMContentLoaded', initializeTabs);
+            // We replaced it with the block above.
+        }
+
+        function switchOsTab(osType) {
+            // Update tab button styles
+            document.querySelectorAll('.os-tab-btn').forEach(btn => {
+                btn.className = "os-tab-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors";
+            });
+            const activeBtn = document.getElementById(`os-tab-${osType}`);
+            if (activeBtn) {
+                activeBtn.className = "os-tab-btn active flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors";
+            }
+            renderApps(osType);
+        }
+
+        function renderApps(osType) {
+            const tabsContainer = document.getElementById('app-tabs-container');
+            const contentContainer = document.getElementById('app-content-container');
+            
+            tabsContainer.innerHTML = '';
+            contentContainer.innerHTML = '';
+            
+            const filteredApps = apps.filter(app => (app.os_type || 'android') === osType);
+            
+            if (filteredApps.length === 0) {
+                contentContainer.innerHTML = '<div class="text-center text-muted py-4 w-full">No apps found for this platform.</div>';
+                return;
+            }
+
+            filteredApps.forEach((app, index) => {
+                // Create tab button
+                const btn = document.createElement('button');
+                btn.className = index === 0 
+                    ? "app-tab-btn active px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors whitespace-nowrap"
+                    : "app-tab-btn px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors whitespace-nowrap";
+                btn.textContent = app.name;
+                btn.onclick = (e) => switchAppTab(e, `tab-${app.id}`);
+                tabsContainer.appendChild(btn);
+                
+                // Determine icons based on OS
+                let storeIcon = '';
+                let storeLabel = 'Store';
+                const osType = app.os_type || 'android';
+                
+                if (osType === 'android') {
+                    storeLabel = 'Google Play';
+                    storeIcon = '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.5,12.92 20.16,13.19L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z" /></svg>';
+                } else if (osType === 'ios') {
+                    storeLabel = 'App Store';
+                    storeIcon = '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71,19.5C17.88,20.74 17,21.95 15.66,21.97C14.32,22 13.89,21.18 12.37,21.18C10.84,21.18 10.37,21.95 9.1,22C7.79,22.05 6.8,20.68 5.96,19.47C4.25,17 2.94,12.45 4.7,9.39C5.57,7.87 7.13,6.91 8.82,6.88C10.1,6.86 11.32,7.75 12.11,7.75C12.89,7.75 14.37,6.68 15.92,6.84C16.57,6.87 18.39,7.1 19.56,8.82C19.47,8.88 17.39,10.1 17.41,12.63C17.44,15.65 20.06,16.66 20.09,16.7C20.06,16.74 19.67,18.11 18.71,19.5M13,3.5C13.73,2.67 14.94,2.04 15.94,2C16.07,3.17 15.6,4.35 14.9,5.19C14.21,6.04 13.07,6.7 11.95,6.61C11.8,5.37 12.36,4.26 13,3.5Z" /></svg>';
+                } else {
+                    storeLabel = 'Store';
+                    storeIcon = '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>';
+                }
+
+                const tutorialIcon = '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+                const downloadIcon = '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
+
+                // Create tab content
+                const desc = (app.description_fa || '').split('\n').map((line, i) => 
+                    `<li class="flex gap-3 text-sm text-muted"><span class="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-white shrink-0">${i+1}</span><span style="direction: rtl; text-align: right;">${line}</span></li>`
+                ).join('');
+                
+                const content = document.createElement('div');
+                content.id = `tab-${app.id}`;
+                content.className = index === 0 ? "app-content" : "app-content hidden";
+                content.innerHTML = `
+                    <div class="bg-bg/50 rounded-xl p-4 border border-white/5">
+                        <h3 class="font-semibold text-white mb-4" style="direction: rtl; text-align: right;">${app.title_fa || app.name}</h3>
+                        <ul class="space-y-3 mb-5" style="direction: rtl; text-align: right;">${desc}</ul>
+                        <div class="flex gap-3">
+                            ${app.download_link ? `<a href="${app.download_link}" target="_blank" class="flex-1 border border-white/20 bg-white/5 hover:bg-white/10 hover:border-primary/50 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-all flex items-center justify-center gap-2">${downloadIcon} Download</a>` : ''}
+                            ${app.store_link ? `<a href="${app.store_link}" target="_blank" class="flex-1 border border-white/20 bg-white/5 hover:bg-white/10 hover:border-primary/50 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-all flex items-center justify-center gap-2">${storeIcon} ${storeLabel}</a>` : ''}
+                            ${app.tutorial_link ? `<a href="${app.tutorial_link}" target="_blank" class="flex-1 border border-white/20 bg-white/5 hover:bg-white/10 hover:border-primary/50 text-white py-2.5 rounded-lg text-sm font-medium text-center transition-all flex items-center justify-center gap-2">${tutorialIcon} Tutorial</a>` : ''}
+                        </div>
+                    </div>
+                `;
+                contentContainer.appendChild(content);
+            });
+        }
+
+        let currentFAQPlatform = 'android';
+        
+        function renderFAQs() {
+            const container = document.getElementById('faq-container');
+            const filteredFaqs = faqs.filter(f => (f.platform || 'android') === currentFAQPlatform);
+            
+            if (!filteredFaqs || filteredFaqs.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted py-4">No FAQs available for this platform.</div>';
+                return;
+            }
+
+            container.innerHTML = filteredFaqs.map(faq => `
+                <div class="border border-white/10 rounded-lg overflow-hidden bg-white/5">
+                    <button onclick="toggleFAQ(${faq.id})" class="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/5 transition-colors" style="direction: rtl;">
+                        <span class="font-medium text-white">${faq.title}</span>
+                        <svg id="faq-icon-${faq.id}" class="w-4 h-4 text-muted transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </button>
+                    <div id="faq-content-${faq.id}" class="hidden border-t border-white/10 bg-bg/50">
+                        <div class="p-4 text-sm text-muted space-y-4" style="direction: rtl; text-align: right;">
+                            ${faq.image_url ? `<img src="${faq.image_url}" alt="${faq.title}" class="w-full rounded-lg mb-3">` : ''}
+                            <div class="prose prose-invert max-w-none text-sm">
+                                ${faq.content}
+                            </div>
+                            ${faq.video_url ? `
+                                <div class="mt-3">
+                                    <a href="${faq.video_url}" target="_blank" class="inline-flex items-center gap-2 text-primary hover:text-primary/80 transition-colors">
+                                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                        Watch Video Tutorial
+                                    </a>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function switchAppTab(e, tabId) {
+            document.querySelectorAll('.app-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.app-tab-btn').forEach(btn => {
+                btn.className = "app-tab-btn px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors whitespace-nowrap";
+            });
+            
+            e.target.className = "app-tab-btn active px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors whitespace-nowrap";
+            document.getElementById(tabId).classList.remove('hidden');
+        }
+        
+        function switchFAQPlatform(platform) {
+            currentFAQPlatform = platform;
+            // Update tab button styles
+            document.querySelectorAll('.faq-platform-btn').forEach(btn => {
+                btn.className = "faq-platform-btn flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors";
+            });
+            const activeBtn = document.getElementById(`faq-tab-${platform}`);
+            if (activeBtn) {
+                activeBtn.className = "faq-platform-btn active flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors";
+            }
+            renderFAQs();
+        }
+        
+        // document.addEventListener('DOMContentLoaded', initializeTabs); // Removed as we use the one above
+
+        function copyLink(elementId) {
+            const element = document.getElementById(elementId);
+            copyToClipboard(element.value);
+        }
+
+        function copyToClipboard(text) {
+            if (!text) return;
+            navigator.clipboard.writeText(text).then(() => {
+                showToast();
+            }).catch(() => {
+                alert('Failed to copy');
+            });
+        }
+
+        function showToast() {
+            const toast = document.getElementById('toast');
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 2000);
+        }
+
+        function toggleConfig() {
+            const content = document.getElementById('configContent');
+            const arrow = document.getElementById('arrow');
+            content.classList.toggle('hidden');
+            if (content.classList.contains('hidden')) {
+                arrow.style.transform = 'rotate(0deg)';
+            } else {
+                arrow.style.transform = 'rotate(180deg)';
+            }
+        }
+
+        function toggleFAQ(id) {
+            const content = document.getElementById(`faq-content-${id}`);
+            const icon = document.getElementById(`faq-icon-${id}`);
+            
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                icon.style.transform = 'rotate(180deg)';
+            } else {
+                content.classList.add('hidden');
+                icon.style.transform = 'rotate(0deg)';
+            }
+        }
+    </script>
 </body>
 </html>
