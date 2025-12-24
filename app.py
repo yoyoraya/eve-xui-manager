@@ -5133,6 +5133,12 @@ def client_subscription(server_id, sub_id):
 
     # Normalize subscription identifier early
     normalized_sub_id = str(sub_id).strip()
+    
+    # SSRF/Path Traversal Protection: Ensure sub_id doesn't contain characters that could manipulate the URL
+    if any(c in normalized_sub_id for c in ('/', '\\', '?', '#', '@', ':', '..')):
+        app.logger.warning(f"Potential SSRF/Traversal attempt with sub_id: {normalized_sub_id}")
+        return "Invalid subscription ID", 400
+
     target_client = None
     target_inbound = None
     found_in_cache = False
@@ -5257,7 +5263,10 @@ def client_subscription(server_id, sub_id):
     port_str = f":{final_port}" if final_port else ''
     sub_path = (server.sub_path or '/sub/').strip('/')
     base_sub = f"{scheme}://{hostname}{port_str}"
-    sub_url = f"{base_sub}/{sub_path}/{normalized_sub_id}" if sub_path else f"{base_sub}/{normalized_sub_id}"
+    
+    # SSRF Protection: Quote the sub_id to ensure it stays in the path component
+    safe_sub_id = quote(normalized_sub_id)
+    sub_url = f"{base_sub}/{sub_path}/{safe_sub_id}" if sub_path else f"{base_sub}/{safe_sub_id}"
 
     # Forward query params (except local-only ones) to upstream
     forward_params = dict(request.args)
@@ -5293,8 +5302,23 @@ def client_subscription(server_id, sub_id):
     # If it's a client app, try to proxy the subscription from the upstream X-UI panel
     if is_client_app and not wants_html_view:
         try:
-            # Fetch from upstream
-            resp = requests.get(upstream_sub_url, headers={'User-Agent': request.headers.get('User-Agent')}, timeout=15, verify=False)
+            # SSRF Protection: Validate the final URL before requesting
+            parsed_upstream = urlparse(upstream_sub_url)
+            if parsed_upstream.scheme not in ('http', 'https'):
+                app.logger.error(f"SSRF blocked: invalid protocol {parsed_upstream.scheme}")
+                return "Invalid upstream protocol", 400
+            if parsed_upstream.hostname != hostname:
+                app.logger.error(f"SSRF blocked: hostname {parsed_upstream.hostname} does not match server {hostname}")
+                return "Invalid upstream host", 400
+
+            # Fetch from upstream - disable redirects to prevent SSRF via redirection
+            resp = requests.get(
+                upstream_sub_url, 
+                headers={'User-Agent': request.headers.get('User-Agent')}, 
+                timeout=15, 
+                verify=False,
+                allow_redirects=False
+            )
             if resp.status_code == 200:
                 # Prefer upstream headers (especially Subscription-Userinfo) so client apps show the same usage/expiry.
                 upstream_headers = {}
