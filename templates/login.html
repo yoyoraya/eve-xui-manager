@@ -270,7 +270,7 @@
         </div>
     </div>
     
-    <script>
+    <script nonce="{{ csp_nonce }}">
         document.getElementById('login-form').addEventListener('submit', function(e) {
             const btn = document.getElementById('login-btn');
             btn.disabled = true;

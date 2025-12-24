@@ -85,7 +85,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     let cards = [];
 
     async function loadCards() {

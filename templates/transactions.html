@@ -222,7 +222,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     const isSuperadmin = {{ 'true' if is_superadmin else 'false' }};
     const columnSpan = isSuperadmin ? 6 : 5;
 

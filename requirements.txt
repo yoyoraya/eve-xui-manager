@@ -10,3 +10,4 @@ urllib3>=2.5.0
 werkzeug>=3.1.4
 python-magic>=0.4.27
 bleach>=6.0.0
+cryptography>=42.0.0

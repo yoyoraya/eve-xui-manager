@@ -595,7 +595,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     document.addEventListener('DOMContentLoaded', loadTemplates);
 
     function switchTab(tabName) {

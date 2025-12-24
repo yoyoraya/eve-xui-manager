@@ -84,7 +84,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     let packageCache = [];
     let editingPackageId = null;
 

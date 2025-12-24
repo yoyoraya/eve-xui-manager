@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script>
+    <script nonce="{{ csp_nonce }}">
         function formatNumberInput(input) {
             let value = input.value.replace(/,/g, '').replace(/\D/g, '');
             if (value) {
@@ -182,7 +182,7 @@
     
     <div class="toast hidden" id="toast"></div>
     
-    <script>
+    <script nonce="{{ csp_nonce }}">
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');
             document.getElementById('sidebar-overlay').classList.toggle('show');

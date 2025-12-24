@@ -555,7 +555,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='jalalidatepicker.min.css') }}">
 <script src="{{ url_for('static', filename='jalalidatepicker.min.js') }}"></script>
 
-<script>
+<script nonce="{{ csp_nonce }}">
     const isSuperadmin = JSON.parse('{{ (is_superadmin)|tojson }}');
     const currentAdminId = JSON.parse('{{ (current_admin_id)|tojson }}');
     let bankCards = [];

@@ -87,7 +87,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     let servers = [];
     
@@ -248,7 +248,8 @@
         document.getElementById('server-name').value = server.name;
         document.getElementById('server-host').value = server.host;
         document.getElementById('server-username').value = server.username;
-        document.getElementById('server-password').value = server.password;
+        // Never prefill password (not returned by API); only set if user enters a new one.
+        document.getElementById('server-password').value = '';
         
         // پر کردن مقادیر جدید
         document.getElementById('server-sub-path').value = server.sub_path || '/sub/';
@@ -273,22 +274,25 @@
         const json_path = document.getElementById('server-json-path').value.trim();
         const sub_port = document.getElementById('server-sub-port').value.trim();
         
-        if (!name || !host || !username || !password) {
+        if (!name || !host || !username || (!id && !password)) {
             showToast('Please fill in all fields', 'error');
             return;
         }
         
-        const data = { 
-            name, 
-            host, 
-            username, 
-            password, 
-            enabled, 
+        const data = {
+            name,
+            host,
+            username,
+            enabled,
             panel_type,
             sub_path,
             json_path,
             sub_port: sub_port ? parseInt(sub_port) : null
         };
+        // Only send password when creating, or when user explicitly sets a new password.
+        if (!id || password) {
+            data.password = password;
+        }
         
         const url = id ? `/api/servers/${id}` : '/api/servers';
         const method = id ? 'PUT' : 'POST';

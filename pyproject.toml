@@ -15,6 +15,7 @@ dependencies = [
     "urllib3>=2.5.0",
     "werkzeug>=3.1.4",
     "bleach>=6.0.0",
+    "cryptography>=42.0.0",
 ]
 
 [tool.setuptools]

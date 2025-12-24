@@ -19,6 +19,7 @@ import magic
 from collections import defaultdict
 from types import SimpleNamespace
 import sys
+from typing import Any
 
 # bleach is required for HTML sanitization. Provide a clear runtime message
 # if it's missing so developers running `py app.py` without the project's
@@ -39,10 +40,25 @@ except ModuleNotFoundError:
     else:
         # If imported as a library, raise a clearer error at import time
         raise
+
+# cryptography is required for encrypting stored panel passwords (Server.password)
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+except ModuleNotFoundError:
+    Fernet = None
+    InvalidToken = Exception
+    if __name__ == '__main__':
+        sys.stderr.write('\nMissing required package: cryptography\n')
+        sys.stderr.write('Install into the project venv or activate it before running.\n')
+        sys.stderr.write('Example:\n')
+        sys.stderr.write('  pip install -r requirements.txt\n\n')
+        sys.exit(1)
+    else:
+        raise
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 import copy
-from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session
+from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -658,8 +674,152 @@ def fetch_and_update_server_data(server_id: int):
 # Guard to avoid starting background threads multiple times (important for gunicorn workers / dev reload)
 BACKGROUND_THREADS_STARTED = False
 
+SERVER_PASSWORD_PREFIX = 'enc:'
+_SERVER_PASSWORD_FERNET = None
+_SERVER_PASSWORD_MIGRATION_DONE = False
+_SERVER_PASSWORD_MIGRATION_LOCK = threading.Lock()
+
+
+def _is_dev_mode() -> bool:
+    env = (os.environ.get('FLASK_ENV') or os.environ.get('ENV') or '').strip().lower()
+    debug = (os.environ.get('DEBUG') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+    return debug or env in ('development', 'dev')
+
+
+def _get_server_password_fernet() -> Any:
+    """Return cached Fernet instance from SERVER_PASSWORD_KEY.
+
+    SERVER_PASSWORD_KEY must be a URL-safe base64-encoded 32-byte key.
+    """
+    global _SERVER_PASSWORD_FERNET
+    if _SERVER_PASSWORD_FERNET is not None:
+        return _SERVER_PASSWORD_FERNET
+
+    key = (os.environ.get('SERVER_PASSWORD_KEY') or '').strip()
+    if not key:
+        return None
+
+    try:
+        _SERVER_PASSWORD_FERNET = Fernet(key)
+        return _SERVER_PASSWORD_FERNET
+    except Exception as e:
+        raise RuntimeError('Invalid SERVER_PASSWORD_KEY (must be Fernet key).') from e
+
+
+def encrypt_server_password(plaintext: str) -> str:
+    f = _get_server_password_fernet()
+    if not f:
+        raise RuntimeError('SERVER_PASSWORD_KEY is required to store server passwords securely.')
+    plain = str(plaintext or '')
+    token = f.encrypt(plain.encode('utf-8')).decode('utf-8')
+    return f'{SERVER_PASSWORD_PREFIX}{token}'
+
+
+def decrypt_server_password(value: str) -> str:
+    raw = str(value or '')
+    if not raw:
+        return ''
+    if not raw.startswith(SERVER_PASSWORD_PREFIX):
+        return raw
+
+    f = _get_server_password_fernet()
+    if not f:
+        raise RuntimeError('SERVER_PASSWORD_KEY is required to decrypt stored server passwords.')
+
+    token = raw[len(SERVER_PASSWORD_PREFIX):]
+    try:
+        return f.decrypt(token.encode('utf-8')).decode('utf-8')
+    except InvalidToken as e:
+        raise RuntimeError('Failed to decrypt stored server password (invalid key/token).') from e
+
+
+def get_server_password(server: 'Server') -> str:
+    return decrypt_server_password(getattr(server, 'password', '') or '')
+
+
+def _maybe_migrate_server_passwords() -> None:
+    """Encrypt any legacy plaintext Server.password values once (best-effort).
+
+    Runs only when SERVER_PASSWORD_KEY is configured.
+    """
+    global _SERVER_PASSWORD_MIGRATION_DONE
+    if _SERVER_PASSWORD_MIGRATION_DONE:
+        return
+
+    f = _get_server_password_fernet()
+    if not f:
+        return
+
+    with _SERVER_PASSWORD_MIGRATION_LOCK:
+        if _SERVER_PASSWORD_MIGRATION_DONE:
+            return
+
+        try:
+            inspector = inspect(db.engine)
+            if 'servers' not in inspector.get_table_names():
+                _SERVER_PASSWORD_MIGRATION_DONE = True
+                return
+        except Exception:
+            # DB not ready yet
+            return
+
+        try:
+            servers = Server.query.all()
+            changed = False
+            for s in servers:
+                try:
+                    cur = (s.password or '').strip()
+                    if not cur or cur.startswith(SERVER_PASSWORD_PREFIX):
+                        continue
+                    s.password = encrypt_server_password(cur)
+                    changed = True
+                except Exception:
+                    continue
+            if changed:
+                db.session.commit()
+            _SERVER_PASSWORD_MIGRATION_DONE = True
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+
+def _security_per_request_setup():
+    # CSP nonce for inline <script> blocks that cannot be moved yet.
+    # Keep stable per request.
+    g.csp_nonce = secrets.token_urlsafe(16)
+    _maybe_migrate_server_passwords()
+
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
+
+# Register per-request security setup.
+app.before_request(_security_per_request_setup)
+
+
+@app.context_processor
+def inject_csp_nonce():
+    return {'csp_nonce': getattr(g, 'csp_nonce', '')}
+
+_session_secret = (os.environ.get('SESSION_SECRET') or '').strip()
+if not _session_secret:
+    if _is_dev_mode():
+        # Dev convenience: use a random secret so session forgery isn't trivial.
+        # Sessions will reset on restart.
+        app.secret_key = secrets.token_urlsafe(32)
+        try:
+            app.logger.warning('SESSION_SECRET not set; using random dev secret (sessions reset on restart).')
+        except Exception:
+            pass
+    else:
+        raise RuntimeError('SESSION_SECRET is required in production (no default fallback).')
+else:
+    app.secret_key = _session_secret
+
+# Require server password encryption key in production.
+if not _is_dev_mode():
+    if not (_get_server_password_fernet()):
+        raise RuntimeError('SERVER_PASSWORD_KEY is required in production to encrypt stored server passwords.')
 
 # Use SQLite by default, but allow override via DATABASE_URL
 db_url = os.environ.get("DATABASE_URL")
@@ -683,13 +843,19 @@ def add_security_headers(response):
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('Referrer-Policy', 'same-origin')
     response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+
+    nonce = getattr(g, 'csp_nonce', None) or ''
     response.headers.setdefault(
         'Content-Security-Policy',
         "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
         "img-src 'self' data:; "
         "font-src 'self' data: https://fonts.gstatic.com; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://code.jquery.com; "
+        # Avoid breaking existing inline style attributes for now; keep attr allowed separately.
+        "style-src 'self' https://fonts.googleapis.com https://cdn.quilljs.com; "
+        "style-src-attr 'unsafe-inline'; "
+        # Remove unsafe-inline from script-src; allow inline event handlers separately.
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
+        "script-src-attr 'unsafe-inline'; "
         "connect-src 'self'"
     )
     return response
@@ -701,7 +867,10 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax'
+    SESSION_COOKIE_SAMESITE=(os.environ.get('SESSION_COOKIE_SAMESITE') or ('Lax' if _is_dev_mode() else 'Strict')),
+    SESSION_COOKIE_SECURE=((os.environ.get('SESSION_COOKIE_SECURE') or '').strip().lower() in ('1', 'true', 'yes', 'on'))
+    if (os.environ.get('SESSION_COOKIE_SECURE') is not None)
+    else (not _is_dev_mode())
 )
 
 RECEIPT_ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'heic', 'heif', 'pdf'}
@@ -2035,7 +2204,8 @@ def get_xui_session(server):
         base, webpath = extract_base_and_webpath(server.host)
         login_url = f"{base}{webpath}/login"
         # Keep login timeout short so refresh endpoints stay responsive.
-        login_resp = session_obj.post(login_url, data={"username": server.username, "password": server.password}, verify=False, timeout=3)
+        panel_password = get_server_password(server)
+        login_resp = session_obj.post(login_url, data={"username": server.username, "password": panel_password}, verify=False, timeout=3)
         if login_resp.status_code == 200 and login_resp.json().get('success'):
             # Cache the successful session
             XUI_SESSION_CACHE[server.id] = {
@@ -3893,11 +4063,14 @@ def add_server():
         return jsonify({"success": False, "error": "Only admins can add servers"}), 403
     
     data = request.json
+    server_password = (data.get('password') or '').strip()
+    if not server_password:
+        return jsonify({"success": False, "error": "Password is required"}), 400
     server = Server(
         name=sanitize_html(data['name']),
         host=sanitize_html(data['host']),
         username=sanitize_html(data['username']),
-        password=data['password'],
+        password=encrypt_server_password(server_password),
         panel_type=data.get('panel_type', 'auto'),
         sub_path=data.get('sub_path', '/sub/'),
         json_path=data.get('json_path', '/json/'),
@@ -3918,7 +4091,10 @@ def update_server(server_id):
     server.name = sanitize_html(data.get('name', server.name))
     server.host = sanitize_html(data.get('host', server.host))
     server.username = sanitize_html(data.get('username', server.username))
-    server.password = data.get('password', server.password)
+    if 'password' in data:
+        new_password = (data.get('password') or '').strip()
+        if new_password:
+            server.password = encrypt_server_password(new_password)
     server.panel_type = data.get('panel_type', server.panel_type)
     server.sub_path = data.get('sub_path', server.sub_path)
     server.json_path = data.get('json_path', server.json_path)
@@ -6819,7 +6995,7 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
 
         server_dicts = [{
             'id': s.id, 'name': s.name, 'host': s.host,
-            'username': s.username, 'password': s.password,
+            'username': s.username, 'password': get_server_password(s),
             'panel_type': s.panel_type, 'sub_port': s.sub_port,
             'sub_path': s.sub_path, 'json_path': s.json_path
         } for s in servers if int(s.id) not in skipped_ids]

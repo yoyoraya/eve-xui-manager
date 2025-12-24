@@ -436,7 +436,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     let apps = [];
     document.addEventListener('DOMContentLoaded', loadApps);
 

@@ -6,7 +6,7 @@
     <title>Subscription - {{ client.email }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script>
+    <script nonce="{{ csp_nonce }}">
         tailwind.config = {
             theme: {
                 extend: {
@@ -285,7 +285,7 @@
         Copied to clipboard!
     </div>
 
-    <script>
+    <script nonce="{{ csp_nonce }}">
         const apps = {{ apps|tojson }};
         const faqs = {{ faqs|tojson }};
         
