@@ -1206,6 +1206,26 @@ def superadmin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def validate_password_strength(password):
+    """
+    Validates password strength:
+    - Minimum 8 characters
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one number
+    """
+    if not password or len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    if not any(c.isupper() for c in password):
+        return False, "Password must contain at least one uppercase letter"
+    if not any(c.islower() for c in password):
+        return False, "Password must contain at least one lowercase letter"
+    if not any(c.isdigit() for c in password):
+        return False, "Password must contain at least one number"
+    if not any(not c.isalnum() for c in password):
+        return False, "Password must contain at least one special character"
+    return True, None
+
 def calculate_reseller_price(user, base_price=None, package=None, cost_type=None):
     """
     Calculate price for a reseller based on their settings.
@@ -3434,6 +3454,11 @@ def add_admin():
     if Admin.query.filter_by(username=username).first():
         return jsonify({"success": False, "error": "Username exists"}), 400
     
+    password = data.get('password')
+    is_valid, error_msg = validate_password_strength(password)
+    if not is_valid:
+        return jsonify({"success": False, "error": error_msg}), 400
+
     new_admin = Admin(
         username=username,
         role=data.get('role', 'reseller'),
@@ -3446,7 +3471,7 @@ def add_admin():
         custom_cost_per_gb=int(data.get('custom_cost_per_gb')) if data.get('custom_cost_per_gb') is not None else None,
         telegram_id=data.get('telegram_id')
     )
-    new_admin.set_password(data['password'])
+    new_admin.set_password(password)
     db.session.add(new_admin)
     db.session.commit()
     return jsonify({"success": True})
@@ -3456,7 +3481,11 @@ def add_admin():
 def update_admin(admin_id):
     admin = Admin.query.get_or_404(admin_id)
     data = request.json
-    if data.get('password'): admin.set_password(data['password'])
+    if data.get('password'):
+        is_valid, error_msg = validate_password_strength(data['password'])
+        if not is_valid:
+            return jsonify({"success": False, "error": error_msg}), 400
+        admin.set_password(data['password'])
     if data.get('role'):
         admin.role = data['role']
         admin.is_superadmin = (data['role'] == 'superadmin')
