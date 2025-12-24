@@ -611,6 +611,7 @@ show_menu() {
             detect_os
             clone_or_update_repo
             setup_python_env
+            create_env_file
             setup_nginx
             systemctl restart ${SERVICE_NAME}
             print_success "Updated, Gzip checked, and service restarted"
