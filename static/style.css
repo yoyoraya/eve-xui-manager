@@ -1716,7 +1716,6 @@ input:checked + .slider:before {
     box-shadow: var(--shadow-lg);
     display: flex;
     flex-direction: column;
-     color: #4ade80;
 }
 
 .modal .modal-body {

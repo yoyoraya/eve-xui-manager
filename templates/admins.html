@@ -387,6 +387,30 @@
         flex-shrink: 0;
     }
 
+    /* Guard against global SVG sizing rules affecting this checklist */
+    .password-requirements .requirement {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center;
+        text-align: left;
+    }
+
+    .password-requirements .requirement .status-icon {
+        width: 14px;
+        height: 14px;
+        flex: 0 0 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+    }
+
+    .password-requirements .requirement .status-icon svg {
+        width: 14px !important;
+        height: 14px !important;
+        display: block;
+    }
+
     .requirement.valid {
         color: var(--success);
     }
@@ -591,11 +615,11 @@
             if (valid) {
                 el.classList.remove('invalid');
                 el.classList.add('valid');
-                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
             } else {
                 el.classList.remove('valid');
                 el.classList.add('invalid');
-                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+                icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
                 allValid = false;
             }
         }

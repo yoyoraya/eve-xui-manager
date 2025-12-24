@@ -52,15 +52,75 @@ PY
 generate_fernet_key() {
     # Fernet key: urlsafe base64 of 32 random bytes
     if ! command -v python3 >/dev/null 2>&1; then
-        # Fallback: openssl random -> base64 -> urlsafe transform
-        openssl rand -base64 32 | tr '+/' '-_' | tr -d '=' | head -c 43
-        echo=
-        return
+        # Fallback: openssl random -> base64 -> urlsafe transform (keep '=' padding)
+        # 32 bytes -> 44 chars base64 including '=' padding
+        openssl rand -base64 32 | tr '+/' '-_' | tr -d '\n'
+        return 0
     fi
     python3 - <<'PY'
 import base64, os
 print(base64.urlsafe_b64encode(os.urandom(32)).decode())
 PY
+}
+
+ensure_server_password_key() {
+    local ENV_PATH="$ENV_FILE"
+
+    # Ensure .env exists
+    if [ ! -f "$ENV_PATH" ]; then
+        echo "✓ Creating $ENV_PATH"
+        sudo touch "$ENV_PATH"
+    fi
+
+    # Secure permissions
+    sudo chmod 600 "$ENV_PATH"
+
+    # If key exists and not empty, do nothing
+    if sudo grep -qE '^[[:space:]]*SERVER_PASSWORD_KEY=' "$ENV_PATH"; then
+        local val
+        val="$(sudo awk -F= '/^[[:space:]]*SERVER_PASSWORD_KEY=/{print $2; exit}' "$ENV_PATH" | tr -d '[:space:]')"
+        if [ -n "$val" ]; then
+            echo "✓ SERVER_PASSWORD_KEY already set in .env"
+            return 0
+        fi
+    fi
+
+    echo "⚠ SERVER_PASSWORD_KEY missing — generating..."
+    local KEY="$(generate_fernet_key)"
+
+    if [ -z "$KEY" ]; then
+        echo "✗ Failed to generate SERVER_PASSWORD_KEY" >&2
+        return 1
+    fi
+
+    # Write/replace line safely
+    if sudo grep -qE '^[[:space:]]*SERVER_PASSWORD_KEY=' "$ENV_PATH"; then
+        sudo sed -i "s|^[[:space:]]*SERVER_PASSWORD_KEY=.*|SERVER_PASSWORD_KEY=${KEY}|g" "$ENV_PATH"
+    else
+        echo "" | sudo tee -a "$ENV_PATH" >/dev/null
+        echo "SERVER_PASSWORD_KEY=${KEY}" | sudo tee -a "$ENV_PATH" >/dev/null
+    fi
+
+    echo "✓ SERVER_PASSWORD_KEY written to .env"
+}
+
+ensure_systemd_envfile_evemanager() {
+    local SERVICE="${SERVICE_NAME}.service"
+    local ENV_PATH="$ENV_FILE"
+
+    # If service exists, ensure it loads .env
+    if systemctl list-unit-files | grep -qE "^${SERVICE}\\b"; then
+        sudo mkdir -p "/etc/systemd/system/${SERVICE}.d"
+        cat <<EOF | sudo tee "/etc/systemd/system/${SERVICE}.d/override.conf" >/dev/null
+[Service]
+EnvironmentFile=${ENV_PATH}
+EOF
+        sudo systemctl daemon-reload
+        sudo systemctl restart "${SERVICE}" >/dev/null 2>&1 || true
+        echo "✓ systemd override set for ${SERVICE}: EnvironmentFile=${ENV_PATH}"
+    else
+        echo "ℹ ${SERVICE} not found (skipping systemd envfile override)"
+    fi
 }
 
 # ------------------------- Config --------------------------
@@ -596,9 +656,11 @@ show_menu() {
             create_app_user
             prepare_directories
             clone_or_update_repo
-            setup_python_env
             create_env_file
+            ensure_server_password_key
+            setup_python_env
             setup_systemd
+            ensure_systemd_envfile_evemanager
             setup_nginx
             print_header "Installation Complete!"
             echo -e "URL:      http://${DOMAIN}"
@@ -611,6 +673,8 @@ show_menu() {
             detect_os
             clone_or_update_repo
             create_env_file
+            ensure_server_password_key
+            ensure_systemd_envfile_evemanager
             setup_python_env
             setup_nginx
             systemctl restart ${SERVICE_NAME}
@@ -655,9 +719,11 @@ if [ $# -gt 0 ]; then
     create_app_user
     prepare_directories
     clone_or_update_repo
-    setup_python_env
     create_env_file
+    ensure_server_password_key
+    setup_python_env
     setup_systemd
+    ensure_systemd_envfile_evemanager
     setup_nginx
     print_header "Installation Complete!"
     echo -e "URL:      http://${DOMAIN}"
