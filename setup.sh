@@ -191,6 +191,54 @@ install_dependencies() {
     print_success "Dependencies installed"
 }
 
+ensure_tailwind_cli() {
+    if command -v tailwindcss >/dev/null 2>&1; then
+        return
+    fi
+
+    print_warning "Tailwind CLI not found; installing standalone tailwindcss binary..."
+
+    local arch
+    arch="$(uname -m)"
+
+    local bin_name
+    case "$arch" in
+        x86_64|amd64) bin_name="tailwindcss-linux-x64" ;;
+        aarch64|arm64) bin_name="tailwindcss-linux-arm64" ;;
+        armv7l) bin_name="tailwindcss-linux-armv7" ;;
+        *)
+            print_warning "Unsupported architecture for tailwindcss standalone: $arch (skipping CSS build)"
+            return
+            ;;
+    esac
+
+    curl -fsSL -o /usr/local/bin/tailwindcss "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/${bin_name}"
+    chmod +x /usr/local/bin/tailwindcss
+    print_success "Tailwind CLI installed"
+}
+
+build_frontend_assets() {
+    print_header "Building Frontend Assets"
+    if [ ! -f "$APP_DIR/tailwind.config.js" ] || [ ! -f "$APP_DIR/static/tailwind.input.css" ]; then
+        print_warning "Tailwind config/input not found; skipping asset build"
+        return
+    fi
+
+    ensure_tailwind_cli
+    if ! command -v tailwindcss >/dev/null 2>&1; then
+        print_warning "tailwindcss not available; skipping asset build"
+        return
+    fi
+
+    sudo -u "$APP_USER" /usr/local/bin/tailwindcss \
+        -c "$APP_DIR/tailwind.config.js" \
+        -i "$APP_DIR/static/tailwind.input.css" \
+        -o "$APP_DIR/static/tailwind.generated.css" \
+        --minify
+    chown "$APP_USER:$APP_USER" "$APP_DIR/static/tailwind.generated.css" || true
+    print_success "Built static/tailwind.generated.css"
+}
+
 create_app_user() {
     print_header "Step 3: Create service account"
     if id "$APP_USER" >/dev/null 2>&1; then
@@ -570,6 +618,7 @@ show_menu() {
             create_app_user
             prepare_directories
             clone_or_update_repo
+            build_frontend_assets
             setup_python_env
             create_env_file
             setup_systemd
@@ -584,6 +633,7 @@ show_menu() {
             require_root
             detect_os
             clone_or_update_repo
+            build_frontend_assets
             setup_python_env
             setup_nginx
             systemctl restart ${SERVICE_NAME}
@@ -628,6 +678,7 @@ if [ $# -gt 0 ]; then
     create_app_user
     prepare_directories
     clone_or_update_repo
+    build_frontend_assets
     setup_python_env
     create_env_file
     setup_systemd

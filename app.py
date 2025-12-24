@@ -433,15 +433,28 @@ def add_security_headers(response):
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('Referrer-Policy', 'same-origin')
     response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
-    response.headers.setdefault(
-        'Content-Security-Policy',
-        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
-        "img-src 'self' data:; "
-        "font-src 'self' data: https://fonts.gstatic.com; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://code.jquery.com; "
-        "connect-src 'self'"
-    )
+
+    # Strict CSP for public subscription page (no unsafe-inline)
+    if request.path.startswith('/s/'):
+        csp = (
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data: https://fonts.gstatic.com; "
+            "style-src 'self' https://fonts.googleapis.com; "
+            "script-src 'self'; "
+            "connect-src 'self'"
+        )
+    else:
+        csp = (
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
+            "img-src 'self' data:; "
+            "font-src 'self' data: https://fonts.gstatic.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://code.jquery.com; "
+            "connect-src 'self'"
+        )
+
+    response.headers.setdefault('Content-Security-Policy', csp)
     return response
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_recycle': 1800,
