@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 import concurrent.futures
+import magic
 from collections import defaultdict
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
@@ -1568,14 +1569,26 @@ def parse_iso_datetime(value):
         except Exception:
             return None
 
-def allowed_receipt_file(filename):
-    if not filename or '.' not in filename:
+def allowed_receipt_file(file_storage):
+    # Check extension
+    if not file_storage or not file_storage.filename or '.' not in file_storage.filename:
         return False
-    ext = filename.rsplit('.', 1)[1].lower()
-    return ext in RECEIPT_ALLOWED_EXTENSIONS
+    
+    # Check actual file type
+    try:
+        file_bytes = file_storage.read(2048)
+        file_storage.seek(0)
+        mime = magic.from_buffer(file_bytes, mime=True)
+    except Exception:
+        return False
+    
+    allowed_mimes = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf'}
+    
+    ext = file_storage.filename.rsplit('.', 1)[1].lower()
+    return ext in RECEIPT_ALLOWED_EXTENSIONS and mime in allowed_mimes
 
 def save_receipt_file(file_storage):
-    if not file_storage or not allowed_receipt_file(file_storage.filename):
+    if not file_storage or not allowed_receipt_file(file_storage):
         return None
     ext = file_storage.filename.rsplit('.', 1)[1].lower()
     subdir = datetime.utcnow().strftime('%Y/%m')
@@ -5786,7 +5799,7 @@ def upload_receipt():
     slip_file = request.files.get('file')
     if not slip_file or not slip_file.filename:
         return jsonify({'success': False, 'error': 'Receipt image is required'}), 400
-    if not allowed_receipt_file(slip_file.filename):
+    if not allowed_receipt_file(slip_file):
         return jsonify({'success': False, 'error': 'Unsupported file type'}), 400
     stored_path = save_receipt_file(slip_file)
     if not stored_path:
