@@ -859,16 +859,16 @@ def add_security_headers(response):
     style_src += " https://fonts.googleapis.com https://cdn.quilljs.com; "
     response.headers.setdefault(
         'Content-Security-Policy',
-        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
-        "img-src 'self' data:; "
-        "font-src 'self' data: https://fonts.gstatic.com; "
-        # Avoid breaking existing inline style attributes for now; keep attr allowed separately.
-        style_src
-        "style-src-attr 'unsafe-inline'; "
-        # Remove unsafe-inline from script-src; allow inline event handlers separately.
-        f"script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
-        "script-src-attr 'unsafe-inline'; "
-        "connect-src 'self'"
+        (
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
+            "img-src 'self' data:; "
+            "font-src 'self' data: https://fonts.gstatic.com; "
+            f"{style_src}"
+            "style-src-attr 'unsafe-inline'; "
+            f"script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
+            "script-src-attr 'unsafe-inline'; "
+            "connect-src 'self'"
+        )
     )
     return response
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
