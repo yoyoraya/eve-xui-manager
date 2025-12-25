@@ -848,14 +848,25 @@ def add_security_headers(response):
     response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
 
     nonce = getattr(g, 'csp_nonce', None) or ''
+    
+    # Debug endpoint
+    # print(f"DEBUG: endpoint={getattr(request, 'endpoint', '')}", flush=True)
 
     # The public subscription page currently uses Tailwind's CDN runtime, which injects a <style>
     # tag at runtime (no nonce). Keep the CSP strict everywhere else and relax style-src only for
     # this endpoint.
-    allow_tailwind_runtime_styles = (getattr(request, 'endpoint', '') == 'client_subscription')
-    style_src = f"style-src 'self' 'nonce-{nonce}'"
+    allow_tailwind_runtime_styles = (
+        getattr(request, 'endpoint', '') == 'client_subscription' or 
+        request.path.startswith('/s/')
+    )
+    
     if allow_tailwind_runtime_styles:
-        style_src += " 'unsafe-inline'"
+        # Tailwind Play CDN injects styles without nonce. 
+        # We must use 'unsafe-inline' and CANNOT use nonce, because nonce takes precedence and ignores unsafe-inline.
+        style_src = "style-src 'self' 'unsafe-inline'"
+    else:
+        style_src = f"style-src 'self' 'nonce-{nonce}'"
+
     style_src += " https://fonts.googleapis.com https://cdn.quilljs.com; "
     response.headers.setdefault(
         'Content-Security-Policy',
