@@ -848,13 +848,22 @@ def add_security_headers(response):
     response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
 
     nonce = getattr(g, 'csp_nonce', None) or ''
+
+    # The public subscription page currently uses Tailwind's CDN runtime, which injects a <style>
+    # tag at runtime (no nonce). Keep the CSP strict everywhere else and relax style-src only for
+    # this endpoint.
+    allow_tailwind_runtime_styles = (getattr(request, 'endpoint', '') == 'client_subscription')
+    style_src = f"style-src 'self' 'nonce-{nonce}'"
+    if allow_tailwind_runtime_styles:
+        style_src += " 'unsafe-inline'"
+    style_src += " https://fonts.googleapis.com https://cdn.quilljs.com; "
     response.headers.setdefault(
         'Content-Security-Policy',
         "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
         "img-src 'self' data:; "
         "font-src 'self' data: https://fonts.gstatic.com; "
         # Avoid breaking existing inline style attributes for now; keep attr allowed separately.
-        f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com https://cdn.quilljs.com; "
+        style_src
         "style-src-attr 'unsafe-inline'; "
         # Remove unsafe-inline from script-src; allow inline event handlers separately.
         f"script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com https://code.jquery.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
