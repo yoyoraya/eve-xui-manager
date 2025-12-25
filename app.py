@@ -29,8 +29,10 @@ from typing import Any
 # virtualenv get actionable instructions.
 try:
     import bleach
+    from bleach.css_sanitizer import CSSSanitizer
 except ModuleNotFoundError:
     bleach = None
+    CSSSanitizer = None
     if __name__ == '__main__':
         sys.stderr.write('\nMissing required package: bleach\n')
         sys.stderr.write('Install into the project venv or activate it before running.\n')
@@ -130,11 +132,16 @@ def sanitize_html(content, tags=None, attributes=None, styles=None):
     if not isinstance(content, str):
         content = str(content)
     
+    # bleach 5.0+ uses CSSSanitizer instead of styles argument
+    css_sanitizer = None
+    if styles is not None and CSSSanitizer:
+        css_sanitizer = CSSSanitizer(allowed_css_properties=styles)
+    
     return bleach.clean(
         content,
         tags=tags if tags is not None else [],
         attributes=attributes if attributes is not None else {},
-        styles=styles if styles is not None else [],
+        css_sanitizer=css_sanitizer,
         strip=True
     )
 
