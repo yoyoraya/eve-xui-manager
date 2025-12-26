@@ -2804,13 +2804,10 @@ select optgroup {
         display: none;
     }
 
-    /* Status sits on the top row; align it left and add a divider above it */
+    /* Status: keep same row structure as others, but add a divider above it */
     .clients-table td:nth-child(3) {
-        grid-column: 2;
-        justify-content: flex-start;
         border-top: 1px solid var(--border-color);
-        padding: 10px 0;
-        gap: 8px;
+        padding-top: 10px;
         margin-top: 4px;
         border-bottom: 1px solid var(--border-color);
         padding-bottom: 10px;
