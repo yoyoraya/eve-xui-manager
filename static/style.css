@@ -2773,6 +2773,12 @@ select optgroup {
         padding: 6px 0;
     }
 
+    .clients-table td.select-cell {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 10px;
+        margin-bottom: 4px;
+    }
+
     .clients-table td.select-cell::before {
         display: none;
     }
@@ -2788,6 +2794,12 @@ select optgroup {
         padding: 6px 0;
     }
 
+    .clients-table td.email-cell {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 10px;
+        margin-bottom: 4px;
+    }
+
     .clients-table td.email-cell::before {
         display: none;
     }
@@ -2800,8 +2812,11 @@ select optgroup {
         padding: 6px 0;
     }
 
-    .clients-table td:nth-child(3)::before {
-        display: none;
+    .clients-table td:nth-child(3) {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 10px;
+        margin-bottom: 4px;
+        gap: 8px;
     }
     
     .clients-table td::before {
@@ -2820,6 +2835,10 @@ select optgroup {
     /* Column order:
        1) select, 2) email, 3) status, 4) expiry, 5) traffic, 6) volume, 7) actions
     */
+    .clients-table td:nth-child(3)::before {
+        content: 'Status';
+    }
+
     .clients-table td:nth-child(4)::before {
         content: 'Expiry';
     }
