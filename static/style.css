@@ -2791,6 +2791,18 @@ select optgroup {
     .clients-table td.email-cell::before {
         display: none;
     }
+
+    /* Move status value to the top row (right side) */
+    .clients-table td:nth-child(3) {
+        grid-column: 2;
+        border-top: none;
+        justify-content: flex-end;
+        padding: 6px 0;
+    }
+
+    .clients-table td:nth-child(3)::before {
+        display: none;
+    }
     
     .clients-table td::before {
         content: attr(data-label);
@@ -2804,28 +2816,27 @@ select optgroup {
     .clients-table .email-cell::before {
         content: 'Email';
     }
-    
-    .clients-table td:nth-child(2)::before {
-        content: 'Status';
-    }
-    
-    .clients-table td:nth-child(3)::before {
+
+    /* Column order:
+       1) select, 2) email, 3) status, 4) expiry, 5) traffic, 6) volume, 7) actions
+    */
+    .clients-table td:nth-child(4)::before {
         content: 'Expiry';
     }
     
-    .clients-table td:nth-child(4)::before {
+    .clients-table td:nth-child(5)::before {
         content: 'Traffic';
     }
     
-    .clients-table td:nth-child(5)::before {
+    .clients-table td:nth-child(6)::before {
         content: 'Volume';
     }
     
-    .clients-table td:nth-child(6)::before {
+    .clients-table td:nth-child(7)::before {
         content: 'Actions';
     }
     
-    .clients-table td:nth-child(6) {
+    .clients-table td:nth-child(7) {
         display: flex;
         justify-content: flex-start;
         align-items: flex-start;
