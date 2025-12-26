@@ -2804,19 +2804,17 @@ select optgroup {
         display: none;
     }
 
-    /* Move status value to the top row (right side) */
+    /* Status sits on the top row; align it left and add a divider above it */
     .clients-table td:nth-child(3) {
         grid-column: 2;
-        border-top: none;
-        justify-content: flex-end;
-        padding: 6px 0;
-    }
-
-    .clients-table td:nth-child(3) {
+        justify-content: flex-start;
+        border-top: 1px solid var(--border-color);
+        padding: 10px 0;
+        gap: 8px;
+        margin-top: 4px;
         border-bottom: 1px solid var(--border-color);
         padding-bottom: 10px;
         margin-bottom: 4px;
-        gap: 8px;
     }
     
     .clients-table td::before {
