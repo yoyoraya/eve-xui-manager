@@ -2742,7 +2742,7 @@ select optgroup {
         border-radius: 8px;
         padding: 12px;
         display: grid;
-        grid-template-columns: 1fr;
+        grid-template-columns: 28px 1fr;
         gap: 10px;
         opacity: 1 !important;
     }
@@ -2758,10 +2758,38 @@ select optgroup {
         padding: 6px 0;
         border-bottom: none !important;
         border-top: 1px solid var(--border-color);
+        grid-column: 1 / -1;
     }
     
     .clients-table td:first-child {
         border-top: none;
+    }
+
+    /* Put bulk checkbox right before username/email on mobile */
+    .clients-table td.select-cell {
+        grid-column: 1;
+        border-top: none;
+        justify-content: flex-start;
+        padding: 6px 0;
+    }
+
+    .clients-table td.select-cell::before {
+        display: none;
+    }
+
+    .clients-table td.select-cell .checkbox-label {
+        margin: 0;
+    }
+
+    .clients-table td.email-cell {
+        grid-column: 2;
+        border-top: none;
+        justify-content: flex-start;
+        padding: 6px 0;
+    }
+
+    .clients-table td.email-cell::before {
+        display: none;
     }
     
     .clients-table td::before {
