@@ -146,6 +146,21 @@ def fix_database():
             else:
                 print(f"ℹ️  '{col_name}' already exists in transactions.")
 
+        # 7) Create renew_templates table if missing
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS renew_templates (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                content TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            print("✅ Table 'renew_templates' checked/created.")
+        except Exception as e:
+            print(f"⚠️  Error creating renew_templates table: {e}")
+
         conn.commit()
         conn.close()
         print("\n🚀 Database repair completed! You can now restart your app.")

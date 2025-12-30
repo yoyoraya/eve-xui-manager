@@ -1201,10 +1201,69 @@ class NotificationTemplate(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+
+class RenewTemplate(db.Model):
+    __tablename__ = 'renew_templates'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    is_active = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'content': self.content,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+
 class SystemSetting(db.Model):
     __tablename__ = 'system_settings'
     key = db.Column(db.String(50), primary_key=True)
     value = db.Column(db.Text)
+
+
+RENEW_TEMPLATE_SETTING_KEY = 'renew_template'
+DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nتمدید شد"""
+
+
+def _get_or_create_system_setting(key: str, default_value: str | None = None) -> str | None:
+    """Fetch a SystemSetting value; optionally create with default if missing.
+
+    Keep this safe for request-time usage; only writes when the row is missing.
+    """
+    setting = db.session.get(SystemSetting, key)
+    if setting:
+        return setting.value
+    if default_value is None:
+        return None
+    try:
+        setting = SystemSetting(key=key, value=str(default_value))
+        db.session.add(setting)
+        db.session.commit()
+    except Exception:
+        # Don't fail the request if we can't persist the default.
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+    return str(default_value)
+
+
+def _render_text_template(template: str | None, variables: dict) -> str:
+    """Render a python-format template with a safe fallback."""
+    raw = (template or '').strip() or DEFAULT_RENEW_TEMPLATE
+    try:
+        return raw.format(**variables)
+    except Exception:
+        # Fall back to the built-in default if user template is invalid.
+        try:
+            return DEFAULT_RENEW_TEMPLATE.format(**variables)
+        except Exception:
+            return DEFAULT_RENEW_TEMPLATE
 
 class ManualReceipt(db.Model):
     __tablename__ = 'manual_receipts'
@@ -3991,7 +4050,33 @@ def renew_client(server_id, inbound_id, email):
                         log_transaction(user.id, price, 'renew', "User Renewal (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
                     db.session.commit()
 
-                return _finish({"success": True})
+                # Build copyable success text (dynamic template)
+                now_utc = datetime.utcnow()
+                now_jalali = format_jalali(now_utc) or ''
+
+                days_label = f"{days_to_add} Days" if days_to_add > 0 else "Unlimited Days"
+                volume_label = f"{volume_gb_to_add}GB" if volume_gb_to_add > 0 else "Unlimited Volume"
+
+                # Dashboard link
+                app_base = request.url_root.rstrip('/')
+                final_id = target_client.get('subId') or target_client.get('id') or ''
+                dashboard_link = f"{app_base}/s/{server.id}/{final_id}" if final_id else ""
+
+                active_tpl = RenewTemplate.query.filter_by(is_active=True).first()
+                tpl_content = active_tpl.content if active_tpl else DEFAULT_RENEW_TEMPLATE
+                copy_text = _render_text_template(tpl_content, {
+                    'email': email,
+                    'days': days_to_add,
+                    'days_label': days_label,
+                    'volume': volume_gb_to_add,
+                    'volume_label': volume_label,
+                    'date': now_jalali,
+                    'server_name': getattr(server, 'name', '') or '',
+                    'mode': mode,
+                    'dashboard_link': dashboard_link,
+                })
+
+                return _finish({"success": True, "copy_text": copy_text})
 
             errors.append(f"{template}: {resp.status_code}")
             timing["update_endpoint"] = template
@@ -6634,89 +6719,59 @@ def create_template():
     data = request.get_json()
     name = data.get('name')
     content = data.get('content')
-    
+    template_type = (data.get('type') or 'client_created').strip().lower()
     if not name or not content:
         return jsonify({'success': False, 'error': 'Name and content are required'}), 400
-        
-    template = NotificationTemplate(name=name, content=content)
+
+    template = NotificationTemplate(name=name, content=content, type=template_type)
     db.session.add(template)
     db.session.commit()
-    
-    # If this is the first template, make it active
-    if NotificationTemplate.query.count() == 1:
+
+    type_count = NotificationTemplate.query.filter_by(type=template_type).count()
+    if type_count == 1:
         template.is_active = True
         db.session.commit()
-        
+
     return jsonify({'success': True, 'template': template.to_dict()})
 
-@app.route('/api/templates/<int:id>', methods=['PUT'])
+@app.route('/api/templates/<int:template_id>', methods=['PUT'])
 @superadmin_required
-def update_template(id):
-    template = db.session.get(NotificationTemplate, id)
+def update_template(template_id):
+    template = db.session.get(NotificationTemplate, template_id)
     if not template:
         return jsonify({'success': False, 'error': 'Template not found'}), 404
-        
+    
     data = request.get_json()
-    if 'name' in data:
-        template.name = data['name']
-    if 'content' in data:
-        template.content = data['content']
-        
+    template.name = data.get('name', template.name)
+    template.content = data.get('content', template.content)
     db.session.commit()
     return jsonify({'success': True, 'template': template.to_dict()})
 
-@app.route('/api/templates/<int:id>', methods=['DELETE'])
+@app.route('/api/templates/<int:template_id>', methods=['DELETE'])
 @superadmin_required
-def delete_template(id):
-    template = db.session.get(NotificationTemplate, id)
+def delete_template(template_id):
+    template = db.session.get(NotificationTemplate, template_id)
     if not template:
         return jsonify({'success': False, 'error': 'Template not found'}), 404
-        
     if template.is_active:
         return jsonify({'success': False, 'error': 'Cannot delete active template'}), 400
-        
+    
     db.session.delete(template)
     db.session.commit()
     return jsonify({'success': True})
 
-@app.route('/api/templates/<int:id>/activate', methods=['POST'])
+@app.route('/api/templates/<int:template_id>/activate', methods=['POST'])
 @superadmin_required
-def activate_template(id):
-    template = db.session.get(NotificationTemplate, id)
+def activate_template(template_id):
+    template = db.session.get(NotificationTemplate, template_id)
     if not template:
         return jsonify({'success': False, 'error': 'Template not found'}), 404
-        
-    # Deactivate all others
-    NotificationTemplate.query.update({NotificationTemplate.is_active: False})
+    
+    # Deactivate all others of the same type
+    NotificationTemplate.query.filter_by(type=template.type).update({NotificationTemplate.is_active: False})
     template.is_active = True
     db.session.commit()
-    
     return jsonify({'success': True})
-
-@app.route('/api/templates/active', methods=['GET'])
-@login_required
-def get_active_template():
-    template = NotificationTemplate.query.filter_by(is_active=True).first()
-    if not template:
-        # Return default if no template exists
-        default_content = """😍 سفارش جدید شما
-
-اطلاعات سرویس
-📡 پروتکل: {protocol}
-🔮 نام سرویس: {service_name}
-🔋حجم سرویس: {volume} گیگ
-⏰ مدت سرویس: {days} روز⁮⁮ ⁮⁮
-
-لینک های اتصال
- 
-🌐 subscription Direct:
-{sub_link}
-
-🌐 Account Dashboard : 
-{dashboard_link}"""
-        return jsonify({'success': True, 'content': default_content})
-        
-    return jsonify({'success': True, 'content': template.content})
 
 @app.route('/api/backups', methods=['GET'])
 @login_required
@@ -6881,6 +6936,77 @@ def save_session_settings():
         return jsonify({'success': True, 'message': 'Session settings saved'})
     except ValueError:
         return jsonify({'success': False, 'message': 'Invalid value'}), 400
+
+
+@app.route('/api/renew-templates', methods=['GET'])
+@superadmin_required
+def get_renew_templates():
+    templates = RenewTemplate.query.order_by(RenewTemplate.created_at.desc()).all()
+    return jsonify({
+        'success': True, 
+        'templates': [t.to_dict() for t in templates],
+        'available_vars': [
+            '{email}', '{days}', '{days_label}', '{volume}', '{volume_label}', '{date}', '{server_name}', '{mode}', '{dashboard_link}'
+        ]
+    })
+
+@app.route('/api/renew-templates', methods=['POST'])
+@superadmin_required
+def create_renew_template():
+    data = request.get_json()
+    name = data.get('name')
+    content = data.get('content')
+    if not name or not content:
+        return jsonify({'success': False, 'error': 'Name and content are required'}), 400
+
+    template = RenewTemplate(name=name, content=content)
+    db.session.add(template)
+    db.session.commit()
+
+    if RenewTemplate.query.count() == 1:
+        template.is_active = True
+        db.session.commit()
+
+    return jsonify({'success': True, 'template': template.to_dict()})
+
+@app.route('/api/renew-templates/<int:template_id>', methods=['PUT'])
+@superadmin_required
+def update_renew_template(template_id):
+    template = db.session.get(RenewTemplate, template_id)
+    if not template:
+        return jsonify({'success': False, 'error': 'Template not found'}), 404
+    
+    data = request.get_json()
+    template.name = data.get('name', template.name)
+    template.content = data.get('content', template.content)
+    db.session.commit()
+    return jsonify({'success': True, 'template': template.to_dict()})
+
+@app.route('/api/renew-templates/<int:template_id>', methods=['DELETE'])
+@superadmin_required
+def delete_renew_template(template_id):
+    template = db.session.get(RenewTemplate, template_id)
+    if not template:
+        return jsonify({'success': False, 'error': 'Template not found'}), 404
+    if template.is_active:
+        return jsonify({'success': False, 'error': 'Cannot delete active template'}), 400
+    
+    db.session.delete(template)
+    db.session.commit()
+    return jsonify({'success': True})
+
+@app.route('/api/renew-templates/<int:template_id>/activate', methods=['POST'])
+@superadmin_required
+def activate_renew_template(template_id):
+    template = db.session.get(RenewTemplate, template_id)
+    if not template:
+        return jsonify({'success': False, 'error': 'Template not found'}), 404
+    
+    # Deactivate all others
+    RenewTemplate.query.update({RenewTemplate.is_active: False})
+    template.is_active = True
+    db.session.commit()
+    return jsonify({'success': True})
 
 @app.route('/api/backups/<filename>/download', methods=['GET'])
 @login_required

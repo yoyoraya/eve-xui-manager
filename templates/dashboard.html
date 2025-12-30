@@ -2142,7 +2142,10 @@
                 `;
                 document.getElementById('renew-prev-state').innerHTML = prevHtml;
 
-                const successText = `🔰${email}\n⌛${finalDays} Days 📊${finalVolume}GB\nتمدید شد`;
+                const fallbackText = `🔰${email}\n⌛${finalDays} Days 📊${finalVolume}GB\nتمدید شد`;
+                const successText = (data && typeof data.copy_text === 'string' && data.copy_text.trim())
+                    ? data.copy_text
+                    : fallbackText;
                 document.getElementById('renew-success-text').innerText = successText;
                 document.getElementById('renew-success-modal').classList.remove('hidden');
 
