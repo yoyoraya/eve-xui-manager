@@ -4012,6 +4012,50 @@ def renew_client(server_id, inbound_id, email):
             target_client, _ = find_client(inbounds, inbound_id, email)
             if not target_client:
                 return _finish({"success": False, "error": "Client not found"}, 404)
+
+        # Snapshot current remaining values for message rendering
+        # (Used only when NOT resetting traffic and NOT start_after_first_use)
+        now_utc_for_calc = datetime.utcnow()
+        now_ms_for_calc = int(now_utc_for_calc.timestamp() * 1000)
+
+        try:
+            current_expiry_ms = int(target_client.get('expiryTime') or 0)
+        except (TypeError, ValueError):
+            current_expiry_ms = 0
+
+        remaining_days_before = 0
+        if current_expiry_ms > 0:
+            diff_ms = current_expiry_ms - now_ms_for_calc
+            if diff_ms > 0:
+                # ceil(diff_ms / 86400000)
+                remaining_days_before = int((diff_ms + 86400000 - 1) // 86400000)
+        elif current_expiry_ms < 0:
+            # Not started yet (start-after-first-use style). Represented as negative milliseconds.
+            pending_ms = abs(current_expiry_ms)
+            remaining_days_before = int((pending_ms + 86400000 - 1) // 86400000)
+
+        try:
+            current_total_bytes = int(target_client.get('totalGB') or 0)
+        except (TypeError, ValueError):
+            current_total_bytes = 0
+
+        try:
+            used_up = int(target_client.get('up') or 0)
+        except (TypeError, ValueError):
+            used_up = 0
+        try:
+            used_down = int(target_client.get('down') or 0)
+        except (TypeError, ValueError):
+            used_down = 0
+        used_bytes = max(0, used_up + used_down)
+
+        remaining_gb_before = 0
+        has_limited_volume = current_total_bytes > 0
+        if has_limited_volume:
+            remaining_bytes = current_total_bytes - used_bytes
+            if remaining_bytes < 0:
+                remaining_bytes = 0
+            remaining_gb_before = int(remaining_bytes // (1024 * 1024 * 1024))
         
         # Calculate new expiry
         if days_to_add == 0:
@@ -4021,15 +4065,25 @@ def renew_client(server_id, inbound_id, email):
             new_expiry = -1 * (days_to_add * 86400000)
         else:
             current_expiry = target_client.get('expiryTime', 0)
-            if current_expiry > 0:
-                current_date = datetime.fromtimestamp(current_expiry / 1000)
+            # If the client is not started yet (negative expiry), keep it not-started
+            # and add days to the pending duration.
+            try:
+                current_expiry_int = int(current_expiry or 0)
+            except (TypeError, ValueError):
+                current_expiry_int = 0
+
+            if current_expiry_int < 0:
+                new_expiry = current_expiry_int - (days_to_add * 86400000)
+            elif current_expiry_int > 0:
+                current_date = datetime.fromtimestamp(current_expiry_int / 1000)
                 new_date = current_date + timedelta(days=days_to_add)
+                new_expiry = int(new_date.timestamp() * 1000)
             else:
                 new_date = datetime.now() + timedelta(days=days_to_add)
-            new_expiry = int(new_date.timestamp() * 1000)
+                new_expiry = int(new_date.timestamp() * 1000)
         
         # Update volume
-        current_volume = target_client.get('totalGB', 0)
+        current_volume = current_total_bytes
         
         if reset_traffic:
             target_client['up'] = 0
@@ -4046,7 +4100,11 @@ def renew_client(server_id, inbound_id, email):
             if volume_gb_to_add == 0:
                 new_volume = 0  # unlimited
             elif volume_gb_to_add > 0:
-                new_volume = current_volume + (volume_gb_to_add * 1024 * 1024 * 1024)
+                # If current is unlimited (0), keep unlimited.
+                if current_volume == 0:
+                    new_volume = 0
+                else:
+                    new_volume = current_volume + (volume_gb_to_add * 1024 * 1024 * 1024)
             else:
                 new_volume = current_volume
         
@@ -4138,8 +4196,33 @@ def renew_client(server_id, inbound_id, email):
                 now_utc = datetime.utcnow()
                 now_jalali = format_jalali(now_utc) or ''
 
-                days_label = f"{days_to_add} Days" if days_to_add > 0 else "Unlimited Days"
-                volume_label = f"{volume_gb_to_add}GB" if volume_gb_to_add > 0 else "Unlimited Volume"
+                # Message values:
+                # - If start_after_first_use: show the package/custom amount (days_to_add)
+                # - If reset_traffic: show the package/custom amount (volume_gb_to_add)
+                # - Otherwise: show remaining_before + added (days/GB)
+                if days_to_add <= 0:
+                    msg_days = 0
+                    days_label = "Unlimited Days"
+                elif start_after_first_use:
+                    msg_days = days_to_add
+                    days_label = f"{msg_days} Days"
+                else:
+                    msg_days = int(remaining_days_before) + int(days_to_add)
+                    days_label = f"{msg_days} Days"
+
+                if volume_gb_to_add == 0:
+                    msg_volume = 0
+                    volume_label = "Unlimited Volume"
+                elif reset_traffic:
+                    msg_volume = int(volume_gb_to_add)
+                    volume_label = f"{msg_volume}GB"
+                else:
+                    if not has_limited_volume:
+                        msg_volume = 0
+                        volume_label = "Unlimited Volume"
+                    else:
+                        msg_volume = int(remaining_gb_before) + int(volume_gb_to_add)
+                        volume_label = f"{msg_volume}GB"
 
                 # Dashboard link
                 app_base = request.url_root.rstrip('/')
@@ -4150,9 +4233,9 @@ def renew_client(server_id, inbound_id, email):
                 tpl_content = active_tpl.content if active_tpl else DEFAULT_RENEW_TEMPLATE
                 copy_text = _render_text_template(tpl_content, {
                     'email': email,
-                    'days': days_to_add,
+                    'days': msg_days,
                     'days_label': days_label,
-                    'volume': volume_gb_to_add,
+                    'volume': msg_volume,
                     'volume_label': volume_label,
                     'date': now_jalali,
                     'server_name': getattr(server, 'name', '') or '',
