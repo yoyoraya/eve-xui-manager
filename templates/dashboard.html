@@ -2573,7 +2573,7 @@
         // Fetch active template
         let templateContent = '';
         try {
-            const res = await fetch('/api/templates/active');
+            const res = await fetch('/api/templates/active?type=client_created');
             const data = await res.json();
             if (data.success) {
                 templateContent = data.content;

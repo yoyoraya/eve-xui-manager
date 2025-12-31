@@ -43,6 +43,7 @@ from app import (
     Transaction,
     ClientOwnership,
     PanelAPI,
+    Announcement,
 )
 
 
@@ -253,6 +254,7 @@ def main():
         ('bank_cards', BankCard, None),
         ('notification_templates', NotificationTemplate, None),
         ('renew_templates', RenewTemplate, None),
+        ('announcements', Announcement, None),
         ('auto_approval_windows', AutoApprovalWindow, None),
         ('manual_receipts', ManualReceipt, None),
         ('payments', Payment, None),

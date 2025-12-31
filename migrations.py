@@ -161,6 +161,46 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating renew_templates table: {e}")
 
+        # 8) Create announcements tables if missing
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS announcements (
+                id INTEGER PRIMARY KEY,
+                message TEXT NOT NULL,
+                all_servers BOOLEAN DEFAULT 1,
+                targets TEXT,
+                start_at DATETIME NOT NULL,
+                end_at DATETIME NOT NULL,
+                created_by VARCHAR(100),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            print("✅ Table 'announcements' checked/created.")
+        except Exception as e:
+            print(f"⚠️  Error creating announcements table: {e}")
+
+        # Add missing column(s) for announcements
+        try:
+            c.execute("PRAGMA table_info(announcements)")
+            cols = {row[1] for row in (c.fetchall() or [])}
+            if 'targets' not in cols:
+                c.execute("ALTER TABLE announcements ADD COLUMN targets TEXT")
+                print("✅ Column 'announcements.targets' added.")
+        except Exception as e:
+            print(f"⚠️  Error adding announcements columns: {e}")
+
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS announcement_servers (
+                announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+                server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+                PRIMARY KEY (announcement_id, server_id)
+            )
+            ''')
+            print("✅ Table 'announcement_servers' checked/created.")
+        except Exception as e:
+            print(f"⚠️  Error creating announcement_servers table: {e}")
+
         conn.commit()
         conn.close()
         print("\n🚀 Database repair completed! You can now restart your app.")

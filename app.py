@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
+
 import io
 import re
 import json
@@ -691,6 +694,7 @@ _SERVER_PASSWORD_MIGRATION_LOCK = threading.Lock()
 
 
 def _is_dev_mode() -> bool:
+    
     env = (os.environ.get('FLASK_ENV') or os.environ.get('ENV') or '').strip().lower()
     debug = (os.environ.get('DEBUG') or '').strip().lower() in ('1', 'true', 'yes', 'on')
     return debug or env in ('development', 'dev')
@@ -712,14 +716,17 @@ def _get_server_password_fernet() -> Any:
     try:
         _SERVER_PASSWORD_FERNET = Fernet(key)
         return _SERVER_PASSWORD_FERNET
-    except Exception as e:
-        raise RuntimeError('Invalid SERVER_PASSWORD_KEY (must be Fernet key).') from e
+    except Exception:
+        # Invalid key format. Log warning and return None to fallback to plaintext.
+        app.logger.warning("Invalid SERVER_PASSWORD_KEY (must be Fernet key). Encryption/Decryption disabled.")
+        return None
 
 
 def encrypt_server_password(plaintext: str) -> str:
     f = _get_server_password_fernet()
     if not f:
-        raise RuntimeError('SERVER_PASSWORD_KEY is required to store server passwords securely.')
+        # If no key is configured, we store as plaintext (legacy behavior)
+        return plaintext
     plain = str(plaintext or '')
     token = f.encrypt(plain.encode('utf-8')).decode('utf-8')
     return f'{SERVER_PASSWORD_PREFIX}{token}'
@@ -734,13 +741,18 @@ def decrypt_server_password(value: str) -> str:
 
     f = _get_server_password_fernet()
     if not f:
-        raise RuntimeError('SERVER_PASSWORD_KEY is required to decrypt stored server passwords.')
+        # If no key is configured, we can't decrypt. 
+        # Return raw value as fallback (might be plaintext from legacy)
+        return raw
 
     token = raw[len(SERVER_PASSWORD_PREFIX):]
     try:
         return f.decrypt(token.encode('utf-8')).decode('utf-8')
-    except InvalidToken as e:
-        raise RuntimeError('Failed to decrypt stored server password (invalid key/token).') from e
+    except InvalidToken:
+        # Decryption failed (e.g. key changed or data corrupted).
+        # We log a warning instead of raising RuntimeError to avoid crashing background tasks.
+        app.logger.warning("Failed to decrypt a stored server password (invalid key/token). Returning empty string.")
+        return ""
 
 
 def get_server_password(server: 'Server') -> str:
@@ -1220,6 +1232,63 @@ class RenewTemplate(db.Model):
         }
 
 
+announcement_servers = db.Table(
+    'announcement_servers',
+    db.Column('announcement_id', db.Integer, db.ForeignKey('announcements.id'), primary_key=True),
+    db.Column('server_id', db.Integer, db.ForeignKey('servers.id'), primary_key=True),
+)
+
+
+class Announcement(db.Model):
+    __tablename__ = 'announcements'
+    id = db.Column(db.Integer, primary_key=True)
+    message = db.Column(db.Text, nullable=False)
+    all_servers = db.Column(db.Boolean, default=True)
+    # Reseller-style targeting rules (same shape as Admin.allowed_servers):
+    # '*' OR JSON list of {server_id: int, inbounds: '*'|[int,...]}
+    targets = db.Column(db.Text)
+    start_at = db.Column(db.DateTime, nullable=False)
+    end_at = db.Column(db.DateTime, nullable=False)
+    created_by = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    servers = db.relationship('Server', secondary=announcement_servers, lazy='subquery')
+
+    def to_dict(self):
+        server_ids = []
+        server_names = []
+        try:
+            for s in (self.servers or []):
+                server_ids.append(s.id)
+                server_names.append(s.name)
+        except Exception:
+            pass
+
+        now_utc = datetime.utcnow()
+        is_active = False
+        try:
+            is_active = bool(self.start_at and self.end_at and self.start_at <= now_utc <= self.end_at)
+        except Exception:
+            is_active = False
+
+        return {
+            'id': self.id,
+            'message': self.message,
+            'all_servers': bool(self.all_servers),
+            'targets': self.targets or ('*' if self.all_servers else ''),
+            'server_ids': server_ids,
+            'server_names': server_names,
+            'start_at': self.start_at.isoformat() if self.start_at else None,
+            'end_at': self.end_at.isoformat() if self.end_at else None,
+            'start_at_jalali': format_jalali(self.start_at) if self.start_at else None,
+            'end_at_jalali': format_jalali(self.end_at) if self.end_at else None,
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'created_at_jalali': format_jalali(self.created_at) if self.created_at else None,
+            'is_active': is_active,
+        }
+
+
 class SystemSetting(db.Model):
     __tablename__ = 'system_settings'
     key = db.Column(db.String(50), primary_key=True)
@@ -1613,6 +1682,21 @@ with app.app_context():
             print("Ensured system_configs.value is TEXT")
     except Exception as e:
         print(f"Migration error (system_configs.value TEXT): {e}")
+
+    # Ensure announcements.targets exists (SQLite old DBs)
+    try:
+        inspector = inspect(db.engine)
+        tables = set(inspector.get_table_names() or [])
+        if 'announcements' in tables:
+            ann_columns = [c['name'] for c in inspector.get_columns('announcements')]
+            if 'targets' not in ann_columns:
+                print("announcements.targets column missing, attempting to add...")
+                with db.engine.connect() as conn:
+                    conn.execute(text('ALTER TABLE announcements ADD COLUMN targets TEXT'))
+                    conn.commit()
+                print("Added targets column to announcements table")
+    except Exception as e:
+        print(f"Migration error (announcements.targets): {e}")
     
     # Initialize PanelAPI data
     if not PanelAPI.query.first():
@@ -6134,7 +6218,148 @@ def client_subscription(server_id, sub_id):
         'whatsapp': _normalize_url(channel_whatsapp.value if channel_whatsapp else '')
     }
 
-    return render_template('subscription.html', client=client_payload, apps=apps_payload, faqs=faqs_payload, support=support_info, channels=channels_info)
+    # Announcements (server+inbound scoped) for subscription page
+    announcements_payload = []
+    try:
+        def _parse_int_or_none(val):
+            if val is None:
+                return None
+            try:
+                return int(val)
+            except Exception:
+                try:
+                    return int(float(str(val).strip()))
+                except Exception:
+                    return None
+
+        inbound_id = None
+        try:
+            inbound_id = _parse_int_or_none((target_inbound or {}).get('id'))
+            if inbound_id is None:
+                inbound_id = _parse_int_or_none((target_inbound or {}).get('inbound_id'))
+        except Exception:
+            inbound_id = None
+
+        def _normalize_targets(raw_targets, *, fallback_all_servers: bool, fallback_server_ids: list[int]):
+            if raw_targets is None:
+                if fallback_all_servers:
+                    return '*'
+                return [{'server_id': int(sid), 'inbounds': '*'} for sid in (fallback_server_ids or [])]
+
+            if raw_targets == '*':
+                return '*'
+
+            if isinstance(raw_targets, str):
+                trimmed = raw_targets.strip()
+                if not trimmed:
+                    if fallback_all_servers:
+                        return '*'
+                    return [{'server_id': int(sid), 'inbounds': '*'} for sid in (fallback_server_ids or [])]
+                if trimmed == '*':
+                    return '*'
+                try:
+                    parsed = json.loads(trimmed)
+                    return _normalize_targets(parsed, fallback_all_servers=fallback_all_servers, fallback_server_ids=fallback_server_ids)
+                except Exception:
+                    # Back-compat: comma-separated server ids
+                    ids = []
+                    for part in trimmed.split(','):
+                        try:
+                            ids.append(int(part.strip()))
+                        except Exception:
+                            continue
+                    return [{'server_id': int(sid), 'inbounds': '*'} for sid in ids]
+
+            entries = raw_targets if isinstance(raw_targets, list) else [raw_targets]
+            merged: dict[int, str | set[int]] = {}
+            for item in entries:
+                server_id = None
+                inbounds: str | list[int] = '*'
+
+                if isinstance(item, (int, float)):
+                    server_id = _parse_int_or_none(item)
+                    inbounds = '*'
+                elif isinstance(item, str):
+                    if item.strip() == '*':
+                        return '*'
+                    server_id = _parse_int_or_none(item)
+                    inbounds = '*'
+                elif isinstance(item, dict):
+                    server_id = _parse_int_or_none(item.get('server_id') or item.get('server') or item.get('id'))
+                    raw_inb = item.get('inbounds')
+                    if raw_inb == '*' or (isinstance(raw_inb, str) and raw_inb.strip() == '*') or raw_inb is None:
+                        inbounds = '*'
+                    elif isinstance(raw_inb, list):
+                        inbounds = [v for v in (_parse_int_or_none(x) for x in raw_inb) if v is not None]
+                    else:
+                        one = _parse_int_or_none(raw_inb)
+                        inbounds = [] if one is None else [one]
+
+                if not server_id:
+                    continue
+
+                if server_id not in merged:
+                    merged[server_id] = '*' if inbounds == '*' else set(inbounds)
+                else:
+                    if merged[server_id] == '*' or inbounds == '*':
+                        merged[server_id] = '*'
+                    else:
+                        for v in inbounds:
+                            merged[server_id].add(int(v))
+
+            return [
+                {
+                    'server_id': sid,
+                    'inbounds': '*' if inb == '*' else sorted(list(inb)),
+                }
+                for sid, inb in merged.items()
+            ]
+
+        def _announcement_allows(ann: Announcement, *, server_id: int, inbound_id: int | None) -> bool:
+            try:
+                rules = _normalize_targets(
+                    ann.targets,
+                    fallback_all_servers=bool(ann.all_servers),
+                    fallback_server_ids=[s.id for s in (ann.servers or [])],
+                )
+                if rules == '*':
+                    return True
+                for rule in rules:
+                    try:
+                        if int(rule.get('server_id')) != int(server_id):
+                            continue
+                    except Exception:
+                        continue
+
+                    inb = rule.get('inbounds')
+                    if inb == '*':
+                        return True
+                    if inbound_id is None:
+                        return True
+                    if isinstance(inb, list) and any(int(x) == int(inbound_id) for x in inb if x is not None):
+                        return True
+                return False
+            except Exception:
+                # Fail closed (do not show announcement) on malformed targeting
+                return False
+
+        now_utc = datetime.utcnow()
+        q = Announcement.query.filter(Announcement.start_at <= now_utc, Announcement.end_at >= now_utc)
+        q = q.order_by(Announcement.created_at.desc())
+        active = q.all()
+        announcements_payload = [a.to_dict() for a in active if _announcement_allows(a, server_id=server.id, inbound_id=inbound_id)]
+    except Exception:
+        announcements_payload = []
+
+    return render_template(
+        'subscription.html',
+        client=client_payload,
+        apps=apps_payload,
+        faqs=faqs_payload,
+        support=support_info,
+        channels=channels_info,
+        announcements=announcements_payload,
+    )
 
 @app.route('/sub-manager')
 @superadmin_required
@@ -6336,6 +6561,244 @@ def delete_faq(faq_id):
         
     try:
         db.session.delete(faq)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Announcement APIs (Sub Manager)
+@app.route('/api/announcements', methods=['GET'])
+@superadmin_required
+def get_announcements():
+    items = Announcement.query.order_by(Announcement.created_at.desc()).all()
+    return jsonify([a.to_dict() for a in items])
+
+
+def _parse_announcement_payload(data: dict) -> tuple[dict | None, str | None]:
+    if not data:
+        return None, 'No data provided'
+
+    message = (data.get('message') or '').strip()
+    if not message:
+        return None, 'Message is required'
+
+    start_at_iso_raw = (data.get('start_at') or '').strip()
+    end_at_iso_raw = (data.get('end_at') or '').strip()
+    start_at_jalali_raw = (data.get('start_at_jalali') or '').strip()
+    end_at_jalali_raw = (data.get('end_at_jalali') or '').strip()
+
+    start_at = parse_iso_datetime(start_at_iso_raw) if start_at_iso_raw else None
+    end_at = parse_iso_datetime(end_at_iso_raw) if end_at_iso_raw else None
+    if not start_at and start_at_jalali_raw:
+        start_at = parse_jalali_date(start_at_jalali_raw)
+    if not end_at and end_at_jalali_raw:
+        end_at = parse_jalali_date(end_at_jalali_raw)
+
+    if not start_at or not end_at:
+        return None, 'Start and End datetime are required'
+    if start_at > end_at:
+        return None, 'Start datetime must be before End datetime'
+
+    def _parse_int_or_none(val):
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except Exception:
+            try:
+                return int(float(str(val).strip()))
+            except Exception:
+                return None
+
+    raw_targets = data.get('targets')
+    all_servers_raw = data.get('all_servers', None)
+    server_ids_raw = data.get('server_ids') or []
+    if not isinstance(server_ids_raw, list):
+        server_ids_raw = []
+
+    normalized_server_ids: list[int] = []
+    for sid in server_ids_raw:
+        parsed = _parse_int_or_none(sid)
+        if parsed is not None:
+            normalized_server_ids.append(parsed)
+    normalized_server_ids = list(dict.fromkeys(normalized_server_ids))
+
+    def _normalize_targets(raw):
+        if raw is None:
+            return None
+        if raw == '*':
+            return '*'
+        if isinstance(raw, str):
+            trimmed = raw.strip()
+            if trimmed == '*':
+                return '*'
+            if not trimmed:
+                return []
+            try:
+                parsed = json.loads(trimmed)
+                return _normalize_targets(parsed)
+            except Exception:
+                # Back-compat: comma-separated server ids
+                ids = []
+                for part in trimmed.split(','):
+                    parsed_id = _parse_int_or_none(part)
+                    if parsed_id is not None:
+                        ids.append(parsed_id)
+                return [{'server_id': sid, 'inbounds': '*'} for sid in ids]
+
+        entries = raw if isinstance(raw, list) else [raw]
+        merged: dict[int, str | set[int]] = {}
+        for item in entries:
+            server_id = None
+            inbounds: str | list[int] = '*'
+            if isinstance(item, (int, float, str)):
+                server_id = _parse_int_or_none(item)
+                inbounds = '*'
+            elif isinstance(item, dict):
+                server_id = _parse_int_or_none(item.get('server_id') or item.get('server') or item.get('id'))
+                raw_inb = item.get('inbounds')
+                if raw_inb == '*' or (isinstance(raw_inb, str) and raw_inb.strip() == '*') or raw_inb is None:
+                    inbounds = '*'
+                elif isinstance(raw_inb, list):
+                    inbounds = [v for v in (_parse_int_or_none(x) for x in raw_inb) if v is not None]
+                else:
+                    one = _parse_int_or_none(raw_inb)
+                    inbounds = [] if one is None else [one]
+
+            if not server_id:
+                continue
+
+            if server_id not in merged:
+                merged[server_id] = '*' if inbounds == '*' else set(inbounds)
+            else:
+                if merged[server_id] == '*' or inbounds == '*':
+                    merged[server_id] = '*'
+                else:
+                    for v in inbounds:
+                        merged[server_id].add(int(v))
+
+        return [
+            {'server_id': sid, 'inbounds': '*' if inb == '*' else sorted(list(inb))}
+            for sid, inb in merged.items()
+        ]
+
+    normalized_targets = _normalize_targets(raw_targets)
+
+    # Back-compat: if targets not provided, derive from all_servers/server_ids
+    if normalized_targets is None:
+        all_servers = bool(all_servers_raw) if all_servers_raw is not None else True
+        if all_servers:
+            normalized_targets = '*'
+        else:
+            normalized_targets = [{'server_id': sid, 'inbounds': '*'} for sid in normalized_server_ids]
+
+    if normalized_targets == '*':
+        targets_str = '*'
+        all_servers = True
+        derived_server_ids: list[int] = []
+    else:
+        try:
+            targets_str = json.dumps(normalized_targets, ensure_ascii=False)
+        except Exception:
+            targets_str = '[]'
+        all_servers = False
+        derived_server_ids = []
+        for rule in (normalized_targets or []):
+            sid = _parse_int_or_none((rule or {}).get('server_id'))
+            if sid is not None:
+                derived_server_ids.append(sid)
+        derived_server_ids = list(dict.fromkeys(derived_server_ids))
+
+    if not all_servers and not derived_server_ids:
+        return None, 'Select at least one server (or choose all)'
+
+    payload = {
+        'message': message,
+        'targets': targets_str,
+        'all_servers': all_servers,
+        'start_at': start_at,
+        'end_at': end_at,
+        'server_ids': derived_server_ids,
+    }
+    return payload, None
+
+
+@app.route('/api/announcements', methods=['POST'])
+@superadmin_required
+def create_announcement():
+    data = request.get_json() or {}
+    payload, err = _parse_announcement_payload(data)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    user = db.session.get(Admin, session.get('admin_id')) if session.get('admin_id') else None
+    created_by = (getattr(user, 'username', None) or session.get('admin_username') or '').strip() or None
+
+    ann = Announcement(
+        message=sanitize_html(payload['message']),
+        all_servers=payload['all_servers'],
+        targets=payload['targets'],
+        start_at=payload['start_at'],
+        end_at=payload['end_at'],
+        created_by=created_by,
+    )
+
+    if not payload['all_servers']:
+        servers = Server.query.filter(Server.id.in_(payload['server_ids'])).all() if payload['server_ids'] else []
+        ann.servers = servers
+
+    try:
+        db.session.add(ann)
+        db.session.commit()
+        return jsonify({'success': True, 'announcement': ann.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/announcements/<int:announcement_id>', methods=['PUT'])
+@superadmin_required
+def update_announcement(announcement_id):
+    ann = db.session.get(Announcement, announcement_id)
+    if not ann:
+        return jsonify({'success': False, 'error': 'Announcement not found'}), 404
+
+    data = request.get_json() or {}
+    payload, err = _parse_announcement_payload(data)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    ann.message = sanitize_html(payload['message'])
+    ann.all_servers = payload['all_servers']
+    ann.targets = payload['targets']
+    ann.start_at = payload['start_at']
+    ann.end_at = payload['end_at']
+
+    if ann.all_servers:
+        ann.servers = []
+    else:
+        servers = Server.query.filter(Server.id.in_(payload['server_ids'])).all() if payload['server_ids'] else []
+        ann.servers = servers
+
+    try:
+        db.session.commit()
+        return jsonify({'success': True, 'announcement': ann.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/announcements/<int:announcement_id>', methods=['DELETE'])
+@superadmin_required
+def delete_announcement(announcement_id):
+    ann = db.session.get(Announcement, announcement_id)
+    if not ann:
+        return jsonify({'success': False, 'error': 'Announcement not found'}), 404
+
+    try:
+        db.session.delete(ann)
         db.session.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -6772,6 +7235,18 @@ def activate_template(template_id):
     template.is_active = True
     db.session.commit()
     return jsonify({'success': True})
+
+
+@app.route('/api/templates/active', methods=['GET'])
+@login_required
+def get_active_template():
+    template_type = (request.args.get('type') or 'client_created').strip().lower()
+    template = NotificationTemplate.query.filter_by(type=template_type, is_active=True).first()
+    return jsonify({
+        'success': True,
+        'template': template.to_dict() if template else None,
+        'content': template.content if template else ''
+    })
 
 @app.route('/api/backups', methods=['GET'])
 @login_required

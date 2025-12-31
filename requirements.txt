@@ -12,6 +12,7 @@ python-magic>=0.4.27
 bleach>=6.0.0
 tinycss2>=1.4.0
 cryptography>=42.0.0
+python-dotenv>=1.0.0
 
 # Windows note: `python-magic` may require `libmagic`.
 # If MIME sniffing is needed on Windows, install `python-magic-bin`.

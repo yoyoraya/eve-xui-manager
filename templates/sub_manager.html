@@ -20,6 +20,11 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
             Contact Info
         </button>
+
+        <button class="settings-tab" onclick="switchTab('announcements')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v11a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z"/><path d="M8 22h8"/><path d="M12 15v-3"/><path d="M12 6h.01"/></svg>
+            Announcement
+        </button>
     </div>
 
     <div class="settings-content">
@@ -93,6 +98,22 @@
                 </div>
             </div>
         </div>
+
+        <div id="tab-announcements" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Announcements</h2>
+                        <p class="text-secondary">Create server-scoped announcements shown on the subscription page.</p>
+                    </div>
+                    <button class="btn btn-success" onclick="openAddAnnouncementModal()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Announcement
+                    </button>
+                </div>
+                <div id="announcements-container" class="servers-grid"></div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -113,6 +134,302 @@
     /* Vazirmatn font for forms */
     .form-input, .form-select, label, .modal-body {
         font-family: 'Vazirmatn', sans-serif !important;
+    }
+
+    /* Announcement Target Selector (reuse reseller access selector CSS) */
+    .server-selection-wrapper {
+        width: 100%;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    .checkbox-label {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        gap: 10px;
+        font-size: 0.95rem;
+        color: var(--text-primary);
+        position: relative;
+        padding-left: 0;
+        user-select: none;
+        margin: 0 !important;
+        margin-bottom: 5px !important;
+        min-height: 32px;
+        line-height: 1.5;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+        position: absolute;
+        opacity: 0;
+        cursor: pointer;
+        height: 0;
+        width: 0;
+    }
+
+    .checkmark {
+        position: relative;
+        display: inline-block;
+        vertical-align: middle;
+        height: 20px;
+        width: 20px;
+        background-color: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        transition: all 0.2s ease;
+        margin-right: 12px;
+    }
+
+    .checkbox-label:hover input ~ .checkmark {
+        border-color: var(--primary);
+    }
+
+    .checkbox-label input:checked ~ .checkmark {
+        background-color: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .checkmark:after {
+        content: "";
+        position: absolute;
+        display: none;
+    }
+
+    .checkbox-label input:checked ~ .checkmark:after {
+        display: block;
+    }
+
+    .checkbox-label .checkmark:after {
+        left: 7px;
+        top: 3px;
+        width: 4px;
+        height: 9px;
+        border: solid white;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
+    }
+
+    .checkbox-label input:indeterminate ~ .checkmark {
+        background-color: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .checkbox-label input:indeterminate ~ .checkmark:after {
+        display: block;
+        left: 5px;
+        top: 8px;
+        width: 8px;
+        height: 2px;
+        border: none;
+        background-color: white;
+        transform: none;
+    }
+
+    .select-all-container {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        padding-left: 26px;
+        border-bottom: 1px solid var(--border-color);
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    .select-all-container .checkbox-label {
+        margin-right: 12px;
+        margin-left: -4px;
+        padding-left: 0;
+    }
+
+    .server-list-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        margin-left: 0;
+        gap: 12px;
+    }
+
+    .meta-title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: var(--text-primary);
+    }
+
+    .count-pill {
+        background: #312e81;
+        color: #a5b4fc;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+
+    .server-accordion {
+        border-bottom: 1px solid var(--border-color);
+        background: var(--bg-card);
+    }
+
+    .server-accordion:last-child {
+        border-bottom: none;
+    }
+
+    .server-accordion-header {
+        padding: 16px;
+        padding-left: 30px;
+        display: flex;
+        align-items: center;
+        gap: 0;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .server-accordion-header .checkbox-label {
+        min-width: fit-content;
+        margin-right: 12px;
+        margin-left: -4px;
+        padding-left: 0;
+    }
+
+    .server-accordion-header:hover {
+        background-color: rgba(255, 255, 255, 0.03);
+    }
+
+    .header-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-grow: 1;
+        margin-left: 6px;
+        gap: 12px;
+    }
+
+    .server-info-block {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .server-name {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 2px;
+    }
+
+    .server-host {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        margin-top: 0;
+        font-family: monospace;
+    }
+
+    .chevron {
+        color: var(--text-secondary);
+        transition: transform 0.3s ease;
+        font-size: 1.2rem;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 12px;
+    }
+
+    .server-accordion.open .chevron {
+        transform: rotate(180deg);
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        background-color: var(--success);
+        border-radius: 50%;
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+    }
+
+    .status-dot.disabled {
+        background-color: var(--text-secondary);
+        box-shadow: none;
+    }
+
+    .inbound-list {
+        display: none;
+        background-color: rgba(0, 0, 0, 0.3);
+        padding: 8px 16px 16px 16px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .server-accordion.open .inbound-list {
+        display: block;
+    }
+
+    .inbound-list-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 15px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    .inbound-header-text {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        gap: 12px;
+    }
+
+    .inbound-item {
+        padding: 10px 15px;
+        border-radius: 8px;
+        margin-bottom: 5px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .inbound-item:hover {
+        border-color: rgba(99, 102, 241, 0.35);
+        background: rgba(99, 102, 241, 0.06);
+    }
+
+    .inbound-details {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .inbound-name {
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+
+    .protocol-badge {
+        font-size: 0.75rem;
+        background: rgba(99, 102, 241, 0.18);
+        color: #c7d2fe;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        font-weight: 700;
+    }
+
+    .port-number {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-family: monospace;
+    }
+
+    .inbound-empty {
+        padding: 12px 16px;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
     }
     
     /* Spinner animation */
@@ -431,11 +748,70 @@
     </div>
 </div>
 
+<div class="modal-overlay hidden" id="announcement-modal">
+    <div class="modal" style="max-width: 720px;">
+        <div class="modal-header">
+            <h2 id="announcement-modal-title">Add Announcement</h2>
+            <button class="modal-close" onclick="closeAnnouncementModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="announcement-id">
+
+            <div class="form-group">
+                <label>Message</label>
+                <textarea id="announcement-message" class="form-input" rows="4" placeholder="Write announcement text..."></textarea>
+            </div>
+
+            <div style="display:flex; gap: 12px;">
+                <div class="form-group" style="flex:1;">
+                    <label>Start</label>
+                    <input type="text" id="announcement-start" data-jdp class="form-input" placeholder="1404/10/10 14:30">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>End</label>
+                    <input type="text" id="announcement-end" data-jdp class="form-input" placeholder="1404/10/10 18:30">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Targets (Servers + Inbounds)</label>
+                <input type="hidden" id="announcement-targets" value="*">
+
+                <div class="server-selection-wrapper" style="margin-top: 8px;">
+                    <div class="select-all-container">
+                        <label class="checkbox-label" style="margin-bottom: 0 !important;" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="announcement-targets-all" onchange="ann_toggleAllServers(this)">
+                            <span class="checkmark"></span>
+                        </label>
+                        <div class="server-list-meta">
+                            <span class="meta-title">Select Servers</span>
+                            <span class="count-pill" id="announcement-global-counter">0 / 0</span>
+                        </div>
+                    </div>
+
+                    <div id="announcement-server-list"></div>
+                </div>
+
+                <small style="color: var(--text-secondary);">Target rules match reseller access selector: per-server inbounds or "Select All".</small>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeAnnouncementModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveAnnouncement()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Quill JS -->
 <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/persian-date@latest/dist/persian-date.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='jalalidatepicker.min.css') }}">
+<script src="{{ url_for('static', filename='jalalidatepicker.min.js') }}"></script>
+
 <script nonce="{{ csp_nonce }}">
     let apps = [];
     document.addEventListener('DOMContentLoaded', loadApps);
@@ -626,6 +1002,567 @@
 
         if (tabName === 'faq') {
             loadFAQs();
+        }
+
+        if (tabName === 'announcements') {
+            loadAnnouncements();
+        }
+    }
+
+    // Announcements Logic
+    let announcements = [];
+
+    // Announcement Targets (reseller-style selector)
+    let annAllServers = [];
+    let annServerInbounds = {};
+    let annServersLoaded = false;
+    let annInboundsLoaded = false;
+
+    function escapeHtml(s) {
+        return String(s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function isAnnouncementActive(a) {
+        try {
+            if (typeof a.is_active === 'boolean') return a.is_active;
+            const now = Date.now();
+            const start = new Date(a.start_at).getTime();
+            const end = new Date(a.end_at).getTime();
+            if (Number.isNaN(start) || Number.isNaN(end)) return false;
+            return start <= now && now <= end;
+        } catch {
+            return false;
+        }
+    }
+
+    async function loadAnnouncements() {
+        try {
+            const response = await fetch('/api/announcements');
+            announcements = await response.json();
+            renderAnnouncements();
+        } catch (error) {
+            showToast('Error loading announcements', 'error');
+        }
+    }
+
+    function renderAnnouncements() {
+        const container = document.getElementById('announcements-container');
+        if (!container) return;
+
+        if (!announcements || announcements.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No announcements defined</p></div>';
+            return;
+        }
+
+        container.innerHTML = announcements.map(a => {
+            const isActive = isAnnouncementActive(a);
+            const serversLabel = a.all_servers ? 'All servers' : ((a.server_names && a.server_names.length) ? a.server_names.join(', ') : 'No servers selected');
+            const createdBy = a.created_by || 'unknown';
+            const createdAt = a.created_at_jalali || (a.created_at ? new Date(a.created_at).toLocaleString('fa-IR') : '');
+            const windowLabel = (a.start_at_jalali && a.end_at_jalali)
+                ? `${a.start_at_jalali} → ${a.end_at_jalali}`
+                : ((a.start_at && a.end_at) ? `${new Date(a.start_at).toLocaleString('fa-IR')} → ${new Date(a.end_at).toLocaleString('fa-IR')}` : '');
+
+            return `
+                <div class="server-card">
+                    <div class="server-header">
+                        <div class="server-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v11a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z"/><path d="M8 22h8"/><path d="M12 15v-3"/><path d="M12 6h.01"/></svg>
+                        </div>
+                        <div class="server-title">
+                            <h3>Announcement</h3>
+                            <p class="server-url" style="direction: rtl; text-align: right; margin-top: 2px;">${escapeHtml(a.message).slice(0, 120)}${(a.message || '').length > 120 ? '…' : ''}</p>
+                        </div>
+                    </div>
+
+                    <div class="server-badges" style="flex-wrap: wrap;">
+                        <span class="badge ${isActive ? 'active' : 'inactive'}">${isActive ? 'Active' : 'Inactive'}</span>
+                        <span class="badge" style="background: rgba(99, 102, 241, 0.12); color: var(--primary); border: 1px solid rgba(99, 102, 241, 0.2);">${escapeHtml(serversLabel)}</span>
+                    </div>
+
+                    <div style="margin-top: 10px; color: var(--text-secondary); font-size: 0.8rem;">
+                        <div>${escapeHtml(windowLabel)}</div>
+                        <div style="margin-top: 4px;">Created: ${escapeHtml(createdAt)} • By: ${escapeHtml(createdBy)}</div>
+                    </div>
+
+                    <div class="server-actions">
+                        <button class="action-btn" onclick="openEditAnnouncementModal(${a.id})" title="Edit">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        </button>
+                        <button class="action-btn danger" onclick="deleteAnnouncement(${a.id})" title="Delete">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function initAnnouncementShamsiPicker() {
+        if (typeof jalaliDatepicker !== 'undefined') {
+            jalaliDatepicker.startWatch({
+                time: true,
+                hasSecond: false
+            });
+        }
+    }
+
+    async function ann_loadServers() {
+        try {
+            const response = await fetch('/api/servers');
+            annAllServers = await response.json();
+            annServersLoaded = true;
+            ann_renderServerList();
+        } catch (error) {
+            console.error('Error loading servers:', error);
+        }
+    }
+
+    async function ann_loadInbounds() {
+        try {
+            const response = await fetch('/api/refresh?mode=cache&enqueue=0');
+            const data = await response.json();
+            if (data && data.inbounds) {
+                annServerInbounds = data.inbounds.reduce((acc, inbound) => {
+                    const sid = inbound.server_id;
+                    if (!acc[sid]) acc[sid] = [];
+                    acc[sid].push(inbound);
+                    return acc;
+                }, {});
+                annInboundsLoaded = true;
+                ann_renderServerList();
+            }
+        } catch (error) {
+            console.error('Error loading inbounds:', error);
+        }
+    }
+
+    function ann_renderServerList() {
+        const list = document.getElementById('announcement-server-list');
+        if (!list) return;
+        if (!annServersLoaded) {
+            list.innerHTML = '<div class="inbound-empty">Loading servers...</div>';
+            return;
+        }
+
+        list.innerHTML = (annAllServers || []).map((s, idx) => {
+            const statusClass = s.enabled ? '' : 'disabled';
+            const inbounds = annServerInbounds[s.id] || [];
+
+            const inboundItems = inbounds.length > 0 ? inbounds.map(inb => {
+                return `
+                    <label class="inbound-item checkbox-label">
+                        <input type="checkbox" class="ann-inbound-checkbox" data-server="${s.id}" value="${inb.id}" onchange="ann_updateCounts(${s.id})">
+                        <span class="checkmark"></span>
+                        <div class="inbound-details">
+                            <span class="inbound-name">${escapeHtml(inb.remark || 'Inbound')}</span>
+                            <span class="protocol-badge">${escapeHtml(inb.protocol || '')}</span>
+                            <span class="port-number">:${escapeHtml(inb.port || '')}</span>
+                        </div>
+                    </label>
+                `;
+            }).join('') : '<div class="inbound-empty">No inbounds found</div>';
+
+            return `
+                <div class="server-accordion ${idx === 0 ? 'open' : ''}" data-server-id="${s.id}">
+                    <div class="server-accordion-header" onclick="ann_toggleServerAccordion(event, ${s.id})">
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" class="ann-server-checkbox" value="${s.id}" data-server="${s.id}" onchange="ann_toggleServerInbounds(${s.id}, this)">
+                            <span class="checkmark"></span>
+                        </label>
+
+                        <div class="header-content">
+                            <div class="server-info-block">
+                                <span class="server-name">${escapeHtml(s.name || '')}</span>
+                                <span class="server-host">${escapeHtml(s.host || '')}</span>
+                            </div>
+                            <div style="display: flex; align-items: center;">
+                                <span class="status-dot ${statusClass}" title="${s.enabled ? 'Online' : 'Disabled'}"></span>
+                                <span class="chevron">▾</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="inbound-list" id="ann-inbound-list-${s.id}">
+                        <div class="inbound-list-header">
+                            <label class="checkbox-label">
+                                <input type="checkbox" class="ann-inbound-select-all" data-server="${s.id}" onchange="ann_toggleAllInboundsInServer(${s.id}, this)">
+                                <span class="checkmark"></span>
+                            </label>
+                            <div class="inbound-header-text">
+                                <span>Select All Inbounds</span>
+                                <span class="count-pill inbound-counter" id="ann-inbound-count-${s.id}">0 / 0</span>
+                            </div>
+                        </div>
+                        ${inboundItems}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        ann_syncSelectionsToUi();
+        (annAllServers || []).forEach(s => ann_updateCounts(s.id));
+    }
+
+    function ann_normalizeAllowedInput(raw) {
+        if (!raw) return [];
+        if (raw === '*') return '*';
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            if (trimmed === '*') return '*';
+            try {
+                const parsed = JSON.parse(trimmed);
+                return ann_normalizeAllowedInput(parsed);
+            } catch (e) {
+                const ids = trimmed.split(',').map(v => parseInt(v.trim())).filter(v => !isNaN(v));
+                return ids.map(id => ({ server_id: id, inbounds: '*' }));
+            }
+        }
+
+        const entries = Array.isArray(raw) ? raw : [raw];
+        const merged = new Map();
+
+        entries.forEach(item => {
+            let serverId;
+            let inboundRules = '*';
+
+            if (typeof item === 'number' || (typeof item === 'string' && item.trim() !== '*')) {
+                serverId = parseInt(item);
+                inboundRules = '*';
+            } else if (item && typeof item === 'object') {
+                serverId = parseInt(item.server_id || item.server || item.id);
+                const inb = item.inbounds;
+                if (Array.isArray(inb)) {
+                    inboundRules = inb.map(v => parseInt(v)).filter(v => !isNaN(v));
+                } else if (inb === '*' || (typeof inb === 'string' && inb.trim() === '*') || typeof inb === 'undefined') {
+                    inboundRules = '*';
+                } else {
+                    const num = parseInt(inb);
+                    inboundRules = isNaN(num) ? [] : [num];
+                }
+            }
+
+            if (!serverId || isNaN(serverId)) return;
+
+            if (!merged.has(serverId)) {
+                merged.set(serverId, inboundRules === '*' ? '*' : new Set(inboundRules));
+            } else {
+                const existing = merged.get(serverId);
+                if (existing === '*' || inboundRules === '*') {
+                    merged.set(serverId, '*');
+                } else {
+                    inboundRules.forEach(v => merged.get(serverId).add(v));
+                }
+            }
+        });
+
+        return Array.from(merged.entries()).map(([sid, inb]) => ({
+            server_id: sid,
+            inbounds: inb === '*' ? '*' : Array.from(inb)
+        }));
+    }
+
+    function ann_stringifyAllowedForInput(value) {
+        if (value === '*') return '*';
+        try {
+            return JSON.stringify(value || []);
+        } catch (e) {
+            return '[]';
+        }
+    }
+
+    function ann_resetSelections(selectAll = false) {
+        const all = document.getElementById('announcement-targets-all');
+        if (all) {
+            all.checked = selectAll;
+            all.indeterminate = false;
+        }
+        document.querySelectorAll('.ann-server-checkbox').forEach(cb => {
+            cb.checked = selectAll;
+            cb.indeterminate = false;
+        });
+        document.querySelectorAll('.ann-inbound-checkbox').forEach(cb => {
+            cb.checked = selectAll;
+        });
+        document.querySelectorAll('.ann-inbound-select-all').forEach(cb => {
+            cb.checked = selectAll;
+            cb.indeterminate = false;
+        });
+        (annAllServers || []).forEach(s => ann_updateCounts(s.id));
+        ann_updateGlobalSelectionState();
+    }
+
+    function ann_applyAllowedServers(rawAllowed) {
+        const allowed = ann_normalizeAllowedInput(rawAllowed);
+        ann_resetSelections(false);
+
+        if (allowed === '*') {
+            ann_resetSelections(true);
+            return;
+        }
+
+        (allowed || []).forEach(rule => {
+            const serverId = rule.server_id;
+            const inbounds = rule.inbounds;
+            const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+            if (!container) return;
+
+            const inboundCheckboxes = container.querySelectorAll('.ann-inbound-checkbox');
+            if (inbounds === '*' || (Array.isArray(inbounds) && inbounds.length === 0)) {
+                inboundCheckboxes.forEach(cb => cb.checked = true);
+            } else {
+                const inboundSet = new Set((inbounds || []).map(v => parseInt(v)).filter(v => !isNaN(v)));
+                inboundCheckboxes.forEach(cb => {
+                    const inbId = parseInt(cb.value);
+                    if (!isNaN(inbId) && inboundSet.has(inbId)) {
+                        cb.checked = true;
+                    }
+                });
+            }
+            ann_updateCounts(serverId);
+        });
+
+        (annAllServers || []).forEach(s => ann_updateCounts(s.id));
+        ann_updateGlobalSelectionState();
+    }
+
+    function ann_syncSelectionsToUi() {
+        const raw = (document.getElementById('announcement-targets')?.value || '').trim();
+        const normalized = ann_normalizeAllowedInput(raw);
+        ann_applyAllowedServers(normalized);
+    }
+
+    function ann_toggleServerAccordion(event, serverId) {
+        const accordion = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!accordion) return;
+        accordion.classList.toggle('open');
+    }
+
+    function ann_toggleAllInboundsInServer(serverId, sourceCheckbox) {
+        const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!container) return;
+        const checkboxes = container.querySelectorAll('.ann-inbound-checkbox');
+        checkboxes.forEach(cb => cb.checked = sourceCheckbox.checked);
+        ann_updateCounts(serverId);
+    }
+
+    function ann_toggleServerInbounds(serverId, sourceCheckbox) {
+        const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!container) return;
+        const selectAllInbound = container.querySelector('.ann-inbound-select-all');
+        if (selectAllInbound) selectAllInbound.checked = sourceCheckbox.checked;
+        ann_toggleAllInboundsInServer(serverId, sourceCheckbox);
+    }
+
+    function ann_updateCounts(serverId) {
+        const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+        if (!container) return;
+
+        const checkboxes = container.querySelectorAll('.ann-inbound-checkbox');
+        const checked = container.querySelectorAll('.ann-inbound-checkbox:checked');
+
+        const counterEl = container.querySelector('.inbound-counter');
+        if (counterEl) counterEl.innerText = `${checked.length} / ${checkboxes.length}`;
+
+        const selectAllInbound = container.querySelector('.ann-inbound-select-all');
+        const serverMainCheckbox = container.querySelector('.ann-server-checkbox');
+
+        if (checked.length === 0) {
+            if (selectAllInbound) {
+                selectAllInbound.checked = false;
+                selectAllInbound.indeterminate = false;
+            }
+            if (serverMainCheckbox) {
+                serverMainCheckbox.checked = false;
+                serverMainCheckbox.indeterminate = false;
+            }
+        } else if (checked.length === checkboxes.length && checkboxes.length > 0) {
+            if (selectAllInbound) {
+                selectAllInbound.checked = true;
+                selectAllInbound.indeterminate = false;
+            }
+            if (serverMainCheckbox) {
+                serverMainCheckbox.checked = true;
+                serverMainCheckbox.indeterminate = false;
+            }
+        } else {
+            if (selectAllInbound) {
+                selectAllInbound.checked = false;
+                selectAllInbound.indeterminate = true;
+            }
+            if (serverMainCheckbox) {
+                serverMainCheckbox.checked = false;
+                serverMainCheckbox.indeterminate = true;
+            }
+        }
+
+        ann_updateGlobalSelectionState();
+    }
+
+    function ann_toggleAllServers(sourceCheckbox) {
+        const allServerChecks = document.querySelectorAll('.ann-server-checkbox');
+        allServerChecks.forEach(cb => {
+            cb.checked = sourceCheckbox.checked;
+            const serverId = cb.dataset.server;
+            ann_toggleServerInbounds(serverId, cb);
+        });
+    }
+
+    function ann_updateGlobalSelectionState() {
+        const serverCheckboxes = document.querySelectorAll('.ann-server-checkbox');
+        const checkedServers = Array.from(serverCheckboxes).filter(cb => cb.checked);
+        const indeterminateServers = Array.from(serverCheckboxes).filter(cb => cb.indeterminate);
+
+        const allCheckbox = document.getElementById('announcement-targets-all');
+        const globalCounter = document.getElementById('announcement-global-counter');
+
+        if (globalCounter) {
+            globalCounter.innerText = `${checkedServers.length} / ${serverCheckboxes.length}`;
+        }
+
+        const payload = [];
+        serverCheckboxes.forEach(cb => {
+            const serverId = parseInt(cb.dataset.server);
+            const container = document.querySelector(`.server-accordion[data-server-id="${serverId}"]`);
+            if (!container) return;
+            const inboundCheckboxes = container.querySelectorAll('.ann-inbound-checkbox');
+            const checkedInbounds = container.querySelectorAll('.ann-inbound-checkbox:checked');
+            if (checkedInbounds.length === 0) return;
+
+            if (inboundCheckboxes.length > 0 && checkedInbounds.length === inboundCheckboxes.length) {
+                payload.push({ server_id: serverId, inbounds: '*' });
+            } else {
+                const ids = Array.from(checkedInbounds)
+                    .map(inb => parseInt(inb.value))
+                    .filter(v => !isNaN(v));
+                if (ids.length > 0) {
+                    payload.push({ server_id: serverId, inbounds: Array.from(new Set(ids)) });
+                }
+            }
+        });
+
+        const allFullySelected = payload.length === serverCheckboxes.length && payload.length > 0 && payload.every(p => p.inbounds === '*');
+
+        if (checkedServers.length === serverCheckboxes.length && serverCheckboxes.length > 0 && indeterminateServers.length === 0) {
+            allCheckbox.checked = true;
+            allCheckbox.indeterminate = false;
+        } else {
+            allCheckbox.checked = false;
+            allCheckbox.indeterminate = (checkedServers.length > 0 || indeterminateServers.length > 0);
+        }
+
+        const hidden = document.getElementById('announcement-targets');
+        if (hidden) {
+            hidden.value = allFullySelected ? '*' : ann_stringifyAllowedForInput(payload);
+        }
+    }
+
+    function closeAnnouncementModal() {
+        document.getElementById('announcement-modal').classList.add('hidden');
+    }
+
+    async function openAddAnnouncementModal() {
+        document.getElementById('announcement-id').value = '';
+        document.getElementById('announcement-modal-title').textContent = 'Add Announcement';
+        document.getElementById('announcement-message').value = '';
+
+        // Default: all targets
+        const hidden = document.getElementById('announcement-targets');
+        if (hidden) hidden.value = '*';
+
+        // Ensure selector is loaded
+        await ann_loadServers();
+        await ann_loadInbounds();
+        ann_applyAllowedServers('*');
+        initAnnouncementShamsiPicker();
+
+        document.getElementById('announcement-modal').classList.remove('hidden');
+    }
+
+    async function openEditAnnouncementModal(id) {
+        const a = (announcements || []).find(x => x.id === id);
+        if (!a) return;
+
+        document.getElementById('announcement-id').value = String(a.id);
+        document.getElementById('announcement-modal-title').textContent = 'Edit Announcement';
+        document.getElementById('announcement-message').value = a.message || '';
+
+        document.getElementById('announcement-start').value = a.start_at_jalali || '';
+        document.getElementById('announcement-end').value = a.end_at_jalali || '';
+
+        const hidden = document.getElementById('announcement-targets');
+        if (hidden) hidden.value = (a.targets || (a.all_servers ? '*' : '[]'));
+
+        await ann_loadServers();
+        await ann_loadInbounds();
+        ann_syncSelectionsToUi();
+        initAnnouncementShamsiPicker();
+
+        document.getElementById('announcement-modal').classList.remove('hidden');
+    }
+
+    async function saveAnnouncement() {
+        const id = (document.getElementById('announcement-id').value || '').trim();
+        const message = (document.getElementById('announcement-message').value || '').trim();
+        const startAtJalali = (document.getElementById('announcement-start').value || '').trim();
+        const endAtJalali = (document.getElementById('announcement-end').value || '').trim();
+        const targets = (document.getElementById('announcement-targets').value || '').trim() || '*';
+
+        if (!message) {
+            showToast('Message is required', 'error');
+            return;
+        }
+        if (!startAtJalali || !endAtJalali) {
+            showToast('Start/End are required', 'error');
+            return;
+        }
+
+        const body = {
+            message,
+            start_at_jalali: startAtJalali,
+            end_at_jalali: endAtJalali,
+            targets
+        };
+
+        try {
+            const url = id ? `/api/announcements/${id}` : '/api/announcements';
+            const method = id ? 'PUT' : 'POST';
+            const resp = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const result = await resp.json();
+            if (result.success) {
+                showToast(id ? 'Announcement updated' : 'Announcement created');
+                closeAnnouncementModal();
+                loadAnnouncements();
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown'), 'error');
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+        }
+    }
+
+    async function deleteAnnouncement(id) {
+        if (!confirm('Are you sure you want to delete this announcement?')) return;
+        try {
+            const resp = await fetch(`/api/announcements/${id}`, { method: 'DELETE' });
+            const result = await resp.json();
+            if (result.success) {
+                showToast('Announcement deleted');
+                loadAnnouncements();
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown'), 'error');
+            }
+        } catch (e) {
+            showToast('Error deleting announcement', 'error');
         }
     }
 
