@@ -41,7 +41,11 @@ def fix_database():
             ('telegram_id', 'VARCHAR(100)'),
             ('discount_percent', 'INTEGER DEFAULT 0'),
             ('custom_cost_per_day', 'INTEGER'),
-            ('custom_cost_per_gb', 'INTEGER')
+            ('custom_cost_per_gb', 'INTEGER'),
+            ('support_telegram', 'VARCHAR(100)'),
+            ('support_whatsapp', 'VARCHAR(64)'),
+            ('channel_telegram', 'TEXT'),
+            ('channel_whatsapp', 'TEXT')
         ]
         c.execute("PRAGMA table_info(admins)")
         for col_name, col_type in admin_columns:

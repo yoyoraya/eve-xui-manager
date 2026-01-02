@@ -270,10 +270,12 @@ def _run_bulk_job(job_id: str):
                     server_id = int(item.get('server_id'))
                     inbound_id = int(item.get('inbound_id'))
                     email = (item.get('email') or '').strip()
+                    client_uuid = (item.get('client_uuid') or '').strip()
                 except (TypeError, ValueError):
                     server_id = None
                     inbound_id = None
                     email = ''
+                    client_uuid = ''
 
                 if not server_id or inbound_id is None or not email:
                     with BULK_JOBS_LOCK:
@@ -312,25 +314,50 @@ def _run_bulk_job(job_id: str):
                 elif action == 'delete':
                     ok, err, _status = _delete_client_core(user, server, inbound_id, email)
                 elif action == 'assign_owner':
-                    existing = ClientOwnership.query.filter_by(reseller_id=reseller_id, server_id=server_id, client_email=email).first()
-                    if existing:
-                        ok = False
-                        err = 'Client already assigned'
-                    else:
+                    email_l = (email or '').lower()
+                    try:
+                        key_filters = []
+                        if client_uuid:
+                            key_filters.append(ClientOwnership.client_uuid == client_uuid)
+                        if email_l:
+                            key_filters.append(func.lower(ClientOwnership.client_email) == email_l)
+                        q = ClientOwnership.query.filter(ClientOwnership.server_id == server_id)
+                        if key_filters:
+                            q = q.filter(or_(*key_filters))
+                        q.delete(synchronize_session=False)
+
                         ownership = ClientOwnership(
                             reseller_id=reseller_id,
                             server_id=server_id,
                             inbound_id=inbound_id,
-                            client_email=email
+                            client_email=email,
+                            client_uuid=client_uuid if client_uuid else None
                         )
                         db.session.add(ownership)
-                        try:
-                            db.session.commit()
-                            ok = True
-                        except Exception as exc:
-                            db.session.rollback()
-                            ok = False
-                            err = str(exc)
+                        db.session.commit()
+                        ok = True
+                    except Exception as exc:
+                        db.session.rollback()
+                        ok = False
+                        err = str(exc)
+                elif action == 'unassign_owner':
+                    email_l = (email or '').lower()
+                    try:
+                        key_filters = []
+                        if client_uuid:
+                            key_filters.append(ClientOwnership.client_uuid == client_uuid)
+                        if email_l:
+                            key_filters.append(func.lower(ClientOwnership.client_email) == email_l)
+                        q = ClientOwnership.query.filter(ClientOwnership.server_id == server_id)
+                        if key_filters:
+                            q = q.filter(or_(*key_filters))
+                        q.delete(synchronize_session=False)
+                        db.session.commit()
+                        ok = True
+                    except Exception as exc:
+                        db.session.rollback()
+                        ok = False
+                        err = str(exc)
                 else:
                     ok = False
                     err = 'Invalid action'
@@ -586,6 +613,7 @@ def _recompute_global_stats_from_server_statuses(server_statuses):
         "total_inbounds": 0,
         "active_inbounds": 0,
         "total_clients": 0,
+        "online_clients": 0,
         "active_clients": 0,
         "inactive_clients": 0,
         "not_started_clients": 0,
@@ -630,10 +658,12 @@ def fetch_and_update_server_data(server_id: int):
     if fetch_error:
         raise RuntimeError(fetch_error)
 
+    online_index, _ = fetch_onlines(session_obj, server.host, server.panel_type)
+
     if persist_detected_panel_type(server, detected_type):
         app.logger.info(f"Detected panel type for server {server.id} as {detected_type}")
 
-    processed, stats = process_inbounds(inbounds, server, admin_user, '*', {})
+    processed, stats = process_inbounds(inbounds, server, admin_user, '*', {}, online_index=online_index)
 
     # Update cache atomically under lock
     # - Replace only this server's inbounds
@@ -1014,6 +1044,10 @@ class Admin(db.Model):
     custom_cost_per_day = db.Column(db.Integer, nullable=True)
     custom_cost_per_gb = db.Column(db.Integer, nullable=True)
     telegram_id = db.Column(db.String(100), nullable=True)
+    support_telegram = db.Column(db.String(100), nullable=True)
+    support_whatsapp = db.Column(db.String(64), nullable=True)
+    channel_telegram = db.Column(db.Text, nullable=True)
+    channel_whatsapp = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
     
@@ -1038,6 +1072,10 @@ class Admin(db.Model):
             'custom_cost_per_day': self.custom_cost_per_day,
             'custom_cost_per_gb': self.custom_cost_per_gb,
             'telegram_id': self.telegram_id,
+            'support_telegram': self.support_telegram,
+            'support_whatsapp': self.support_whatsapp,
+            'channel_telegram': self.channel_telegram,
+            'channel_whatsapp': self.channel_whatsapp,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
@@ -1644,19 +1682,28 @@ def build_panel_url(host, template, replacements):
 with app.app_context():
     db.create_all()
     
-    # Check for telegram_id column in admins table
+    # Ensure expected columns exist on admins table (older DBs)
     try:
         inspector = inspect(db.engine)
         columns = [c['name'] for c in inspector.get_columns('admins')]
         print(f"Current columns in admins: {columns}")
-        if 'telegram_id' not in columns:
-            print("telegram_id column missing, attempting to add...")
+
+        admin_missing_cols = [
+            ('telegram_id', 'VARCHAR(100)'),
+            ('support_telegram', 'VARCHAR(100)'),
+            ('support_whatsapp', 'VARCHAR(64)'),
+            ('channel_telegram', 'TEXT'),
+            ('channel_whatsapp', 'TEXT'),
+        ]
+
+        for col_name, col_type in admin_missing_cols:
+            if col_name in columns:
+                continue
+            print(f"{col_name} column missing on admins, attempting to add...")
             with db.engine.connect() as conn:
-                conn.execute(text('ALTER TABLE admins ADD COLUMN telegram_id VARCHAR(100)'))
+                conn.execute(text(f'ALTER TABLE admins ADD COLUMN {col_name} {col_type}'))
                 conn.commit()
-            print("Added telegram_id column to admins table")
-        else:
-            print("telegram_id column already exists")
+            print(f"Added {col_name} column to admins table")
     except Exception as e:
         print(f"Migration error: {e}")
 
@@ -2513,6 +2560,120 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
 
     return None, "Failed to fetch inbounds", 'auto'
 
+
+def fetch_onlines(session_obj, host, panel_type='auto'):
+    """Fetch online clients from panel (best-effort).
+
+    Returns (index, error) where index is:
+      {"pairs": set[(inbound_id_norm, email_lower)], "emails": set[email_lower]}
+    """
+    index = {"pairs": set(), "emails": set()}
+
+    try:
+        base, webpath = extract_base_and_webpath(host)
+        timeout_sec = 3
+        normalized_type = (panel_type or 'auto').strip().lower()
+
+        # Online endpoints:
+        # - 3x-ui (Sanaei): base /panel/api/inbounds, method POST /onlines
+        # - x-ui (alireza0): base /xui/API/inbounds, method POST /onlines
+        # Some installs may also allow GET; keep as fallback.
+        candidates = []
+        if normalized_type in ('sanaei', 'auto', ''):
+            candidates.extend([
+                ('POST', '/panel/api/inbounds/onlines'),
+                ('GET', '/panel/api/inbounds/onlines'),
+            ])
+        if normalized_type in ('alireza', 'alireza0', 'xui', 'x-ui', 'auto', ''):
+            candidates.extend([
+                ('POST', '/xui/API/inbounds/onlines'),
+                ('POST', '/xui/api/inbounds/onlines'),
+                ('GET', '/xui/API/inbounds/onlines'),
+                ('GET', '/xui/api/inbounds/onlines'),
+            ])
+
+        last_error = None
+        last_status = None
+
+        for method, ep in candidates:
+            try:
+                url = ep if ep.startswith('http') else f"{base}{webpath}{ep}"
+                if method == 'POST':
+                    resp = session_obj.post(url, json={}, verify=False, timeout=timeout_sec)
+                else:
+                    resp = session_obj.get(url, verify=False, timeout=timeout_sec)
+
+                last_status = resp.status_code
+                if resp.status_code != 200:
+                    continue
+
+                data = resp.json()
+
+                # Response shapes vary:
+                # - {success: true, obj: [...]} or {success: true, data: {...}}
+                # - plain list of emails
+                # - dict with a nested list
+                obj = None
+                if isinstance(data, dict):
+                    # Many panels use 'success' flag; if present and false, skip.
+                    if 'success' in data and not data.get('success'):
+                        continue
+                    obj = data.get('obj')
+                    if obj is None:
+                        obj = data.get('data')
+                elif isinstance(data, list):
+                    obj = data
+                else:
+                    continue
+
+                items = []
+                if isinstance(obj, list):
+                    items = obj
+                elif isinstance(obj, dict):
+                    for k in ('onlines', 'list', 'data', 'clients'):
+                        v = obj.get(k)
+                        if isinstance(v, list):
+                            items = v
+                            break
+
+                for item in items or []:
+                    email = None
+                    inbound_id = None
+                    if isinstance(item, str):
+                        email = item
+                    elif isinstance(item, dict):
+                        email = item.get('email') or item.get('user') or item.get('username')
+                        inbound_id = item.get('inboundId')
+                        if inbound_id is None:
+                            inbound_id = item.get('inbound_id')
+
+                    email_l = (str(email or '').strip().lower())
+                    if not email_l:
+                        continue
+
+                    if inbound_id is not None:
+                        try:
+                            inbound_id_norm = int(inbound_id)
+                        except Exception:
+                            inbound_id_norm = str(inbound_id)
+                        index['pairs'].add((inbound_id_norm, email_l))
+                    else:
+                        index['emails'].add(email_l)
+
+                return index, None
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        # If we tried endpoints but none worked, return a hint (caller still treats it best-effort).
+        if candidates:
+            hint = last_error or (f"HTTP {last_status}" if last_status is not None else "No response")
+            return index, f"Failed to fetch onlines ({normalized_type}): {hint}"
+
+        return index, None
+    except Exception as e:
+        return index, str(e)
+
 def generate_client_link(client, inbound, server_host):
     """Generate share links for vmess / vless / trojan / shadowsocks."""
 
@@ -2696,11 +2857,14 @@ def find_client(inbounds, inbound_id, email):
                 return client, inbound
     return None, None
 
-def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, app_base_url=None):
+def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, app_base_url=None, online_index=None):
     processed = []
-    stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "upload_raw": 0, "download_raw": 0}
+    stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "upload_raw": 0, "download_raw": 0}
     
     assignments = assignments or {}
+    online_index = online_index or {"pairs": set(), "emails": set()}
+    online_pairs = online_index.get('pairs') if isinstance(online_index, dict) else set()
+    online_emails = online_index.get('emails') if isinstance(online_index, dict) else set()
 
     owned_emails = set()
     if user.role == 'reseller':
@@ -2728,6 +2892,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
             processed_clients = []
             for client in clients:
                 email = client.get('email', '')
+                email_l = (str(email or '').strip().lower())
                 
                 if user.role == 'reseller' and email.lower() not in owned_emails:
                     continue 
@@ -2799,11 +2964,25 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 if expiry_info.get('type') == 'unlimited':
                     stats["unlimited_expiry_clients"] += 1
 
+                # Online status (best-effort; depends on panel API support)
+                inbound_id_norm = None
+                try:
+                    inbound_id_norm = int(inbound.get('id'))
+                except Exception:
+                    inbound_id_norm = str(inbound.get('id'))
+                is_online = False
+                try:
+                    if email_l:
+                        is_online = ((inbound_id_norm, email_l) in (online_pairs or set())) or (email_l in (online_emails or set()))
+                except Exception:
+                    is_online = False
+
                 client_data = {
                     "email": email,
                     "id": client.get('id', ''),
                     "subId": sub_id,
                     "enable": client.get('enable', True),
+                    "is_online": bool(is_online),
                     "totalGB": total_bytes,
                     "totalGB_formatted": total_formatted,
                     "remaining_bytes": remaining_bytes if remaining_bytes is not None else -1,
@@ -2825,6 +3004,9 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                     "raw_client": client  # Store original object for faster updates
                 }
                 processed_clients.append(client_data)
+
+                if is_online:
+                    stats["online_clients"] += 1
                 
                 if client.get('enable', True): stats["active_clients"] += 1
                 else: stats["inactive_clients"] += 1
@@ -2949,7 +3131,8 @@ def fetch_worker(server_dict):
             return server_dict['id'], None, error, 'auto'
         
         inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
-        return server_dict['id'], inbounds, fetch_error, detected_type
+        online_index, _ = fetch_onlines(session_obj, server_obj.host, server_obj.panel_type)
+        return server_dict['id'], inbounds, online_index, fetch_error, detected_type
 
 @app.route('/api/refresh')
 @login_required
@@ -2991,7 +3174,7 @@ def api_refresh():
             "success": True, 
             "inbounds": [], 
             "stats": {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, 
-                      "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "total_traffic": "0 B", 
+                      "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "total_traffic": "0 B", 
                       "total_upload": "0 B", "total_download": "0 B"}, 
             "servers": [],
             "server_count": 0
@@ -3004,7 +3187,134 @@ def api_refresh():
     
     # === حالت سوپرادمین (یا ادمین معمولی غیر ریسلر) ===
     if user.role != 'reseller':
-        # سوپرادمین همه چیز را می‌بیند
+        # Enrich payload with ownership info (who this client is assigned to) for admins/superadmins.
+        # This is computed on-demand to avoid changing the background refresh pipeline.
+        try:
+            server_ids = set()
+            email_pairs = set()  # (server_id, email_lower)
+            uuid_pairs = set()   # (server_id, client_uuid)
+
+            for inbound in (data.get('inbounds') or []):
+                try:
+                    sid = int(inbound.get('server_id'))
+                except Exception:
+                    continue
+                server_ids.add(sid)
+                for c in (inbound.get('clients') or []):
+                    em = (c.get('email') or '').strip().lower()
+                    if em:
+                        email_pairs.add((sid, em))
+                    cu = (c.get('id') or '').strip()
+                    if cu:
+                        uuid_pairs.add((sid, cu))
+
+            email_values = {e for (_sid, e) in email_pairs}
+            uuid_values = {u for (_sid, u) in uuid_pairs}
+
+            owner_email_map = {}
+            owner_uuid_map = {}
+
+            if server_ids and (email_values or uuid_values):
+                q = (
+                    db.session.query(ClientOwnership, Admin)
+                    .join(Admin, ClientOwnership.reseller_id == Admin.id)
+                    .filter(ClientOwnership.server_id.in_(list(server_ids)))
+                )
+                filters = []
+                if uuid_values:
+                    filters.append(ClientOwnership.client_uuid.in_(list(uuid_values)))
+                if email_values:
+                    filters.append(func.lower(ClientOwnership.client_email).in_(list(email_values)))
+                q = q.filter(or_(*filters))
+
+                for own, reseller in (q.all() or []):
+                    try:
+                        sid = int(own.server_id)
+                    except Exception:
+                        continue
+
+                    created = own.created_at or datetime.min
+
+                    ou = (own.client_uuid or '').strip()
+                    if ou:
+                        key_u = (sid, ou)
+                        existing_u = owner_uuid_map.get(key_u)
+                        ex_created_u = existing_u.get('created_at') if existing_u else datetime.min
+                        if (not existing_u) or (created >= ex_created_u):
+                            owner_uuid_map[key_u] = {
+                                'id': int(reseller.id) if reseller else None,
+                                'username': reseller.username if reseller else None,
+                                'created_at': created,
+                            }
+
+                    em = (own.client_email or '').strip().lower()
+                    if em:
+                        key = (sid, em)
+                        existing = owner_email_map.get(key)
+                        ex_created = existing.get('created_at') if existing else datetime.min
+                        if (not existing) or (created >= ex_created):
+                            owner_email_map[key] = {
+                                'id': int(reseller.id) if reseller else None,
+                                'username': reseller.username if reseller else None,
+                                'created_at': created,
+                            }
+
+            # Best-effort UUID backfill for legacy ownership rows (matched by email).
+            try:
+                updated = 0
+                if server_ids and email_values:
+                    for inbound in (data.get('inbounds') or []):
+                        try:
+                            sid = int(inbound.get('server_id'))
+                        except Exception:
+                            continue
+                        for c in (inbound.get('clients') or []):
+                            cu = (c.get('id') or '').strip()
+                            if not cu:
+                                continue
+                            em = (c.get('email') or '').strip().lower()
+                            if not em:
+                                continue
+                            own_row = (
+                                ClientOwnership.query.filter(
+                                    ClientOwnership.server_id == sid,
+                                    func.lower(ClientOwnership.client_email) == em,
+                                    or_(ClientOwnership.client_uuid.is_(None), ClientOwnership.client_uuid == '')
+                                )
+                                .order_by(ClientOwnership.created_at.desc())
+                                .first()
+                            )
+                            if own_row:
+                                own_row.client_uuid = cu
+                                updated += 1
+                if updated:
+                    db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+            if owner_email_map or owner_uuid_map:
+                for inbound in (data.get('inbounds') or []):
+                    try:
+                        sid = int(inbound.get('server_id'))
+                    except Exception:
+                        continue
+                    for c in (inbound.get('clients') or []):
+                        cu = (c.get('id') or '').strip()
+                        em = (c.get('email') or '').strip().lower()
+                        info = owner_uuid_map.get((sid, cu)) if cu else None
+                        if not info and em:
+                            info = owner_email_map.get((sid, em))
+
+                        if info and info.get('username'):
+                            c['owner_reseller_id'] = info.get('id')
+                            c['owner_username'] = info.get('username')
+                        else:
+                            c.pop('owner_reseller_id', None)
+                            c.pop('owner_username', None)
+        except Exception:
+            pass
+
+        # Admins/superadmins see all cached data
         return jsonify({
             "success": True, 
             "inbounds": data['inbounds'], 
@@ -3025,15 +3335,22 @@ def api_refresh():
     
     exact_matches = set()
     loose_matches = set()
+    exact_uuid_matches = set()
+    loose_uuid_matches = set()
     
     for o in owned_ownerships:
         c_email = o.client_email.lower() if o.client_email else ''
+        c_uuid = (o.client_uuid or '').strip()
         sid = int(o.server_id)
         
         if o.inbound_id is not None:
             exact_matches.add((sid, int(o.inbound_id), c_email))
+            if c_uuid:
+                exact_uuid_matches.add((sid, int(o.inbound_id), c_uuid))
         else:
             loose_matches.add((sid, c_email))
+            if c_uuid:
+                loose_uuid_matches.add((sid, c_uuid))
 
     filtered_inbounds = []
     unique_server_ids = set()
@@ -3043,6 +3360,7 @@ def api_refresh():
         "total_inbounds": 0,
         "active_inbounds": 0,
         "total_clients": 0,     # فقط کلاینت‌های Assign شده
+        "online_clients": 0,
         "active_clients": 0,    # فقط کلاینت‌های Assign شده فعال
         "inactive_clients": 0,  # فقط کلاینت‌های Assign شده غیرفعال
         "not_started_clients": 0,
@@ -3078,11 +3396,16 @@ def api_refresh():
         
         for client in clients_in_inbound:
             c_email = client.get('email', '').lower()
+            c_uuid = (client.get('id') or '').strip()
             
             # چک می‌کنیم آیا این کلاینت به ریسلر Assign شده؟
             # 1. تطابق دقیق (سرور، اینباند، ایمیل)
             # 2. تطابق بدون اینباند (سرور، ایمیل) - برای رکوردهای قدیمی یا ناقص
-            is_assigned = (sid, iid, c_email) in exact_matches or (sid, c_email) in loose_matches
+            is_assigned = False
+            if c_uuid:
+                is_assigned = (sid, iid, c_uuid) in exact_uuid_matches or (sid, c_uuid) in loose_uuid_matches
+            if not is_assigned:
+                is_assigned = (sid, iid, c_email) in exact_matches or (sid, c_email) in loose_matches
             
             if is_assigned:
                 # اضافه کردن به لیست فیلتر شده برای نمایش
@@ -3090,6 +3413,8 @@ def api_refresh():
                 
                 # محاسبه آمار
                 reseller_stats["total_clients"] += 1
+                if client.get('is_online'):
+                    reseller_stats["online_clients"] += 1
                 if client.get('enable'):
                     reseller_stats["active_clients"] += 1
                 else:
@@ -3368,13 +3693,33 @@ def _get_cached_raw_client(server_id: int, inbound_id: int, email: str):
     return target_client
 
 
-def _has_client_access(user, server_id: int, email: str) -> bool:
+def _has_client_access(user, server_id: int, email: str, inbound_id: int | None = None, client_uuid: str | None = None) -> bool:
     if not user:
         return False
     if user.role != 'reseller':
         return True
-    ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
-    return bool(ownership)
+
+    email_l = (email or '').strip().lower()
+    cu = (client_uuid or '').strip()
+    if not cu and inbound_id is not None:
+        try:
+            raw = _get_cached_raw_client(int(server_id), int(inbound_id), email)
+            cu = (raw.get('id') or '').strip() if isinstance(raw, dict) else ''
+        except Exception:
+            cu = ''
+
+    q = ClientOwnership.query.filter(
+        ClientOwnership.reseller_id == user.id,
+        ClientOwnership.server_id == server_id,
+    )
+    key_filters = []
+    if cu:
+        key_filters.append(ClientOwnership.client_uuid == cu)
+    if email_l:
+        key_filters.append(func.lower(ClientOwnership.client_email) == email_l)
+    if key_filters:
+        q = q.filter(or_(*key_filters))
+    return bool(q.first())
 
 
 def _toggle_client_core(user, server, inbound_id: int, email: str, enable: bool):
@@ -3382,7 +3727,7 @@ def _toggle_client_core(user, server, inbound_id: int, email: str, enable: bool)
     price = 0
     description = f"Toggle client {email} to {enable}"
 
-    if not _has_client_access(user, server.id, email):
+    if not _has_client_access(user, server.id, email, inbound_id=inbound_id):
         return False, "Access denied", 403
 
     if user.role == 'reseller' and price > user.credit:
@@ -3492,8 +3837,7 @@ def reset_client_traffic(server_id, inbound_id):
         charge_amount = volume_gb * user_cost_gb if volume_gb > 0 else 0
 
     if user.role == 'reseller':
-        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
-        if not ownership:
+        if not _has_client_access(user, server_id, email, inbound_id=inbound_id):
             return jsonify({"success": False, "error": "Access denied"}), 403
         if not is_free and user_cost_gb > 0 and volume_gb <= 0:
             return jsonify({"success": False, "error": "Billable volume required"}), 400
@@ -3572,8 +3916,7 @@ def edit_client(server_id, inbound_id, email):
     
     # Check ownership for resellers
     if user.role == 'reseller':
-        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
-        if not ownership:
+        if not _has_client_access(user, server_id, email, inbound_id=inbound_id):
             return jsonify({"success": False, "error": "Access denied"}), 403
     
     try:
@@ -3679,9 +4022,18 @@ def edit_client(server_id, inbound_id, email):
             
         if success:
             # Update ownership if exists
-            ownerships = ClientOwnership.query.filter_by(server_id=server_id, client_email=email).all()
+            email_l = (email or '').strip().lower()
+            ownerships = ClientOwnership.query.filter(
+                ClientOwnership.server_id == server_id,
+                or_(
+                    ClientOwnership.client_uuid == str(client_id),
+                    func.lower(ClientOwnership.client_email) == email_l,
+                )
+            ).all()
             for own in ownerships:
                 own.client_email = new_email
+                if (not (own.client_uuid or '').strip()) and str(client_id):
+                    own.client_uuid = str(client_id)
             db.session.commit()
             
             return jsonify({"success": True})
@@ -3710,7 +4062,7 @@ def delete_client(server_id, inbound_id, email):
 
 def _delete_client_core(user, server, inbound_id: int, email: str):
     """Core implementation for deleting a client; returns (ok, error, status_code)."""
-    if not _has_client_access(user, server.id, email):
+    if not _has_client_access(user, server.id, email, inbound_id=inbound_id):
         return False, "Access denied", 403
 
     target_client = _get_cached_raw_client(server.id, inbound_id, email)
@@ -3770,7 +4122,14 @@ def _delete_client_core(user, server, inbound_id: int, email: str):
             errors.append(f"{template}: {resp.status_code}")
 
         if success:
-            ClientOwnership.query.filter_by(server_id=server.id, client_email=email).delete()
+            email_l = (email or '').strip().lower()
+            ClientOwnership.query.filter(
+                ClientOwnership.server_id == server.id,
+                or_(
+                    ClientOwnership.client_uuid == str(client_id),
+                    func.lower(ClientOwnership.client_email) == email_l,
+                )
+            ).delete(synchronize_session=False)
             db.session.commit()
 
             try:
@@ -3804,16 +4163,18 @@ def bulk_client_action():
     clients = payload.get('clients')
     data = payload.get('data') or {}
 
-    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner'}
+    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner'}
     if action not in allowed_actions:
         return jsonify({"success": False, "error": "Invalid action"}), 400
     if not isinstance(clients, list) or len(clients) == 0:
         return jsonify({"success": False, "error": "Clients list required"}), 400
 
     reseller_id = None
-    if action == 'assign_owner':
+    if action in ('assign_owner', 'unassign_owner'):
         if not session.get('is_superadmin', False):
             return jsonify({"success": False, "error": "Access denied"}), 403
+
+    if action == 'assign_owner':
         reseller_id = data.get('reseller_id')
         try:
             reseller_id = int(reseller_id)
@@ -3972,8 +4333,7 @@ def renew_client(server_id, inbound_id, email):
         price = 0
     
     if user.role == 'reseller':
-        ownership = ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id, client_email=email).first()
-        if not ownership:
+        if not _has_client_access(user, server_id, email, inbound_id=inbound_id):
             return _finish({"success": False, "error": "Access denied"}, 403)
         if price > 0 and user.credit < price:
             return _finish({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}, 402)
@@ -4307,6 +4667,29 @@ def add_admin():
     if not is_valid:
         return jsonify({"success": False, "error": error_msg}), 400
 
+    def _clean_telegram_username(v: str | None) -> str:
+        val = (v or '').strip()
+        if not val:
+            return ''
+        if val.startswith('@'):
+            val = val[1:].strip()
+        val = re.sub(r'^(https?://)?(t\.me/|telegram\.me/)', '', val, flags=re.IGNORECASE)
+        val = val.strip('/').strip()
+        val = re.sub(r'[^0-9a-zA-Z_]', '', val)
+        return (val or '')[:100]
+
+    def _clean_whatsapp_number(v: str | None) -> str:
+        val = (v or '').strip()
+        if not val:
+            return ''
+        val = re.sub(r'^(https?://)?wa\.me/', '', val, flags=re.IGNORECASE)
+        val = val.strip('/').strip()
+        val = re.sub(r'[^0-9+]', '', val)
+        return (val or '')[:64]
+
+    def _clean_url(v: str | None, *, limit: int = 1000) -> str:
+        return (v or '').strip()[:limit]
+
     new_admin = Admin(
         username=username,
         role=data.get('role', 'reseller'),
@@ -4317,7 +4700,11 @@ def add_admin():
         discount_percent=int(data.get('discount_percent', 0)),
         custom_cost_per_day=int(data.get('custom_cost_per_day')) if data.get('custom_cost_per_day') is not None else None,
         custom_cost_per_gb=int(data.get('custom_cost_per_gb')) if data.get('custom_cost_per_gb') is not None else None,
-        telegram_id=sanitize_html(data.get('telegram_id'))
+        telegram_id=sanitize_html(data.get('telegram_id')),
+        support_telegram=_clean_telegram_username(data.get('support_telegram')),
+        support_whatsapp=_clean_whatsapp_number(data.get('support_whatsapp')),
+        channel_telegram=_clean_url(data.get('channel_telegram')),
+        channel_whatsapp=_clean_url(data.get('channel_whatsapp')),
     )
     new_admin.set_password(password)
     db.session.add(new_admin)
@@ -4329,6 +4716,30 @@ def add_admin():
 def update_admin(admin_id):
     admin = Admin.query.get_or_404(admin_id)
     data = request.json
+
+    def _clean_telegram_username(v: str | None) -> str:
+        val = (v or '').strip()
+        if not val:
+            return ''
+        if val.startswith('@'):
+            val = val[1:].strip()
+        val = re.sub(r'^(https?://)?(t\.me/|telegram\.me/)', '', val, flags=re.IGNORECASE)
+        val = val.strip('/').strip()
+        val = re.sub(r'[^0-9a-zA-Z_]', '', val)
+        return (val or '')[:100]
+
+    def _clean_whatsapp_number(v: str | None) -> str:
+        val = (v or '').strip()
+        if not val:
+            return ''
+        val = re.sub(r'^(https?://)?wa\.me/', '', val, flags=re.IGNORECASE)
+        val = val.strip('/').strip()
+        val = re.sub(r'[^0-9+]', '', val)
+        return (val or '')[:64]
+
+    def _clean_url(v: str | None, *, limit: int = 1000) -> str:
+        return (v or '').strip()[:limit]
+
     if data.get('password'):
         is_valid, error_msg = validate_password_strength(data['password'])
         if not is_valid:
@@ -4346,6 +4757,10 @@ def update_admin(admin_id):
     if 'custom_cost_per_gb' in data: 
         admin.custom_cost_per_gb = int(data['custom_cost_per_gb']) if data['custom_cost_per_gb'] is not None else None
     if 'telegram_id' in data: admin.telegram_id = sanitize_html(data['telegram_id'])
+    if 'support_telegram' in data: admin.support_telegram = _clean_telegram_username(data.get('support_telegram'))
+    if 'support_whatsapp' in data: admin.support_whatsapp = _clean_whatsapp_number(data.get('support_whatsapp'))
+    if 'channel_telegram' in data: admin.channel_telegram = _clean_url(data.get('channel_telegram'))
+    if 'channel_whatsapp' in data: admin.channel_whatsapp = _clean_url(data.get('channel_whatsapp'))
     db.session.commit()
     return jsonify({"success": True})
 
@@ -4441,23 +4856,78 @@ def test_server_connection(server_id):
 def assign_client():
     data = request.json
     server_id = data.get('server_id')
-    email = data.get('email')
+    email = (data.get('email') or '').strip()
     reseller_id = data.get('reseller_id')
     inbound_id = data.get('inbound_id')
-    
-    existing = ClientOwnership.query.filter_by(reseller_id=reseller_id, server_id=server_id, client_email=email).first()
-    if existing:
-        return jsonify({"success": False, "error": "Client already assigned"}), 400
-    
-    ownership = ClientOwnership(
-        reseller_id=reseller_id,
-        server_id=server_id,
-        inbound_id=inbound_id,
-        client_email=email
-    )
-    db.session.add(ownership)
-    db.session.commit()
-    return jsonify({"success": True})
+    client_uuid = (data.get('client_uuid') or '').strip()
+
+    try:
+        server_id = int(server_id)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "server_id required"}), 400
+
+    if not email:
+        return jsonify({"success": False, "error": "email required"}), 400
+
+    # Treat reseller_id=0 / null as "unassign to system"
+    try:
+        reseller_id_int = int(reseller_id) if reseller_id is not None else 0
+    except (TypeError, ValueError):
+        reseller_id_int = 0
+
+    email_l = email.lower()
+
+    match_filters = [ClientOwnership.server_id == server_id]
+    match_key_filters = []
+    if client_uuid:
+        match_key_filters.append(ClientOwnership.client_uuid == client_uuid)
+    if email_l:
+        match_key_filters.append(func.lower(ClientOwnership.client_email) == email_l)
+    if match_key_filters:
+        match_filters.append(or_(*match_key_filters))
+
+    if reseller_id_int <= 0:
+        # Unassign: delete any ownership records for this server+email
+        try:
+            q = ClientOwnership.query
+            for f in match_filters:
+                q = q.filter(f)
+            q.delete(synchronize_session=False)
+            db.session.commit()
+            return jsonify({"success": True})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    reseller = db.session.get(Admin, reseller_id_int)
+    if not reseller or reseller.role != 'reseller':
+        return jsonify({"success": False, "error": "Invalid reseller"}), 400
+
+    try:
+        inbound_id_int = int(inbound_id) if inbound_id is not None and str(inbound_id).strip() != '' else None
+    except (TypeError, ValueError):
+        inbound_id_int = None
+
+    # Reassign: ensure uniqueness by removing previous owners for this server+email
+    try:
+        q = ClientOwnership.query
+        for f in match_filters:
+            q = q.filter(f)
+        q.delete(synchronize_session=False)
+
+        ownership = ClientOwnership(
+            reseller_id=reseller_id_int,
+            server_id=server_id,
+            inbound_id=inbound_id_int,
+            client_email=email,
+            client_uuid=client_uuid if client_uuid else None
+        )
+        db.session.add(ownership)
+        db.session.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/client/qrcode', methods=['GET'])
 def generate_qrcode():
@@ -6321,6 +6791,51 @@ def client_subscription(server_id, sub_id):
         'whatsapp': _normalize_url(channel_whatsapp.value if channel_whatsapp else '')
     }
 
+    # If this client is assigned to a reseller, use reseller-defined support/channels instead of global SystemConfig.
+    try:
+        cu = (target_client.get('id') or '').strip() if isinstance(target_client, dict) else ''
+        email_l = (client_email or '').strip().lower()
+        ownership = ClientOwnership.query.filter(
+            ClientOwnership.server_id == int(server.id),
+            or_(
+                ClientOwnership.client_uuid == cu,
+                func.lower(ClientOwnership.client_email) == email_l,
+            )
+        ).first()
+        reseller = ownership.reseller if ownership else None
+        if reseller and getattr(reseller, 'role', None) == 'reseller':
+            def _clean_telegram_username(v: str | None) -> str:
+                val = (v or '').strip()
+                if not val:
+                    return ''
+                if val.startswith('@'):
+                    val = val[1:].strip()
+                val = re.sub(r'^(https?://)?(t\.me/|telegram\.me/)', '', val, flags=re.IGNORECASE)
+                val = val.strip('/').strip()
+                val = re.sub(r'[^0-9a-zA-Z_]', '', val)
+                return (val or '')[:100]
+
+            def _clean_whatsapp_number(v: str | None) -> str:
+                val = (v or '').strip()
+                if not val:
+                    return ''
+                val = re.sub(r'^(https?://)?wa\.me/', '', val, flags=re.IGNORECASE)
+                val = val.strip('/').strip()
+                val = re.sub(r'[^0-9+]', '', val)
+                return (val or '')[:64]
+
+            support_info = {
+                'telegram': _clean_telegram_username(getattr(reseller, 'support_telegram', None)),
+                'whatsapp': _clean_whatsapp_number(getattr(reseller, 'support_whatsapp', None)),
+            }
+
+            channels_info = {
+                'telegram': _normalize_url(getattr(reseller, 'channel_telegram', '') or '', default_prefix='https://t.me/'),
+                'whatsapp': _normalize_url(getattr(reseller, 'channel_whatsapp', '') or ''),
+            }
+    except Exception:
+        pass
+
     # Announcements (server+inbound scoped) for subscription page
     announcements_payload = []
     try:
@@ -7752,7 +8267,7 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 for future in concurrent.futures.as_completed(future_to_id):
                     results.append(future.result())
 
-        results_by_id = {r[0]: r for r in results if isinstance(r, tuple) and len(r) >= 4}
+        results_by_id = {r[0]: r for r in results if isinstance(r, tuple) and len(r) >= 5}
 
         existing_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
         existing_by_server = defaultdict(list)
@@ -7793,8 +8308,8 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 status_map[sid] = st
                 continue
 
-            res = results_by_id.get(sid) or (sid, None, "Timeout", 'auto')
-            _, inbounds, error, detected_type = res
+            res = results_by_id.get(sid) or (sid, None, None, "Timeout", 'auto')
+            _, inbounds, online_index, error, detected_type = res
 
             if error:
                 _backoff_record_failure(sid, error)
@@ -7817,7 +8332,7 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
             if persist_detected_panel_type(srv, detected_type):
                 app.logger.info(f"Detected panel type for server {srv.id} as {detected_type}")
 
-            processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {})
+            processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {}, online_index=online_index)
             new_by_server[sid] = list(processed or [])
 
             st = status_map.get(sid) or {"server_id": sid}

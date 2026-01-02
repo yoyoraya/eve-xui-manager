@@ -694,6 +694,30 @@ input:checked + .slider:before {
     color: var(--text-primary);
 }
 
+.stat-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.stat-online {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #4ade80;
+}
+
+.online-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: #4ade80;
+    flex-shrink: 0;
+}
+
 .stat-sub {
     font-size: 0.7rem;
     color: var(--text-secondary);
@@ -966,6 +990,42 @@ input:checked + .slider:before {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.email-with-online {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.email-with-online .email-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+}
+
+.online-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: #4ade80;
+    flex-shrink: 0;
+    animation: onlinePulseRing 1.4s ease-out infinite;
+}
+
+@keyframes onlinePulseRing {
+    0% {
+        box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55);
+    }
+    70% {
+        box-shadow: 0 0 0 9px rgba(74, 222, 128, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(74, 222, 128, 0);
+    }
 }
 
 .client-status {

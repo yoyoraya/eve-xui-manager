@@ -76,7 +76,13 @@
             </div>
             <div class="stat-info">
                 <span class="stat-label">Clients</span>
-                <span class="stat-value" id="stat-total-clients">0</span>
+                <div class="stat-value-row">
+                    <span class="stat-value" id="stat-total-clients">0</span>
+                    <span class="stat-online" title="Online clients">
+                        <span class="online-dot"></span>
+                        <span id="stat-online-clients">0</span>
+                    </span>
+                </div>
                 <div class="client-breakdown">
                     <span class="client-count active-count"><span id="stat-active-clients">0</span></span>
                     <span class="client-count inactive-count"><span id="stat-inactive-clients">0</span></span>
@@ -237,6 +243,7 @@
                 <option value="delete">Delete</option>
                 {% if is_superadmin %}
                 <option value="assign_owner">Assign Owner</option>
+                <option value="unassign_owner">Unassign Owner</option>
                 {% endif %}
             </select>
 
@@ -726,13 +733,15 @@
 <div class="modal-overlay hidden" id="assign-modal">
     <div class="modal modal-sm" style="overflow: visible;">
         <div class="modal-header">
-            <h2>Assign to Reseller</h2>
+            <h2>Assign Owner</h2>
             <button class="modal-close" onclick="closeAssignModal()">&times;</button>
         </div>
         <div class="modal-body" style="overflow: visible;">
             <p style="color: var(--text-secondary); margin-bottom: 15px;">Client: <strong id="assign-client-email" style="color: var(--text-primary);"></strong></p>
             <input type="hidden" id="assign-server-id">
+            <input type="hidden" id="assign-inbound-id">
             <input type="hidden" id="assign-client-email-hidden">
+            <input type="hidden" id="assign-client-uuid">
             
             <div class="form-group">
                 <label>Select Reseller</label>
@@ -1005,6 +1014,28 @@
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
+        function escapeHtml(value) {
+            const s = String(value ?? '');
+            return s
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function getOwnerText(client) {
+            if (typeof USER_ROLE !== 'undefined' && USER_ROLE === 'reseller') {
+                return 'You';
+            }
+            if (!client) return '';
+            const ownerName = (client.owner_username || '').trim();
+            return ownerName ? ownerName : 'System';
+        }
+
+        function renderOwnerCell(client) {
+            return `<span style="font-size: 0.85rem; color: var(--text-secondary);">${escapeHtml(getOwnerText(client))}</span>`;
+        }
     let selectedPackageId = null;
     let selectedRenewPackageId = null;
     let selectedRenewPackageDays = 0;
@@ -1509,6 +1540,8 @@
         document.getElementById('stat-inbounds').textContent = stats?.total_inbounds || 0;
         document.getElementById('stat-active').textContent = `${stats?.active_inbounds || 0} Active`;
         document.getElementById('stat-total-clients').textContent = stats?.total_clients || 0;
+        const onlineEl = document.getElementById('stat-online-clients');
+        if (onlineEl) onlineEl.textContent = stats?.online_clients || 0;
         document.getElementById('stat-active-clients').textContent = stats?.active_clients || 0;
         document.getElementById('stat-inactive-clients').textContent = stats?.inactive_clients || 0;
         const notStartedEl = document.getElementById('stat-not-started-clients');
@@ -1599,6 +1632,7 @@
                                             </label>
                                         </th>
                                         <th>Email</th>
+                                        <th>Owner</th>
                                         <th>Status</th>
                                         <th>Expiry</th>
                                         <th>Traffic</th>
@@ -1611,11 +1645,12 @@
                                     <tr class="${!client.enable ? 'disabled-row' : ''}">
                                         <td class="select-cell">
                                             <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
-                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inboundKey}" data-server-id="${client.server_id}" data-inbound-id="${client.inbound_id}" data-email="${client.email}" onchange="onBulkClientCheckboxChanged(this)">
+                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inboundKey}" data-server-id="${client.server_id}" data-inbound-id="${client.inbound_id}" data-email="${client.email}" data-client-uuid="${client.id || ''}" onchange="onBulkClientCheckboxChanged(this)">
                                                 <span class="checkmark"></span>
                                             </label>
                                         </td>
-                                        <td class="email-cell">${client.email}</td>
+                                        <td class="email-cell"><span class="email-with-online">${client.is_online ? '<span class="online-pulse" title="Online"></span>' : ''}<span class="email-text">${client.email}</span></span></td>
+                                        <td class="owner-cell">${renderOwnerCell(client)}</td>
                                         <td>
                                             ${client.enable 
                                                 ? `<span class="client-status active">Enabled</span>` 
@@ -1674,7 +1709,7 @@
                                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                                     </svg>
                                                 </button>
-                                                ${IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${client.server_id}, '${client.email}', '${client.inbound_id}')" title="Assign Owner">
+                                                ${IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${client.server_id}, '${client.email}', '${client.inbound_id}', '${client.id || ''}')" title="Assign Owner">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                                                         <circle cx="10" cy="7" r="4"></circle>
@@ -3308,6 +3343,7 @@
                                             </label>
                                         </th>
                                         <th>Email</th>
+                                        <th>Owner</th>
                                         <th>Status</th>
                                         <th>Expiry</th>
                                         <th>Traffic</th>
@@ -3320,11 +3356,12 @@
                                     <tr class="${!client.enable ? 'disabled-row' : ''}">
                                         <td class="select-cell">
                                             <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
-                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inbound.server_id}:${inbound.id}" data-server-id="${inbound.server_id}" data-inbound-id="${inbound.id}" data-email="${client.email}" onchange="onBulkClientCheckboxChanged(this)">
+                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inbound.server_id}:${inbound.id}" data-server-id="${inbound.server_id}" data-inbound-id="${inbound.id}" data-email="${client.email}" data-client-uuid="${client.id || ''}" onchange="onBulkClientCheckboxChanged(this)">
                                                 <span class="checkmark"></span>
                                             </label>
                                         </td>
-                                        <td class="email-cell">${client.email}</td>
+                                        <td class="email-cell"><span class="email-with-online">${client.is_online ? '<span class="online-pulse" title="Online"></span>' : ''}<span class="email-text">${client.email}</span></span></td>
+                                        <td class="owner-cell">${renderOwnerCell(client)}</td>
                                         <td>
                                             ${client.enable 
                                                 ? `<span class="client-status active">Enabled</span>` 
@@ -3383,7 +3420,7 @@
                                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                                     </svg>
                                                 </button>
-                                                ${IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${inbound.server_id}, '${client.email}', '${inbound.id}')" title="Assign Owner">
+                                                ${IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${inbound.server_id}, '${client.email}', '${inbound.id}', '${client.id || ''}')" title="Assign Owner">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><path d="M22 11h-2.5a2.5 2.5 0 0 0 0 5H22"></path>
                                                     </svg>
@@ -3423,7 +3460,8 @@
             selected.push({
                 server_id: parseInt(cb.dataset.serverId),
                 inbound_id: parseInt(cb.dataset.inboundId),
-                email: cb.dataset.email
+                email: cb.dataset.email,
+                client_uuid: cb.dataset.clientUuid || ''
             });
         });
         return selected.filter(x => x.server_id && (x.inbound_id || x.inbound_id === 0) && x.email);
@@ -3522,7 +3560,7 @@
         const data = {};
         if (action === 'assign_owner') {
             const resellerId = document.getElementById('bulk-reseller-select')?.value;
-            if (!resellerId) {
+            if (resellerId === null || resellerId === undefined || String(resellerId).trim() === '') {
                 showToast('Please select a reseller', 'error');
                 return;
             }
@@ -3633,27 +3671,33 @@
             const resellers = admins.filter(a => a.role === 'reseller');
             const list = document.getElementById('assign-reseller-list');
             
-            if (resellers.length === 0) {
-                list.innerHTML = '<div style="padding: 10px; color: var(--text-secondary); text-align: center;">No resellers found</div>';
-                return;
-            }
+            const systemItem = `
+                <div class="filter-item" onclick="selectReseller(0, 'System')">
+                    <span style="flex: 1;">System</span>
+                    <span style="font-size: 0.8rem; color: var(--text-secondary);">Unassign</span>
+                </div>
+            `;
 
-            list.innerHTML = resellers.map(r => `
+            const resellerItems = resellers.map(r => `
                 <div class="filter-item" onclick="selectReseller(${r.id}, '${r.username}')">
                     <span style="flex: 1;">${r.username}</span>
                     <span style="font-size: 0.8rem; color: #4ade80;">${r.credit.toLocaleString()} T</span>
                 </div>
             `).join('');
+
+            list.innerHTML = systemItem + resellerItems;
         } catch (error) {
             console.error('Error loading resellers:', error);
             document.getElementById('assign-reseller-list').innerHTML = '<div style="padding: 10px; color: var(--danger); text-align: center;">Error loading resellers</div>';
         }
     }
 
-    function openAssignModal(serverId, email, inboundId = 0) {
+    function openAssignModal(serverId, email, inboundId = 0, clientUuid = '') {
         document.getElementById('assign-server-id').value = serverId;
+        document.getElementById('assign-inbound-id').value = inboundId;
         document.getElementById('assign-client-email-hidden').value = email;
         document.getElementById('assign-client-email').textContent = email;
+        document.getElementById('assign-client-uuid').value = clientUuid || '';
         
         // Reset selection
         document.getElementById('assign-reseller-select').value = '';
@@ -3669,11 +3713,13 @@
 
     async function submitAssignment() {
         const serverId = document.getElementById('assign-server-id').value;
+        const inboundId = document.getElementById('assign-inbound-id').value;
         const email = document.getElementById('assign-client-email-hidden').value;
+        const clientUuid = document.getElementById('assign-client-uuid').value;
         const resellerId = document.getElementById('assign-reseller-select').value;
 
-        if (!resellerId) {
-            showToast('Please select a reseller', 'error');
+        if (resellerId === null || resellerId === undefined || String(resellerId).trim() === '') {
+            showToast('Please select an owner', 'error');
             return;
         }
 
@@ -3684,7 +3730,9 @@
                 body: JSON.stringify({
                     server_id: parseInt(serverId),
                     email: email,
-                    reseller_id: parseInt(resellerId)
+                    reseller_id: parseInt(resellerId),
+                    inbound_id: (inboundId === null || inboundId === undefined || String(inboundId).trim() === '') ? null : parseInt(inboundId),
+                    client_uuid: (clientUuid === null || clientUuid === undefined || String(clientUuid).trim() === '') ? null : String(clientUuid)
                 })
             });
 

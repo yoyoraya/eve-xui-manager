@@ -499,6 +499,34 @@
                     <input type="text" id="admin-credit" placeholder="0" value="0" oninput="formatNumberInput(this)">
                     <small style="color: var(--text-secondary);">Initial credit for new user</small>
                 </div>
+
+                <div class="form-group">
+                    <label>Support Links (Subscription Page)</label>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div class="form-group" style="flex: 1; min-width: 200px;">
+                            <label style="font-size: 0.85rem; color: var(--text-secondary);">Telegram Support (username)</label>
+                            <input type="text" id="admin-support-telegram" placeholder="e.g. my_support" oninput="this.value = this.value.trim()">
+                        </div>
+                        <div class="form-group" style="flex: 1; min-width: 200px;">
+                            <label style="font-size: 0.85rem; color: var(--text-secondary);">WhatsApp Support (phone)</label>
+                            <input type="text" id="admin-support-whatsapp" placeholder="e.g. 98912..." oninput="this.value = this.value.trim()">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Channel Links (Subscription Page)</label>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div class="form-group" style="flex: 1; min-width: 200px;">
+                            <label style="font-size: 0.85rem; color: var(--text-secondary);">Telegram Channel (link or @)</label>
+                            <input type="text" id="admin-channel-telegram" placeholder="e.g. https://t.me/mychannel" oninput="this.value = this.value.trim()">
+                        </div>
+                        <div class="form-group" style="flex: 1; min-width: 200px;">
+                            <label style="font-size: 0.85rem; color: var(--text-secondary);">WhatsApp Channel (link)</label>
+                            <input type="text" id="admin-channel-whatsapp" placeholder="e.g. https://chat.whatsapp.com/..." oninput="this.value = this.value.trim()">
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="form-group">
                     <label>Allowed Servers</label>
@@ -1123,6 +1151,10 @@
         validatePasswordUX(''); // Reset UX
         document.getElementById('admin-role').value = 'reseller';
         document.getElementById('admin-telegram-id').value = '';
+        document.getElementById('admin-support-telegram').value = '';
+        document.getElementById('admin-support-whatsapp').value = '';
+        document.getElementById('admin-channel-telegram').value = '';
+        document.getElementById('admin-channel-whatsapp').value = '';
         document.getElementById('admin-credit').value = '0';
         document.getElementById('admin-allowed-servers').value = '*';
         document.getElementById('admin-discount').value = '0';
@@ -1148,6 +1180,10 @@
         validatePasswordUX(''); // Reset UX
         document.getElementById('admin-role').value = admin.role || 'admin';
         document.getElementById('admin-telegram-id').value = admin.telegram_id || '';
+        document.getElementById('admin-support-telegram').value = admin.support_telegram || '';
+        document.getElementById('admin-support-whatsapp').value = admin.support_whatsapp || '';
+        document.getElementById('admin-channel-telegram').value = admin.channel_telegram || '';
+        document.getElementById('admin-channel-whatsapp').value = admin.channel_whatsapp || '';
         document.getElementById('admin-credit').value = (admin.credit || 0).toLocaleString();
         const normalizedAllowed = normalizeAllowedInput(admin.allowed_servers);
         applyAllowedServers(normalizedAllowed);
@@ -1258,6 +1294,10 @@
             password: password,
             role: role,
             telegram_id: document.getElementById('admin-telegram-id').value,
+            support_telegram: document.getElementById('admin-support-telegram').value,
+            support_whatsapp: document.getElementById('admin-support-whatsapp').value,
+            channel_telegram: document.getElementById('admin-channel-telegram').value,
+            channel_whatsapp: document.getElementById('admin-channel-whatsapp').value,
             credit: parseInt(creditRaw) || 0,
             allowed_servers: allowedServers,
             enabled: document.getElementById('admin-enabled').checked,
