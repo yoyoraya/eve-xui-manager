@@ -94,6 +94,10 @@ body {
     top: 0;
     left: 0;
     height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    overflow: hidden;
     z-index: 200;
     transition: transform 0.3s ease;
 }
@@ -159,6 +163,8 @@ body.sidebar-open {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .nav-item {
