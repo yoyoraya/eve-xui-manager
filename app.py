@@ -8219,22 +8219,77 @@ def inject_version():
 @app.route('/api/check-update', methods=['GET'])
 @login_required
 def check_update():
-    # Check cache first
+    def _normalize_version_str(v: str) -> str:
+        if not v:
+            return ''
+        v = str(v).strip()
+        # GitHub tags are often like "v1.7.0"
+        if v[:1] in ('v', 'V'):
+            v = v[1:]
+        return v.strip()
+
+    def _parse_semver(v: str):
+        """Best-effort semver parsing.
+
+        Returns (major, minor, patch, is_prerelease) or None.
+        Accepts: 1, 1.7, 1.7.0, 1.7.0-rc1, 1.7.0+meta
+        """
+        v = _normalize_version_str(v)
+        if not v:
+            return None
+        # Split build metadata
+        core = v.split('+', 1)[0]
+        # Split prerelease
+        core_part, prerelease_part = (core.split('-', 1) + [''])[:2]
+        is_prerelease = bool(prerelease_part)
+        parts = core_part.split('.')
+        try:
+            major = int(parts[0]) if len(parts) >= 1 and parts[0] != '' else 0
+            minor = int(parts[1]) if len(parts) >= 2 and parts[1] != '' else 0
+            patch = int(parts[2]) if len(parts) >= 3 and parts[2] != '' else 0
+        except Exception:
+            return None
+        return (major, minor, patch, is_prerelease)
+
+    def _is_update_available(current: str, latest: str) -> bool:
+        cur_norm = _normalize_version_str(current)
+        lat_norm = _normalize_version_str(latest)
+        if not cur_norm or not lat_norm:
+            return False
+        cur = _parse_semver(cur_norm)
+        lat = _parse_semver(lat_norm)
+        if cur and lat:
+            cur_key = (cur[0], cur[1], cur[2])
+            lat_key = (lat[0], lat[1], lat[2])
+            if lat_key != cur_key:
+                return lat_key > cur_key
+            # Same base version: stable beats prerelease.
+            # (So 1.7.0 should NOT report update vs 1.7.0-rc1)
+            return (cur[3] is True) and (lat[3] is False)
+        # Fallback: normalized string compare
+        return lat_norm != cur_norm
+
+    # Check cache first (but don't reuse cache across app version changes)
     current_time = time.time()
     if UPDATE_CACHE['data'] and (current_time - UPDATE_CACHE['last_check'] < UPDATE_CACHE['ttl']):
-        return jsonify(UPDATE_CACHE['data'])
+        try:
+            if str(UPDATE_CACHE['data'].get('current_version')) == str(APP_VERSION):
+                return jsonify(UPDATE_CACHE['data'])
+        except Exception:
+            pass
 
     try:
         resp = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=3)
         if resp.status_code == 200:
             data = resp.json()
-            latest_version = data.get('tag_name', '').lstrip('v')
+            latest_version_raw = data.get('tag_name', '')
+            latest_version = _normalize_version_str(latest_version_raw)
             
             result = {
                 'success': True,
                 'current_version': APP_VERSION,
                 'latest_version': latest_version,
-                'update_available': latest_version != APP_VERSION,
+                'update_available': _is_update_available(APP_VERSION, latest_version),
                 'release_url': data.get('html_url', '')
             }
             
