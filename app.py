@@ -4345,7 +4345,9 @@ def renew_client(server_id, inbound_id, email):
             return _finish({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}, 402)
     
     # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
+    # NOTE: cached display rows may include usage stats while `raw_client` might not.
     target_client = None
+    cached_client_row = None
     cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
     for ib in cached_inbounds:
         try:
@@ -4353,6 +4355,7 @@ def renew_client(server_id, inbound_id, email):
                 for c in ib.get('clients', []):
                     if c.get('email') == email and 'raw_client' in c:
                         target_client = copy.deepcopy(c['raw_client'])
+                        cached_client_row = c
                         timing["used_cache_client"] = True
                         break
         except (ValueError, TypeError):
@@ -4378,6 +4381,20 @@ def renew_client(server_id, inbound_id, email):
             target_client, _ = find_client(inbounds, inbound_id, email)
             if not target_client:
                 return _finish({"success": False, "error": "Client not found"}, 404)
+
+        # If we used cached raw_client, merge in traffic/cap fields from the cached row.
+        # This avoids treating used_bytes as 0 and producing incorrect remaining volume.
+        if cached_client_row and isinstance(target_client, dict):
+            for k in ("up", "down", "totalGB", "expiryTime"):
+                try:
+                    if target_client.get(k) in (None, "") and cached_client_row.get(k) not in (None, ""):
+                        target_client[k] = cached_client_row.get(k)
+                    # If raw_client has 0 but cached row has a non-zero value, prefer cached.
+                    elif int(target_client.get(k) or 0) == 0 and int(cached_client_row.get(k) or 0) != 0:
+                        target_client[k] = cached_client_row.get(k)
+                except Exception:
+                    # Best-effort merge only
+                    pass
 
         # Snapshot current remaining values for message rendering
         # (Used only when NOT resetting traffic and NOT start_after_first_use)
@@ -4416,16 +4433,20 @@ def renew_client(server_id, inbound_id, email):
         used_bytes = max(0, used_up + used_down)
 
         remaining_gb_before = 0
+        remaining_gb_before_exact = 0.0
         has_limited_volume = current_total_bytes > 0
         if has_limited_volume:
             remaining_bytes = current_total_bytes - used_bytes
             if remaining_bytes < 0:
                 remaining_bytes = 0
 
-            # Match dashboard behavior:
-            # - Convert bytes -> GB using rounding
-            # - If there is any remaining (>0), show at least 1 GB
-            gb_float = remaining_bytes / float(1024 * 1024 * 1024) if remaining_bytes > 0 else 0.0
+            # Keep an exact value for renewal message (e.g. 45.11GB).
+            remaining_gb_before_exact = (
+                remaining_bytes / float(1024 * 1024 * 1024) if remaining_bytes > 0 else 0.0
+            )
+
+            # Keep a coarse integer variant for legacy template placeholders.
+            gb_float = remaining_gb_before_exact
             rounded_gb = int(gb_float + 0.5) if gb_float > 0 else 0
             remaining_gb_before = max(1, rounded_gb) if remaining_bytes > 0 else 0
         
@@ -4594,7 +4615,7 @@ def renew_client(server_id, inbound_id, email):
                         volume_label = "♾️"
                     else:
                         msg_volume = int(remaining_gb_before)
-                        volume_label = f"{msg_volume}GB"
+                        volume_label = f"{remaining_gb_before_exact:.2f}GB"
                 elif volume_gb_to_add == 0:
                     msg_volume = 0
                     volume_label = "♾️"
@@ -4607,7 +4628,7 @@ def renew_client(server_id, inbound_id, email):
                         volume_label = "♾️"
                     else:
                         msg_volume = int(remaining_gb_before) + int(volume_gb_to_add)
-                        volume_label = f"{msg_volume}GB"
+                        volume_label = f"{(remaining_gb_before_exact + float(volume_gb_to_add)):.2f}GB"
 
                 # `{date}` should represent the new expiry, not "now".
                 # - Finite expiry (>0): show Jalali Tehran date+time
