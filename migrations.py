@@ -205,6 +205,37 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating announcement_servers table: {e}")
 
+        # 9) Create client_ownerships table if missing
+        try:
+            c.execute('''
+            CREATE TABLE IF NOT EXISTS client_ownerships (
+                id INTEGER PRIMARY KEY,
+                reseller_id INTEGER NOT NULL REFERENCES admins(id),
+                server_id INTEGER NOT NULL REFERENCES servers(id),
+                inbound_id INTEGER,
+                client_email VARCHAR(100) NOT NULL,
+                client_uuid VARCHAR(100),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                price INTEGER DEFAULT 0
+            )
+            ''')
+            print("✅ Table 'client_ownerships' checked/created.")
+            
+            # Ensure columns in client_ownerships
+            c.execute("PRAGMA table_info(client_ownerships)")
+            cols = {row[1] for row in (c.fetchall() or [])}
+            if 'client_uuid' not in cols:
+                c.execute("ALTER TABLE client_ownerships ADD COLUMN client_uuid VARCHAR(100)")
+                print("✅ Column 'client_ownerships.client_uuid' added.")
+            if 'price' not in cols:
+                c.execute("ALTER TABLE client_ownerships ADD COLUMN price INTEGER DEFAULT 0")
+                print("✅ Column 'client_ownerships.price' added.")
+            if 'inbound_id' not in cols:
+                c.execute("ALTER TABLE client_ownerships ADD COLUMN inbound_id INTEGER")
+                print("✅ Column 'client_ownerships.inbound_id' added.")
+        except Exception as e:
+            print(f"⚠️  Error creating/updating client_ownerships table: {e}")
+
         conn.commit()
         conn.close()
         print("\n🚀 Database repair completed! You can now restart your app.")

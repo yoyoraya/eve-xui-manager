@@ -262,7 +262,8 @@ install_dependencies() {
         ufw \
         openssl \
         certbot \
-        python3-certbot-nginx
+        python3-certbot-nginx \
+        libmagic1
     print_success "Dependencies installed"
 }
 
@@ -346,9 +347,9 @@ setup_python_env() {
         PY_BIN="python3"
     fi
     sudo -u "$APP_USER" "$PY_BIN" -m venv "$APP_DIR/venv"
-    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install --upgrade pip setuptools wheel >/dev/null"
-    sudo -u "$APP_USER" bash -c "cd $APP_DIR && source venv/bin/activate && if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install .; fi >/dev/null"
-    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install gunicorn psycopg2-binary >/dev/null"
+    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install --upgrade pip setuptools wheel"
+    sudo -u "$APP_USER" bash -c "cd $APP_DIR && source venv/bin/activate && if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install .; fi"
+    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install gunicorn psycopg2-binary"
     print_success "Virtual environment configured"
     run_migrations
 }
@@ -691,6 +692,7 @@ show_menu() {
         2)
             require_root
             detect_os
+            install_dependencies
             clone_or_update_repo
             create_env_file
             ensure_server_password_key
