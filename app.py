@@ -3163,7 +3163,11 @@ def api_refresh():
                     break
             time.sleep(0.15)
 
+    debug_timing = _parse_bool(request.args.get('debug_timing'))
+    t0 = time.perf_counter() if debug_timing else None
+
     data = copy.deepcopy(GLOBAL_SERVER_DATA)
+    t_after_copy = time.perf_counter() if debug_timing else None
 
     # If cache is empty and nothing is running, kick off a refresh job (non-blocking)
     if not data.get('inbounds') and not GLOBAL_SERVER_DATA.get('is_updating') and not job:
@@ -3259,39 +3263,6 @@ def api_refresh():
                                 'created_at': created,
                             }
 
-            # Best-effort UUID backfill for legacy ownership rows (matched by email).
-            try:
-                updated = 0
-                if server_ids and email_values:
-                    for inbound in (data.get('inbounds') or []):
-                        try:
-                            sid = int(inbound.get('server_id'))
-                        except Exception:
-                            continue
-                        for c in (inbound.get('clients') or []):
-                            cu = (c.get('id') or '').strip()
-                            if not cu:
-                                continue
-                            em = (c.get('email') or '').strip().lower()
-                            if not em:
-                                continue
-                            own_row = (
-                                ClientOwnership.query.filter(
-                                    ClientOwnership.server_id == sid,
-                                    func.lower(ClientOwnership.client_email) == em,
-                                    or_(ClientOwnership.client_uuid.is_(None), ClientOwnership.client_uuid == '')
-                                )
-                                .order_by(ClientOwnership.created_at.desc())
-                                .first()
-                            )
-                            if own_row:
-                                own_row.client_uuid = cu
-                                updated += 1
-                if updated:
-                    db.session.commit()
-            except Exception:
-                db.session.rollback()
-
             if owner_email_map or owner_uuid_map:
                 for inbound in (data.get('inbounds') or []):
                     try:
@@ -3315,38 +3286,53 @@ def api_refresh():
             pass
 
         # Admins/superadmins see all cached data
-        return jsonify({
-            "success": True, 
-            "inbounds": data['inbounds'], 
-            "stats": data['stats'], 
+        resp = {
+            "success": True,
+            "inbounds": data['inbounds'],
+            "stats": data['stats'],
             "servers": data['servers_status'],
             "server_count": len(data['servers_status']),
             "last_update": data['last_update'],
             "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
-            "refresh_job": _summarize_job(job)
-        }), (202 if job and job.get('state') in ('queued', 'running') else 200)
+            "refresh_job": _summarize_job(job),
+        }
+        if debug_timing and t0 is not None and t_after_copy is not None:
+            resp['timing_ms'] = {
+                'deepcopy': round((t_after_copy - t0) * 1000.0, 2),
+                'total': round((time.perf_counter() - t0) * 1000.0, 2),
+            }
+        return jsonify(resp), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
     # === حالت ریسلر ===
     # 1. دریافت دسترسی‌های سرور و اینباند
     allowed_map, assignments = get_reseller_access_maps(user)
     
     # 2. دریافت لیست کلاینت‌های Assign شده به این ریسلر از دیتابیس
-    owned_ownerships = ClientOwnership.query.filter_by(reseller_id=user.id).all()
+    owned_ownerships = (
+        db.session.query(
+            ClientOwnership.server_id,
+            ClientOwnership.inbound_id,
+            ClientOwnership.client_email,
+            ClientOwnership.client_uuid,
+        )
+        .filter(ClientOwnership.reseller_id == user.id)
+        .all()
+    )
     
     exact_matches = set()
     loose_matches = set()
     exact_uuid_matches = set()
     loose_uuid_matches = set()
     
-    for o in owned_ownerships:
-        c_email = o.client_email.lower() if o.client_email else ''
-        c_uuid = (o.client_uuid or '').strip()
-        sid = int(o.server_id)
+    for server_id_val, inbound_id_val, client_email_val, client_uuid_val in owned_ownerships:
+        c_email = (client_email_val or '').lower()
+        c_uuid = (client_uuid_val or '').strip()
+        sid = int(server_id_val)
         
-        if o.inbound_id is not None:
-            exact_matches.add((sid, int(o.inbound_id), c_email))
+        if inbound_id_val is not None:
+            exact_matches.add((sid, int(inbound_id_val), c_email))
             if c_uuid:
-                exact_uuid_matches.add((sid, int(o.inbound_id), c_uuid))
+                exact_uuid_matches.add((sid, int(inbound_id_val), c_uuid))
         else:
             loose_matches.add((sid, c_email))
             if c_uuid:
@@ -3452,16 +3438,22 @@ def api_refresh():
         if s['server_id'] in unique_server_ids
     ]
 
-    return jsonify({
-        "success": True, 
-        "inbounds": filtered_inbounds, 
-        "stats": reseller_stats, 
+    resp = {
+        "success": True,
+        "inbounds": filtered_inbounds,
+        "stats": reseller_stats,
         "servers": filtered_servers_status,
         "server_count": len(unique_server_ids),
         "last_update": data['last_update'],
         "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
-        "refresh_job": _summarize_job(job)
-    }), (202 if job and job.get('state') in ('queued', 'running') else 200)
+        "refresh_job": _summarize_job(job),
+    }
+    if debug_timing and t0 is not None and t_after_copy is not None:
+        resp['timing_ms'] = {
+            'deepcopy': round((t_after_copy - t0) * 1000.0, 2),
+            'total': round((time.perf_counter() - t0) * 1000.0, 2),
+        }
+    return jsonify(resp), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
 
 @app.route('/api/refresh/job/<job_id>')

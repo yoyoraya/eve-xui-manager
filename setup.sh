@@ -128,7 +128,7 @@ APP_NAME="Eve X-UI Manager"
 SERVICE_NAME="eve-manager"
 APP_USER="evemgr"
 APP_DIR="/opt/eve-xui-manager"
-REPO_URL="https://github.com/yoyoraya/eve-xui-manager.git"
+REPO_URL="${EVE_REPO_URL:-https://github.com/yoyoraya/eve-xui-manager.git}"
 PYTHON_VERSION="3.11"
 APP_PORT="5000"
 ENV_FILE="$APP_DIR/.env"
@@ -290,7 +290,27 @@ clone_or_update_repo() {
     chown -R "$APP_USER:$APP_USER" "$APP_DIR"
     if [ -d "$APP_DIR/.git" ]; then
         print_warning "Repository exists, pulling latest changes"
-        sudo -u "$APP_USER" git -C "$APP_DIR" fetch --all
+        # Fetch can appear to "hang" on slow/blocked networks. Show progress and time out.
+        if command -v timeout >/dev/null 2>&1; then
+            if ! sudo -u "$APP_USER" env GIT_TERMINAL_PROMPT=0 timeout 240 git -C "$APP_DIR" fetch --all --prune --tags --progress; then
+                print_error "git fetch failed or timed out (240s)"
+                echo "Troubleshooting:" 
+                echo "  - Check connectivity: curl -I https://github.com" 
+                echo "  - Check DNS: resolvectl status (or /etc/resolv.conf)" 
+                echo "  - If GitHub is blocked/slow, try VPN or set a faster DNS (1.1.1.1 / 8.8.8.8)." 
+                echo "  - You can override repo URL: EVE_REPO_URL=<mirror-url> bash setup.sh" 
+                exit 1
+            fi
+        else
+            if ! sudo -u "$APP_USER" env GIT_TERMINAL_PROMPT=0 git -C "$APP_DIR" fetch --all --prune --tags --progress; then
+                print_error "git fetch failed"
+                echo "Troubleshooting:" 
+                echo "  - Check connectivity: curl -I https://github.com" 
+                echo "  - If GitHub is blocked/slow, try VPN or set a faster DNS." 
+                echo "  - You can override repo URL: EVE_REPO_URL=<mirror-url> bash setup.sh" 
+                exit 1
+            fi
+        fi
         sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/main
     elif [ -d "$APP_DIR" ] && [ "$(ls -A $APP_DIR)" ]; then
         print_warning "Directory $APP_DIR exists but is not a git repo. Backing up..."
