@@ -4055,7 +4055,13 @@ def renew_client(server_id, inbound_id, email):
             remaining_bytes = current_total_bytes - used_bytes
             if remaining_bytes < 0:
                 remaining_bytes = 0
-            remaining_gb_before = int(remaining_bytes // (1024 * 1024 * 1024))
+
+            # Match dashboard behavior:
+            # - Convert bytes -> GB using rounding
+            # - If there is any remaining (>0), show at least 1 GB
+            gb_float = remaining_bytes / float(1024 * 1024 * 1024) if remaining_bytes > 0 else 0.0
+            rounded_gb = int(gb_float + 0.5) if gb_float > 0 else 0
+            remaining_gb_before = max(1, rounded_gb) if remaining_bytes > 0 else 0
         
         # Calculate new expiry
         if days_to_add == 0:
@@ -4194,7 +4200,6 @@ def renew_client(server_id, inbound_id, email):
 
                 # Build copyable success text (dynamic template)
                 now_utc = datetime.utcnow()
-                now_jalali = format_jalali(now_utc) or ''
 
                 # Message values:
                 # - If start_after_first_use: show the package/custom amount (days_to_add)
@@ -4202,7 +4207,7 @@ def renew_client(server_id, inbound_id, email):
                 # - Otherwise: show remaining_before + added (days/GB)
                 if days_to_add <= 0:
                     msg_days = 0
-                    days_label = "Unlimited Days"
+                    days_label = "♾️"
                 elif start_after_first_use:
                     msg_days = days_to_add
                     days_label = f"{msg_days} Days"
@@ -4212,17 +4217,32 @@ def renew_client(server_id, inbound_id, email):
 
                 if volume_gb_to_add == 0:
                     msg_volume = 0
-                    volume_label = "Unlimited Volume"
+                    volume_label = "♾️"
                 elif reset_traffic:
                     msg_volume = int(volume_gb_to_add)
                     volume_label = f"{msg_volume}GB"
                 else:
                     if not has_limited_volume:
                         msg_volume = 0
-                        volume_label = "Unlimited Volume"
+                        volume_label = "♾️"
                     else:
                         msg_volume = int(remaining_gb_before) + int(volume_gb_to_add)
                         volume_label = f"{msg_volume}GB"
+
+                # `{date}` should represent the new expiry, not "now".
+                # - Finite expiry (>0): show Jalali Tehran date+time
+                # - Unlimited (0): Persian label
+                # - Not started (<0): show "N days after first use"
+                if new_expiry == 0:
+                    date_label = "نامحدود"
+                elif new_expiry < 0:
+                    date_label = f"{msg_days} روز بعد از اولین اتصال"
+                else:
+                    try:
+                        expiry_dt_utc = datetime.utcfromtimestamp(int(new_expiry) / 1000)
+                    except Exception:
+                        expiry_dt_utc = now_utc
+                    date_label = format_jalali(expiry_dt_utc) or ''
 
                 # Dashboard link
                 app_base = request.url_root.rstrip('/')
@@ -4237,7 +4257,7 @@ def renew_client(server_id, inbound_id, email):
                     'days_label': days_label,
                     'volume': msg_volume,
                     'volume_label': volume_label,
-                    'date': now_jalali,
+                    'date': date_label,
                     'server_name': getattr(server, 'name', '') or '',
                     'mode': mode,
                     'dashboard_link': dashboard_link,
