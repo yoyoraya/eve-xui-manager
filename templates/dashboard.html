@@ -2136,10 +2136,14 @@
             payload.package_id = selectedRenewPackageId;
         } else {
             const customDays = parseInt(document.getElementById('renew-custom-days').value) || 0;
-            const customVolume = parseInt(document.getElementById('renew-custom-volume').value) || 0;
-            // 0 days or 0 volume is valid and means unlimited
+            const rawVol = (document.getElementById('renew-custom-volume').value || '').trim();
+            const customVolume = rawVol === '' ? null : (parseInt(rawVol) || 0);
+            // 0 days is valid and means unlimited.
+            // For volume: empty means "no change"; 0 means "unlimited".
             payload.days = customDays;
-            payload.volume = customVolume;
+            if (customVolume !== null) {
+                payload.volume = customVolume;
+            }
         }
 
         const btn = document.querySelector('#renew-modal .btn-primary');
@@ -2159,13 +2163,14 @@
                 closeRenewModal();
                 
                 let finalDays = 0;
-                let finalVolume = 0;
+                let finalVolume = null;
                 if (usePackage) {
                     finalDays = selectedRenewPackageDays;
                     finalVolume = selectedRenewPackageVolume;
                 } else {
                     finalDays = parseInt(document.getElementById('renew-custom-days').value) || 0;
-                    finalVolume = parseInt(document.getElementById('renew-custom-volume').value) || 0;
+                    const rawVol2 = (document.getElementById('renew-custom-volume').value || '').trim();
+                    finalVolume = rawVol2 === '' ? null : (parseInt(rawVol2) || 0);
                 }
 
                 const prevHtml = `
@@ -2177,7 +2182,8 @@
                 `;
                 document.getElementById('renew-prev-state').innerHTML = prevHtml;
 
-                const fallbackText = `🔰${email}\n⌛${finalDays} Days 📊${finalVolume}GB\nتمدید شد`;
+                const fallbackVolLabel = (finalVolume === null) ? '—' : `${finalVolume}GB`;
+                const fallbackText = `🔰${email}\n⌛${finalDays} Days 📊${fallbackVolLabel}\nتمدید شد`;
                 const successText = (data && typeof data.copy_text === 'string' && data.copy_text.trim())
                     ? data.copy_text
                     : fallbackText;

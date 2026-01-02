@@ -76,7 +76,7 @@ from urllib.parse import urlparse, quote, urlencode
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 # Simple in-memory cache for update checks
@@ -4285,6 +4285,7 @@ def renew_client(server_id, inbound_id, email):
     price = 0
     days_to_add = 0
     volume_gb_to_add = 0
+    volume_provided = False
     description = ""
 
     try:
@@ -4295,13 +4296,23 @@ def renew_client(server_id, inbound_id, email):
                 return _finish({"success": False, "error": "Invalid package selected"}, 400)
             days_to_add = int(package.days or 0)
             volume_gb_to_add = int(package.volume or 0)
+            volume_provided = True
             price = calculate_reseller_price(user, package=package)
             description = f"Renew Package: {package.name} - {email}"
             if days_to_add <= 0:
                 return _finish({"success": False, "error": "Package is misconfigured"}, 400)
         else:
             days_to_add = int(data.get('days', 0))
-            volume_gb_to_add = int(data.get('volume', 0))
+            raw_volume = data.get('volume', None)
+            if raw_volume is None:
+                volume_provided = False
+                volume_gb_to_add = 0
+            elif isinstance(raw_volume, str) and raw_volume.strip() == '':
+                volume_provided = False
+                volume_gb_to_add = 0
+            else:
+                volume_provided = True
+                volume_gb_to_add = int(raw_volume)
             if volume_gb_to_add < 0:
                 volume_gb_to_add = 0
             if days_to_add < 0:
@@ -4316,7 +4327,10 @@ def renew_client(server_id, inbound_id, email):
             
             price = (days_to_add * user_cost_day) + (volume_gb_to_add * user_cost_gb)
             days_label = f"{days_to_add} Days" if days_to_add > 0 else "Unlimited Days"
-            vol_label = f"{volume_gb_to_add} GB" if volume_gb_to_add > 0 else "Unlimited Volume"
+            if not volume_provided:
+                vol_label = "Keep Volume"
+            else:
+                vol_label = f"{volume_gb_to_add} GB" if volume_gb_to_add > 0 else "Unlimited Volume"
             description = f"Renew Custom: {days_label}, {vol_label} - {email}"
     except (ValueError, TypeError):
         return _finish({"success": False, "error": "Invalid data"}, 400)
@@ -4446,16 +4460,22 @@ def renew_client(server_id, inbound_id, email):
         if reset_traffic:
             target_client['up'] = 0
             target_client['down'] = 0
-            # If resetting, set limit to new volume (0 = unlimited)
-            if volume_gb_to_add > 0:
-                new_volume = volume_gb_to_add * 1024 * 1024 * 1024
-            elif volume_gb_to_add == 0:
-                new_volume = 0  # unlimited
-            else:
+            # If resetting, keep cap unless user explicitly provided a new cap.
+            if not volume_provided:
                 new_volume = current_volume
+            else:
+                # 0 = unlimited, >0 = set exact cap
+                if volume_gb_to_add > 0:
+                    new_volume = volume_gb_to_add * 1024 * 1024 * 1024
+                else:
+                    new_volume = 0  # unlimited
         else:
-            # When adding volume: 0 means set to unlimited, >0 means add to current
-            if volume_gb_to_add == 0:
+            # When adding volume:
+            # - If volume not provided: keep existing cap
+            # - If provided: 0 means set to unlimited, >0 means add to current
+            if not volume_provided:
+                new_volume = current_volume
+            elif volume_gb_to_add == 0:
                 new_volume = 0  # unlimited
             elif volume_gb_to_add > 0:
                 # If current is unlimited (0), keep unlimited.
@@ -4567,7 +4587,15 @@ def renew_client(server_id, inbound_id, email):
                     msg_days = int(remaining_days_before) + int(days_to_add)
                     days_label = f"{msg_days} Days"
 
-                if volume_gb_to_add == 0:
+                if not volume_provided:
+                    # No volume change: show remaining (or unlimited)
+                    if not has_limited_volume:
+                        msg_volume = 0
+                        volume_label = "♾️"
+                    else:
+                        msg_volume = int(remaining_gb_before)
+                        volume_label = f"{msg_volume}GB"
+                elif volume_gb_to_add == 0:
                     msg_volume = 0
                     volume_label = "♾️"
                 elif reset_traffic:
