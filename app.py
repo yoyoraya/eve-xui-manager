@@ -334,6 +334,13 @@ def _run_bulk_job(job_id: str):
                             client_uuid=client_uuid if client_uuid else None
                         )
                         db.session.add(ownership)
+
+                        # Keep reseller "Allowed Servers" in sync with assignments
+                        try:
+                            ensure_reseller_allowed_for_assignment(reseller, server_id, inbound_id)
+                        except Exception:
+                            pass
+
                         db.session.commit()
                         ok = True
                     except Exception as exc:
@@ -1851,6 +1858,95 @@ def superadmin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+
+def user_management_required(f):
+    """Allow admins and superadmins to manage users.
+
+    Blocks reseller accounts.
+    """
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'admin_id' not in session:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+        editor = db.session.get(Admin, session['admin_id'])
+        if not editor:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+        if editor.role == 'reseller':
+            return jsonify({"success": False, "error": "Access Denied"}), 403
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def _normalize_username(raw: str | None) -> str:
+    username = (raw or '').strip().lower()
+    username = re.sub(r'\s+', '', username)
+    username = re.sub(r'[\u0600-\u06FF]', '', username)
+    return username
+
+
+def _validate_username(username: str) -> str | None:
+    if not username:
+        return 'Username is required'
+    if ' ' in username:
+        return 'Username cannot contain spaces'
+    if any(u'\u0600' <= c <= u'\u06FF' for c in username):
+        return 'Persian characters are not allowed'
+    return None
+
+
+def ensure_reseller_allowed_for_assignment(reseller: 'Admin', server_id: int, inbound_id: int | None) -> None:
+    """Ensure reseller.allowed_servers includes the given server+inbound.
+
+    This keeps the "Allowed Servers" UI in sync with actual assignments.
+    It only ever *adds* permissions; it does not remove them on unassign.
+    """
+    try:
+        if not reseller or reseller.role != 'reseller':
+            return
+        if reseller.allowed_servers == '*':
+            return
+
+        sid = int(server_id)
+        inb = int(inbound_id) if inbound_id is not None else None
+
+        allowed_map = resolve_allowed_map(reseller.allowed_servers)
+        if allowed_map == '*':
+            return
+
+        current = allowed_map.get(sid)
+        if current == '*':
+            return
+
+        if inb is None:
+            allowed_map[sid] = '*'
+        else:
+            cur_set = set()
+            if isinstance(current, (set, list, tuple)):
+                for v in current:
+                    try:
+                        cur_set.add(int(v))
+                    except Exception:
+                        continue
+            cur_set.add(inb)
+            allowed_map[sid] = cur_set
+
+        payload = []
+        for s, rule in allowed_map.items():
+            if rule == '*':
+                payload.append({'server_id': int(s), 'inbounds': '*'})
+            else:
+                try:
+                    payload.append({'server_id': int(s), 'inbounds': sorted([int(v) for v in (rule or [])])})
+                except Exception:
+                    payload.append({'server_id': int(s), 'inbounds': []})
+
+        reseller.allowed_servers = serialize_allowed_servers(payload)
+    except Exception:
+        # Best-effort; assignment should not fail because of permissions sync.
+        return
+
 def validate_password_strength(password):
     """
     Validates password strength:
@@ -3115,7 +3211,7 @@ def servers_page():
 @app.route('/admins')
 @login_required
 def admins_page():
-    if not session.get('is_superadmin'):
+    if session.get('role') == 'reseller':
         return redirect(url_for('dashboard'))
     return render_template('admins.html',
                          admin_username=session.get('admin_username'),
@@ -4163,7 +4259,7 @@ def bulk_client_action():
 
     reseller_id = None
     if action in ('assign_owner', 'unassign_owner'):
-        if not session.get('is_superadmin', False):
+        if session.get('role') == 'reseller':
             return jsonify({"success": False, "error": "Access denied"}), 403
 
     if action == 'assign_owner':
@@ -4679,7 +4775,7 @@ def renew_client(server_id, inbound_id, email):
         return _finish({"success": False, "error": str(e)}, 400)
 
 @app.route('/api/admins', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_admins():
     admins = Admin.query.all()
     return jsonify([a.to_dict() for a in admins])
@@ -4753,10 +4849,17 @@ def add_admin():
     return jsonify({"success": True})
 
 @app.route('/api/admins/<int:admin_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_admin(admin_id):
     admin = Admin.query.get_or_404(admin_id)
     data = request.json
+
+    editor = db.session.get(Admin, session.get('admin_id'))
+    editor_is_super = bool(editor and (editor.role == 'superadmin' or editor.is_superadmin))
+    target_is_super = bool(admin and (admin.role == 'superadmin' or admin.is_superadmin))
+
+    if not editor_is_super and target_is_super:
+        return jsonify({"success": False, "error": "Access Denied"}), 403
 
     def _clean_telegram_username(v: str | None) -> str:
         val = (v or '').strip()
@@ -4781,14 +4884,32 @@ def update_admin(admin_id):
     def _clean_url(v: str | None, *, limit: int = 1000) -> str:
         return (v or '').strip()[:limit]
 
+    if 'username' in data:
+        new_username = _normalize_username(data.get('username'))
+        if new_username and new_username != (admin.username or '').lower():
+            err = _validate_username(new_username)
+            if err:
+                return jsonify({"success": False, "error": err}), 400
+            existing = Admin.query.filter(
+                func.lower(Admin.username) == new_username,
+                Admin.id != admin.id
+            ).first()
+            if existing:
+                return jsonify({"success": False, "error": "Username exists"}), 400
+            admin.username = new_username
+
     if data.get('password'):
         is_valid, error_msg = validate_password_strength(data['password'])
         if not is_valid:
             return jsonify({"success": False, "error": error_msg}), 400
         admin.set_password(data['password'])
     if data.get('role'):
-        admin.role = data['role']
-        admin.is_superadmin = (data['role'] == 'superadmin')
+        new_role = (data.get('role') or '').strip().lower()
+        if new_role:
+            if new_role == 'superadmin' and not editor_is_super:
+                return jsonify({"success": False, "error": "Access Denied"}), 403
+            admin.role = new_role
+            admin.is_superadmin = (new_role == 'superadmin')
     if 'credit' in data: admin.credit = int(data['credit'])
     if 'allowed_servers' in data: admin.allowed_servers = serialize_allowed_servers(data['allowed_servers'])
     if 'enabled' in data: admin.enabled = data['enabled']
@@ -4803,6 +4924,15 @@ def update_admin(admin_id):
     if 'channel_telegram' in data: admin.channel_telegram = _clean_url(data.get('channel_telegram'))
     if 'channel_whatsapp' in data: admin.channel_whatsapp = _clean_url(data.get('channel_whatsapp'))
     db.session.commit()
+
+    # Keep session consistent if user edited self
+    try:
+        if editor and int(editor.id) == int(admin.id):
+            session['admin_username'] = admin.username
+            session['role'] = admin.role
+            session['is_superadmin'] = (admin.role == 'superadmin' or admin.is_superadmin)
+    except Exception:
+        pass
     return jsonify({"success": True})
 
 @app.route('/api/admins/<int:admin_id>', methods=['DELETE'])
@@ -4893,7 +5023,7 @@ def test_server_connection(server_id):
     return jsonify({"success": True, "panel_type": server.panel_type})
 
 @app.route('/api/assign-client', methods=['POST'])
-@superadmin_required
+@user_management_required
 def assign_client():
     data = request.json
     server_id = data.get('server_id')
@@ -4964,6 +5094,13 @@ def assign_client():
             client_uuid=client_uuid if client_uuid else None
         )
         db.session.add(ownership)
+
+        # Keep reseller "Allowed Servers" in sync with assignments
+        try:
+            ensure_reseller_allowed_for_assignment(reseller, server_id, inbound_id_int)
+        except Exception:
+            pass
+
         db.session.commit()
         return jsonify({"success": True})
     except Exception as e:
