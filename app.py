@@ -3154,7 +3154,11 @@ def login():
     if request.method == 'POST':
         data = request.form if request.form else request.json
         username = data.get('username', '').strip().lower()
-        user = Admin.query.filter_by(username=username, enabled=True).first()
+        # Case-insensitive lookup to support legacy usernames stored with uppercase.
+        user = Admin.query.filter(
+            func.lower(Admin.username) == username,
+            Admin.enabled == True
+        ).first()
         if user and user.check_password(data.get('password')):
             session.permanent = True
             session['admin_id'] = user.id
@@ -4886,7 +4890,9 @@ def update_admin(admin_id):
 
     if 'username' in data:
         new_username = _normalize_username(data.get('username'))
-        if new_username and new_username != (admin.username or '').lower():
+        # Important: if the only difference is casing (e.g. "Salar" -> "salar"),
+        # we still want to persist the normalized value so login works.
+        if new_username and new_username != (admin.username or ''):
             err = _validate_username(new_username)
             if err:
                 return jsonify({"success": False, "error": err}), 400
@@ -5288,6 +5294,13 @@ def add_client(server_id, inbound_id):
                 price=price
             )
             db.session.add(ownership)
+
+            # Keep reseller "Allowed Servers" UI in sync with ownership creation
+            try:
+                ensure_reseller_allowed_for_assignment(user, server.id, inbound_id)
+            except Exception:
+                pass
+
             db.session.commit()
             
             # Generate Links for Response
