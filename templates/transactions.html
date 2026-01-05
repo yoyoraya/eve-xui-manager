@@ -5,12 +5,12 @@
 {% block content %}
 <style nonce="{{ csp_nonce }}">
     .filters-card {
-        background: rgba(13, 17, 23, 0.85);
+        background: var(--bg-card);
         border: 1px solid var(--border-color);
         border-radius: 18px;
         padding: 20px;
         margin-bottom: 24px;
-        box-shadow: 0 20px 45px rgba(0,0,0,0.35);
+        box-shadow: var(--shadow-lg);
     }
     .filters-header {
         display: flex;
@@ -40,8 +40,8 @@
     .filter-field input,
     .filter-field select {
         width: 100%;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255,255,255,0.08);
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
         border-radius: 10px;
         padding: 10px 12px;
         color: var(--text-primary);
@@ -66,8 +66,9 @@
         color: #fff;
     }
     .btn-reset {
-        background: rgba(255,255,255,0.05);
-        color: var(--text-secondary);
+        background: var(--bg-card-hover);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
     }
     .range-chips {
         display: flex;
@@ -75,7 +76,7 @@
         flex-wrap: wrap;
     }
     .range-chips button {
-        border: 1px solid rgba(255,255,255,0.1);
+        border: 1px solid var(--border-color);
         background: transparent;
         color: var(--text-secondary);
         font-size: 0.8rem;
@@ -85,8 +86,8 @@
         transition: color 0.2s ease, border-color 0.2s ease;
     }
     .range-chips button:hover {
-        border-color: #22d3ee;
-        color: #22d3ee;
+        border-color: var(--primary);
+        color: var(--primary);
     }
     .muted-note {
         font-size: 0.8rem;

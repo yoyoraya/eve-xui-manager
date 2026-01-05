@@ -1,9 +1,21 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="en" dir="ltr" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Eve Manager{% endblock %}</title>
+    <script nonce="{{ csp_nonce }}">
+        (function () {
+            try {
+                const key = 'eve_theme';
+                const saved = localStorage.getItem(key);
+                const theme = (saved === 'light' || saved === 'dark') ? saved : 'dark';
+                document.documentElement.dataset.theme = theme;
+            } catch (e) {
+                // Ignore storage errors (private mode, disabled storage, etc.)
+            }
+        })();
+    </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>

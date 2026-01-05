@@ -21,6 +21,75 @@
     --header-height: 70px;
 }
 
+html {
+    color-scheme: dark;
+}
+
+html[data-theme="light"] {
+    color-scheme: light;
+    --bg-dark: #f7f8fc;
+    --bg-card: #FFFDFF;
+    --bg-card-hover: rgba(15, 23, 42, 0.045);
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --border-color: rgba(15, 23, 42, 0.16);
+    --shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.10), 0 4px 6px -4px rgba(15, 23, 42, 0.08);
+}
+
+html[data-theme="light"] .modal-header h2 {
+    color: var(--text-primary);
+}
+
+html[data-theme="light"] .form-group input,
+html[data-theme="light"] .form-select,
+html[data-theme="light"] .form-input,
+html[data-theme="light"] .search-input,
+html[data-theme="light"] .filter-btn,
+html[data-theme="light"] .timer-input,
+html[data-theme="light"] .package-card,
+html[data-theme="light"] .server-item,
+html[data-theme="light"] .checkmark {
+    background: var(--bg-card);
+}
+
+html[data-theme="light"] select option,
+html[data-theme="light"] .form-select option,
+html[data-theme="light"] select optgroup {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+}
+
+html[data-theme="light"] .search-clear:hover {
+    background: var(--bg-card-hover);
+}
+
+html[data-theme="light"] .filter-toggle:hover {
+    background: var(--bg-card-hover);
+}
+
+html[data-theme="light"] .action-icon {
+    border: 1px solid rgba(15, 23, 42, 0.18);
+    color: rgba(15, 23, 42, 0.72);
+}
+
+html[data-theme="light"] .wallet-pill {
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.10);
+}
+
+html[data-theme="light"] .chip {
+    background: var(--bg-card);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+html[data-theme="light"] .chip.active,
+html[data-theme="light"] .chip:hover {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: rgba(99, 102, 241, 0.55);
+    color: var(--text-primary);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -622,7 +691,7 @@ input:checked + .slider:before {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: var(--bg-dark);
+    background: var(--bg-card);
     padding: 16px;
     border-radius: 12px;
     border: 1px solid var(--border-color);
@@ -652,6 +721,10 @@ input:checked + .slider:before {
     color: #4ade80;
     font-weight: 600;
     font-size: 1rem;
+}
+
+html[data-theme="light"] .package-price {
+    color: #16a34a;
 }
 
 .package-actions {
@@ -2345,6 +2418,10 @@ select optgroup {
     justify-content: center;
     color: var(--primary);
     flex-shrink: 0;
+}
+
+html[data-theme="light"] .server-icon {
+    background: var(--bg-card-hover);
 }
 
 .server-title {

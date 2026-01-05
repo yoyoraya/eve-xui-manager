@@ -6,6 +6,10 @@
 {% block content %}
 <div class="settings-layout">
     <div class="settings-sidebar">
+        <button class="settings-tab" onclick="switchTab('general')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            General
+        </button>
         <button class="settings-tab active" onclick="switchTab('templates')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             Notification Templates
@@ -30,6 +34,28 @@
     </div>
 
     <div class="settings-content">
+        <div id="tab-general" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>General</h2>
+                        <p class="text-secondary">General application preferences.</p>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Theme</label>
+                    <div class="refresh-toggle" style="gap: 10px;">
+                        <label class="toggle-switch" style="margin: 0;">
+                            <input type="checkbox" id="theme-toggle" onchange="handleThemeToggleChange(this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label" id="theme-toggle-text">Light</span>
+                    </div>
+                    <small class="text-secondary">Switch between Dark and Light mode.</small>
+                </div>
+            </div>
+        </div>
+
         <div id="tab-templates" class="tab-pane active">
             <div class="panel-card">
                 <div class="panel-card-header">
@@ -350,15 +376,28 @@
         overflow: hidden;
     }
 
+    html[data-theme="light"] .template-card {
+        background: var(--bg-card);
+        box-shadow: var(--shadow);
+    }
+
     .template-card:hover {
         transform: translateY(-4px);
         box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
         border-color: var(--primary);
     }
 
+    html[data-theme="light"] .template-card:hover {
+        box-shadow: var(--shadow-lg);
+    }
+
     .template-card.active {
         border-color: var(--success);
         box-shadow: 0 0 0 1px var(--success), 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    }
+
+    html[data-theme="light"] .template-card.active {
+        box-shadow: 0 0 0 1px var(--success), var(--shadow-lg);
     }
 
     /* Decorative top bar */
@@ -402,6 +441,11 @@
         display: inline-block;
     }
 
+    html[data-theme="light"] .active-badge {
+        background: rgba(34, 197, 94, 0.12);
+        box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.25);
+    }
+
     .template-preview {
         background: rgba(0, 0, 0, 0.2);
         padding: 12px;
@@ -416,6 +460,12 @@
         direction: rtl;
         flex-grow: 1;
         border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    html[data-theme="light"] .template-preview {
+        background: var(--bg-dark);
+        border-color: var(--border-color);
+        color: var(--text-secondary);
     }
 
     .action-buttons {
@@ -444,6 +494,10 @@
         color: var(--primary);
         cursor: pointer;
         transition: all 0.2s;
+    }
+
+    html[data-theme="light"] .var-chip {
+        background: var(--bg-card);
     }
 
     .var-chip:hover {
@@ -721,6 +775,10 @@
         text-transform: uppercase;
     }
 
+    html[data-theme="light"] .renew-label {
+        color: var(--text-secondary);
+    }
+
     .renew-template-preview {
         background: rgba(15, 23, 42, 0.75);
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -734,6 +792,12 @@
         font-family: 'Vazirmatn', sans-serif;
         position: relative;
         overflow: auto;
+    }
+
+    html[data-theme="light"] .renew-template-preview {
+        background: var(--bg-dark);
+        border-color: var(--border-color);
+        color: var(--text-primary);
     }
 
     .renew-preview-hint {
@@ -802,16 +866,51 @@
 {% block scripts %}
 <script nonce="{{ csp_nonce }}">
     document.addEventListener('DOMContentLoaded', () => {
+        syncThemeToggleUI();
+
         const activeTab = document.querySelector('.settings-tab.active');
         if (activeTab) {
             const onclick = activeTab.getAttribute('onclick');
-            if (onclick.includes("'templates'")) loadTemplates();
+            if (onclick.includes("'general'")) syncThemeToggleUI();
+            else if (onclick.includes("'templates'")) loadTemplates();
             else if (onclick.includes("'renew_template'")) loadRenewTemplates();
             else if (onclick.includes("'backups'")) { loadBackups(); loadBackupSettings(); }
             else if (onclick.includes("'ssl'")) loadSSLSettings();
             else if (onclick.includes("'session'")) loadSessionSettings();
         }
     });
+
+    function getSavedTheme() {
+        try {
+            const t = localStorage.getItem('eve_theme');
+            return (t === 'light' || t === 'dark') ? t : 'dark';
+        } catch (e) {
+            return 'dark';
+        }
+    }
+
+    function applyTheme(theme) {
+        const t = (theme === 'light' || theme === 'dark') ? theme : 'dark';
+        document.documentElement.dataset.theme = t;
+        try {
+            localStorage.setItem('eve_theme', t);
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
+    function syncThemeToggleUI() {
+        const theme = getSavedTheme();
+        const toggle = document.getElementById('theme-toggle');
+        const label = document.getElementById('theme-toggle-text');
+        if (toggle) toggle.checked = theme === 'light';
+        if (label) label.textContent = theme === 'light' ? 'Light' : 'Dark';
+    }
+
+    function handleThemeToggleChange(isLight) {
+        applyTheme(isLight ? 'light' : 'dark');
+        syncThemeToggleUI();
+    }
 
     function switchTab(tabName) {
         document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
@@ -820,7 +919,9 @@
         event.currentTarget.classList.add('active');
         document.getElementById(`tab-${tabName}`).classList.add('active');
 
-        if (tabName === 'backups') {
+        if (tabName === 'general') {
+            syncThemeToggleUI();
+        } else if (tabName === 'backups') {
             loadBackups();
             loadBackupSettings();
         } else if (tabName === 'ssl') {

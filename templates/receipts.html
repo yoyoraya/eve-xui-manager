@@ -171,6 +171,16 @@
         }
     }
 
+    @media (max-width: 768px) {
+        html[data-theme="light"] .data-table tr {
+            background: var(--bg-card);
+        }
+
+        html[data-theme="light"] .data-table td {
+            border-bottom-color: rgba(15, 23, 42, 0.10);
+        }
+    }
+
     .divider {
         height: 1px;
         background-color: var(--border-color);
@@ -229,6 +239,10 @@
         vertical-align: middle;
         border-bottom: 1px solid var(--border-color);
         background: rgba(30, 41, 59, 0.4); /* slightly transparent card bg */
+    }
+
+    html[data-theme="light"] .data-table td {
+        background: var(--bg-card);
     }
 
     .data-table tr:last-child td {
@@ -375,7 +389,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        background: var(--bg-dark);
+        background: var(--bg-card);
         border: 1px solid var(--border-color);
         border-radius: 8px;
         padding: 12px;
@@ -400,7 +414,7 @@
     .card-bank-icon {
         width: 32px;
         height: 32px;
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--bg-card-hover);
         border-radius: 6px;
         display: flex;
         align-items: center;
