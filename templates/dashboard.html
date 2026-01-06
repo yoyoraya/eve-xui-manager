@@ -228,8 +228,9 @@
         </div>
     </div>
     
-    <div id="search-results" style="display: none; margin-bottom: 20px; padding: 12px 16px; background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 12px; font-size: 0.9rem; color: #e0e7ff;">
+    <div id="search-results" style="display: none; margin-bottom: 20px; padding: 12px 16px; background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 12px; font-size: 0.9rem; color: #e0e7ff; display: none; justify-content: space-between; align-items: center; gap: 10px;">
         <span id="search-results-text"></span>
+        <button id="search-select-all-btn" class="btn btn-secondary" style="display:none; padding: 6px 10px;" onclick="selectAllSearchResults()">Select All</button>
     </div>
     <div id="bulk-actions-container" style="display:none; margin-bottom: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);">
         <strong>Bulk Actions</strong>
@@ -3256,6 +3257,7 @@
         const searchResultsDiv = document.getElementById('search-results');
         const searchResultsText = document.getElementById('search-results-text');
         const clearBtn = document.getElementById('clear-search-btn');
+        const selectAllBtn = document.getElementById('search-select-all-btn');
         
         // Ensure clear button is visible if we have results (or even no results but a query)
         clearBtn.classList.remove('hidden');
@@ -3274,7 +3276,8 @@
         }
         
         if (filteredResults.length === 0) {
-            searchResultsDiv.style.display = 'block';
+            searchResultsDiv.style.display = 'flex';
+            if (selectAllBtn) selectAllBtn.style.display = 'none';
             if (results.length > 0) {
                 searchResultsText.textContent = `Found ${results.length} client(s), but all hidden by filters.`;
             } else {
@@ -3284,12 +3287,26 @@
             return;
         }
         
-        searchResultsDiv.style.display = 'block';
+        searchResultsDiv.style.display = 'flex';
         searchResultsText.textContent = `Found ${filteredResults.length} client(s) matching "${query}"` + (results.length !== filteredResults.length ? ` (filtered from ${results.length})` : '');
+        if (selectAllBtn) selectAllBtn.style.display = 'inline-flex';
         
         updateInboundsFiltered(filteredResults);
         // Apply CSS-only disabled visibility to rendered rows
         applyDisabledVisibility();
+    }
+
+    function selectAllSearchResults() {
+        // In search mode, the inbounds list is rebuilt with only filtered results,
+        // so selecting all currently-rendered checkboxes corresponds to "select all search results".
+        const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
+        boxes.forEach(cb => {
+            cb.checked = true;
+            const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
+            bulkSelectedClientKeys.add(key);
+        });
+        applyBulkSelectionToDOM();
+        updateBulkUI();
     }
 
     function updateInboundsFiltered(filteredResults) {
@@ -3540,7 +3557,10 @@
             const admins = await response.json();
             const resellers = admins.filter(a => a.role === 'reseller');
 
-            const options = ['<option value="">Select Reseller</option>'].concat(
+            const options = [
+                '<option value="">Select Reseller</option>',
+                '<option value="0">System</option>'
+            ].concat(
                 resellers.map(r => `<option value="${r.id}">${r.username}</option>`)
             );
             select.innerHTML = options.join('');
@@ -3551,7 +3571,7 @@
     }
 
     async function executeBulkAction() {
-        const action = document.getElementById('bulk-action-select')?.value;
+        let action = document.getElementById('bulk-action-select')?.value;
         if (!action) {
             showToast('Please select an action', 'error');
             return;
@@ -3570,7 +3590,13 @@
                 showToast('Please select a reseller', 'error');
                 return;
             }
-            data.reseller_id = parseInt(resellerId);
+            const resellerIdInt = parseInt(resellerId);
+            if (resellerIdInt === 0) {
+                // Treat "System" as an explicit unassign (no owner)
+                action = 'unassign_owner';
+            } else {
+                data.reseller_id = resellerIdInt;
+            }
         }
 
         try {

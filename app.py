@@ -3308,7 +3308,7 @@ def api_refresh():
                     em = (c.get('email') or '').strip().lower()
                     if em:
                         email_pairs.add((sid, em))
-                    cu = (c.get('id') or '').strip()
+                    cu = str(c.get('id') or '').strip()
                     if cu:
                         uuid_pairs.add((sid, cu))
 
@@ -3370,7 +3370,7 @@ def api_refresh():
                     except Exception:
                         continue
                     for c in (inbound.get('clients') or []):
-                        cu = (c.get('id') or '').strip()
+                        cu = str(c.get('id') or '').strip()
                         em = (c.get('email') or '').strip().lower()
                         info = owner_uuid_map.get((sid, cu)) if cu else None
                         if not info and em:
@@ -3482,7 +3482,7 @@ def api_refresh():
         
         for client in clients_in_inbound:
             c_email = client.get('email', '').lower()
-            c_uuid = (client.get('id') or '').strip()
+            c_uuid = str(client.get('id') or '').strip()
             
             # چک می‌کنیم آیا این کلاینت به ریسلر Assign شده؟
             # 1. تطابق دقیق (سرور، اینباند، ایمیل)
