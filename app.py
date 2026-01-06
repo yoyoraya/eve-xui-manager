@@ -325,6 +325,7 @@ def _run_bulk_job(job_id: str):
                         if key_filters:
                             q = q.filter(or_(*key_filters))
                         q.delete(synchronize_session=False)
+                        db.session.flush()  # Ensure delete is sent to DB before insert
 
                         ownership = ClientOwnership(
                             reseller_id=reseller_id,
@@ -3326,9 +3327,14 @@ def api_refresh():
                 )
                 filters = []
                 if uuid_values:
-                    filters.append(ClientOwnership.client_uuid.in_(list(uuid_values)))
+                    # Use case-insensitive matching for UUIDs
+                    lower_uuid_values = [u.lower() for u in uuid_values if u]
+                    if lower_uuid_values:
+                        filters.append(func.lower(ClientOwnership.client_uuid).in_(lower_uuid_values))
                 if email_values:
                     filters.append(func.lower(ClientOwnership.client_email).in_(list(email_values)))
+                if not filters:
+                    filters.append(ClientOwnership.id == -1)  # No matches if no filters
                 q = q.filter(or_(*filters))
 
                 for own, reseller in (q.all() or []):
@@ -3339,7 +3345,7 @@ def api_refresh():
 
                     created = own.created_at or datetime.min
 
-                    ou = (own.client_uuid or '').strip()
+                    ou = (own.client_uuid or '').strip().lower()
                     if ou:
                         key_u = (sid, ou)
                         existing_u = owner_uuid_map.get(key_u)
@@ -3370,7 +3376,7 @@ def api_refresh():
                     except Exception:
                         continue
                     for c in (inbound.get('clients') or []):
-                        cu = str(c.get('id') or '').strip()
+                        cu = str(c.get('id') or '').strip().lower()
                         em = (c.get('email') or '').strip().lower()
                         info = owner_uuid_map.get((sid, cu)) if cu else None
                         if not info and em:
@@ -3426,7 +3432,7 @@ def api_refresh():
     
     for server_id_val, inbound_id_val, client_email_val, client_uuid_val in owned_ownerships:
         c_email = (client_email_val or '').lower()
-        c_uuid = (client_uuid_val or '').strip()
+        c_uuid = (client_uuid_val or '').strip().lower()
         sid = int(server_id_val)
         
         if inbound_id_val is not None:
@@ -3482,7 +3488,7 @@ def api_refresh():
         
         for client in clients_in_inbound:
             c_email = client.get('email', '').lower()
-            c_uuid = str(client.get('id') or '').strip()
+            c_uuid = str(client.get('id') or '').strip().lower()
             
             # چک می‌کنیم آیا این کلاینت به ریسلر Assign شده؟
             # 1. تطابق دقیق (سرور، اینباند، ایمیل)
