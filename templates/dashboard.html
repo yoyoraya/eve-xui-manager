@@ -3528,6 +3528,49 @@
         updateBulkUI();
     }
 
+    // Optimistic update: patch local data immediately after bulk assign/unassign
+    function applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName) {
+        if (!Array.isArray(allInboundsData)) return;
+        
+        // Build a lookup set for quick matching
+        const clientSet = new Set();
+        clients.forEach(c => {
+            const key = `${c.server_id}:${c.inbound_id}:${(c.email || '').toLowerCase()}`;
+            clientSet.add(key);
+        });
+        
+        // Patch each matching client in the local cache
+        for (const inbound of allInboundsData) {
+            const sid = inbound.server_id;
+            const iid = inbound.id;
+            const inboundClients = inbound.clients || [];
+            
+            for (const client of inboundClients) {
+                const em = (client.email || '').toLowerCase();
+                const key = `${sid}:${iid}:${em}`;
+                
+                if (clientSet.has(key)) {
+                    if (newOwnerName) {
+                        client.owner_reseller_id = newOwnerId;
+                        client.owner_username = newOwnerName;
+                    } else {
+                        delete client.owner_reseller_id;
+                        delete client.owner_username;
+                    }
+                }
+            }
+        }
+        
+        // Re-render the UI with updated data
+        applyFilters();
+        
+        // If search is active, re-run search to update displayed results
+        const searchInput = document.getElementById('global-search-input');
+        if (searchInput && searchInput.value.trim().length > 0) {
+            performGlobalSearch(true);
+        }
+    }
+
     function setBulkProgress(visible, processed = 0, total = 0) {
         const wrap = document.getElementById('bulk-progress');
         const bar = document.getElementById('bulk-progress-bar');
@@ -3651,7 +3694,18 @@
                         const successCount = progress.success || 0;
                         const failedCount = progress.failed || 0;
                         showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}`);
-                        refreshData();
+                        
+                        // Optimistic UI update for assign/unassign - update local data instantly
+                        if (action === 'assign_owner' || action === 'unassign_owner') {
+                            const newOwnerName = action === 'unassign_owner' ? null : 
+                                (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
+                            const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
+                            applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName);
+                        }
+                        
+                        // Clear selection and re-render
+                        clearBulkSelection();
+                        refreshData(true);  // Silent refresh to sync with server
                         return;
                     }
                     if (job.state === 'error') {
