@@ -592,6 +592,7 @@
         <div class="stat-info">
             <span class="stat-label">Today</span>
             <span class="stat-value" id="stat-today">0 T</span>
+            <span class="stat-sub" id="stat-today-delta">vs same day last month: —</span>
         </div>
     </div>
 
@@ -604,7 +605,7 @@
         <div class="stat-info">
             <span class="stat-label" id="stat-month-label">This Month</span>
             <span class="stat-value" id="stat-month">0 T</span>
-            <span class="stat-sub" id="stat-month-delta">vs last month: —</span>
+            <span class="stat-sub" id="stat-month-delta">vs same period last month: —</span>
         </div>
     </div>
 
@@ -619,7 +620,7 @@
         <div class="stat-info">
             <span class="stat-label" id="stat-month-expense-label">Month Cost</span>
             <span class="stat-value" id="stat-month-expense">0 T</span>
-            <span class="stat-sub" id="stat-month-expense-delta">vs last month: —</span>
+            <span class="stat-sub" id="stat-month-expense-delta">vs same period last month: —</span>
         </div>
     </div>
 
@@ -633,7 +634,7 @@
         <div class="stat-info">
             <span class="stat-label" id="stat-total-label">Total Profit</span>
             <span class="stat-value profit" id="stat-total">0 T</span>
-            <span class="stat-sub" id="stat-net-delta">Profit vs last month: —</span>
+            <span class="stat-sub" id="stat-net-delta">Profit vs same period last month: —</span>
         </div>
     </div>
 </div>
@@ -1583,24 +1584,38 @@
                 return `${sign}${num.toFixed(0)}%`;
             };
 
-            const applyDelta = (elId, pct, goodIsPositive = true, emptyText = 'vs last month: —') => {
+            const fmtAmount = (v) => {
+                if (v === null || v === undefined || Number.isNaN(Number(v))) return null;
+                const num = Number(v);
+                if (!Number.isFinite(num)) return null;
+                const sign = num > 0 ? '+' : (num < 0 ? '-' : '');
+                return `${sign}${Math.abs(Math.round(num)).toLocaleString()} T`;
+            };
+
+            const applyDelta = (elId, pct, amount, goodIsPositive = true, emptyText = 'vs last month: —') => {
                 const el = document.getElementById(elId);
                 if (!el) return;
                 const p = fmtPct(pct);
-                if (!p) {
+                const a = fmtAmount(amount);
+                if (!p && !a) {
                     el.textContent = emptyText;
                     el.style.color = 'var(--text-secondary)';
                     return;
                 }
-                el.textContent = emptyText.replace('—', p);
-                const isUp = Number(pct) >= 0;
+                const pctPart = p ? p : '—';
+                const amountPart = a ? ` (${a})` : '';
+                el.textContent = emptyText.replace('—', `${pctPart}${amountPart}`);
+
+                const signSource = (p !== null) ? Number(pct) : Number(amount);
+                const isUp = signSource >= 0;
                 const good = goodIsPositive ? isUp : !isUp;
                 el.style.color = good ? 'var(--success)' : 'var(--danger)';
             };
 
-            applyDelta('stat-month-delta', stats.month_change_pct, true, 'vs last month: —');
-            applyDelta('stat-month-expense-delta', stats.month_expense_change_pct, false, 'vs last month: —');
-            applyDelta('stat-net-delta', stats.month_net_change_pct, true, 'Profit vs last month: —');
+            applyDelta('stat-today-delta', stats.today_change_pct, stats.today_change_amount, true, 'vs same day last month: —');
+            applyDelta('stat-month-delta', stats.month_change_pct, stats.month_change_amount, true, 'vs same period last month: —');
+            applyDelta('stat-month-expense-delta', stats.month_expense_change_pct, stats.month_expense_change_amount, false, 'vs same period last month: —');
+            applyDelta('stat-net-delta', stats.month_net_change_pct, stats.month_net_change_amount, true, 'Profit vs same period last month: —');
         } catch (error) {
             console.error('Failed to load stats:', error);
         }

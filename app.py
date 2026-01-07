@@ -6262,6 +6262,65 @@ def get_finance_stats():
     g_today_start_tehran = j_today_start.togregorian()
     today_start = g_today_start_tehran - tehran_offset
 
+    # Period-to-date windows for "compare to same period last month"
+    now_period_end = now_utc
+    try:
+        cur_period_len = now_period_end - month_start
+    except Exception:
+        cur_period_len = None
+
+    prev_period_end = None
+    if prev_month_start and cur_period_len is not None:
+        try:
+            prev_period_end = prev_month_start + cur_period_len
+            if prev_month_end and prev_period_end > prev_month_end:
+                prev_period_end = prev_month_end
+        except Exception:
+            prev_period_end = prev_month_end
+
+    # "Today" comparison: same day-of-month in previous Jalali month, same time-of-day window
+    prev_same_day_start = None
+    prev_same_day_end = None
+    if prev_month_start:
+        try:
+            day_of_month = int(getattr(j_now, 'day', 0) or 0)
+        except Exception:
+            day_of_month = 0
+
+        if day_of_month > 0:
+            try:
+                prev_year = int(j_month_start.year)
+                prev_month = int(j_month_start.month) - 1
+                if prev_month <= 0:
+                    prev_month = 12
+                    prev_year -= 1
+
+                # Handle months that don't have this day (e.g., day 31)
+                safe_day = day_of_month
+                j_prev_same_day = None
+                while safe_day >= 1 and j_prev_same_day is None:
+                    try:
+                        j_prev_same_day = jdatetime_class(prev_year, prev_month, safe_day, 0, 0, 0, 0)
+                    except Exception:
+                        safe_day -= 1
+
+                if j_prev_same_day is not None:
+                    g_prev_same_day_tehran = j_prev_same_day.togregorian()
+                    prev_same_day_start = g_prev_same_day_tehran - tehran_offset
+
+                    # Match window length to "today so far" but clamp to that day's end
+                    try:
+                        today_so_far = now_period_end - today_start
+                    except Exception:
+                        today_so_far = timedelta(0)
+                    day_end = prev_same_day_start + timedelta(days=1)
+                    prev_same_day_end = prev_same_day_start + today_so_far
+                    if prev_same_day_end > day_end:
+                        prev_same_day_end = day_end
+            except Exception:
+                prev_same_day_start = None
+                prev_same_day_end = None
+
     card_id = request.args.get('card_id', type=int)
     target_user_id = request.args.get('user_id', type=int)
 
@@ -6289,16 +6348,21 @@ def get_finance_stats():
         total_charge = sum_amount(charge_query)
 
         prev_month_charge = 0
-        if prev_month_start and prev_month_end:
-            q_prev = charge_query.filter(Transaction.created_at >= prev_month_start, Transaction.created_at < prev_month_end)
+        if prev_month_start and prev_period_end:
+            q_prev = charge_query.filter(Transaction.created_at >= prev_month_start, Transaction.created_at < prev_period_end)
             prev_month_charge = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(Transaction.id.in_(q_prev.with_entities(Transaction.id))).scalar() or 0
+
+        prev_same_day_charge = 0
+        if prev_same_day_start and prev_same_day_end:
+            q_prev_day = charge_query.filter(Transaction.created_at >= prev_same_day_start, Transaction.created_at < prev_same_day_end)
+            prev_same_day_charge = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(Transaction.id.in_(q_prev_day.with_entities(Transaction.id))).scalar() or 0
 
         month_usage = abs(sum_amount(usage_query, month_start))
         total_usage = abs(sum_amount(usage_query))
 
         prev_month_usage = 0
-        if prev_month_start and prev_month_end:
-            q_prev_u = usage_query.filter(Transaction.created_at >= prev_month_start, Transaction.created_at < prev_month_end)
+        if prev_month_start and prev_period_end:
+            q_prev_u = usage_query.filter(Transaction.created_at >= prev_month_start, Transaction.created_at < prev_period_end)
             prev_month_usage = abs(db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(Transaction.id.in_(q_prev_u.with_entities(Transaction.id))).scalar() or 0)
 
         month_net = int(month_charge) - int(month_usage)
@@ -6318,6 +6382,13 @@ def get_finance_stats():
         month_usage_pct = pct_change(month_usage, prev_month_usage)
         month_net_pct = pct_change(month_net, prev_month_net)
 
+        today_charge_pct = pct_change(today_charge, prev_same_day_charge)
+
+        month_charge_delta = int(month_charge) - int(prev_month_charge)
+        month_usage_delta = int(month_usage) - int(prev_month_usage)
+        month_net_delta = int(month_net) - int(prev_month_net)
+        today_charge_delta = int(today_charge) - int(prev_same_day_charge)
+
         remain = total_charge - total_usage
 
         return jsonify({
@@ -6334,6 +6405,12 @@ def get_finance_stats():
                 'month_change_pct': month_charge_pct,
                 'month_expense_change_pct': month_usage_pct,
                 'month_net_change_pct': month_net_pct,
+                'today_prev': prev_same_day_charge,
+                'today_change_pct': today_charge_pct,
+                'today_change_amount': today_charge_delta,
+                'month_change_amount': month_charge_delta,
+                'month_expense_change_amount': month_usage_delta,
+                'month_net_change_amount': month_net_delta,
                 'payment_count': charge_query.count(),
                 'total_charge': total_charge,
                 'total_usage': total_usage
@@ -6382,10 +6459,17 @@ def get_finance_stats():
         total_income = sum_tx_income() + sum_pay_income()
 
         prev_month_income = 0
-        if prev_month_start and prev_month_end:
+        if prev_month_start and prev_period_end:
             prev_month_income = (
-                sum_tx_income(prev_month_start, prev_month_end)
-                + sum_pay_income(prev_month_start, prev_month_end)
+                sum_tx_income(prev_month_start, prev_period_end)
+                + sum_pay_income(prev_month_start, prev_period_end)
+            )
+
+        prev_same_day_income = 0
+        if prev_same_day_start and prev_same_day_end:
+            prev_same_day_income = (
+                sum_tx_income(prev_same_day_start, prev_same_day_end)
+                + sum_pay_income(prev_same_day_start, prev_same_day_end)
             )
 
         # For net profit: get expense transactions separately
@@ -6405,11 +6489,11 @@ def get_finance_stats():
         ).scalar() or 0
 
         prev_month_expense = 0
-        if prev_month_start and prev_month_end:
+        if prev_month_start and prev_period_end:
             prev_month_expense = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
                 Transaction.id.in_(expense_query.with_entities(Transaction.id)),
                 Transaction.created_at >= prev_month_start,
-                Transaction.created_at < prev_month_end
+                Transaction.created_at < prev_period_end
             ).scalar() or 0
 
         month_cost_abs = abs(month_expense)
@@ -6430,6 +6514,13 @@ def get_finance_stats():
         month_income_pct = pct_change(month_income, prev_month_income)
         month_cost_pct = pct_change(month_cost_abs, prev_month_cost_abs)
         month_profit_pct = pct_change(month_profit, prev_month_profit)
+
+        today_income_pct = pct_change(today_income, prev_same_day_income)
+
+        month_income_delta = int(month_income) - int(prev_month_income)
+        month_cost_delta = int(month_cost_abs) - int(prev_month_cost_abs)
+        month_profit_delta = int(month_profit) - int(prev_month_profit)
+        today_income_delta = int(today_income) - int(prev_same_day_income)
 
         payment_count = tx_income_query.count() + pay_income_query.count()
 
@@ -6466,6 +6557,12 @@ def get_finance_stats():
                 'month_change_pct': month_income_pct,
                 'month_expense_change_pct': month_cost_pct,
                 'month_net_change_pct': month_profit_pct,
+                'today_prev': prev_same_day_income,
+                'today_change_pct': today_income_pct,
+                'today_change_amount': today_income_delta,
+                'month_change_amount': month_income_delta,
+                'month_expense_change_amount': month_cost_delta,
+                'month_net_change_amount': month_profit_delta,
                 'payment_count': payment_count,
                 'by_card': income_by_card,
                 'total_income': total_income,
