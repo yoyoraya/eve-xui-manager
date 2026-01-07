@@ -592,7 +592,10 @@
         <div class="stat-info">
             <span class="stat-label">Today</span>
             <span class="stat-value" id="stat-today">0 T</span>
-            <span class="stat-sub" id="stat-today-delta">vs same day last month: —</span>
+            <span class="stat-sub">
+                <span class="delta-label">vs same day last month:</span>
+                <span class="delta-value" id="stat-today-delta">—</span>
+            </span>
         </div>
     </div>
 
@@ -605,7 +608,10 @@
         <div class="stat-info">
             <span class="stat-label" id="stat-month-label">This Month</span>
             <span class="stat-value" id="stat-month">0 T</span>
-            <span class="stat-sub" id="stat-month-delta">vs same period last month: —</span>
+            <span class="stat-sub">
+                <span class="delta-label">vs same period last month:</span>
+                <span class="delta-value" id="stat-month-delta">—</span>
+            </span>
         </div>
     </div>
 
@@ -620,7 +626,10 @@
         <div class="stat-info">
             <span class="stat-label" id="stat-month-expense-label">Month Cost</span>
             <span class="stat-value" id="stat-month-expense">0 T</span>
-            <span class="stat-sub" id="stat-month-expense-delta">vs same period last month: —</span>
+            <span class="stat-sub">
+                <span class="delta-label">vs same period last month:</span>
+                <span class="delta-value" id="stat-month-expense-delta">—</span>
+            </span>
         </div>
     </div>
 
@@ -634,7 +643,10 @@
         <div class="stat-info">
             <span class="stat-label" id="stat-total-label">Total Profit</span>
             <span class="stat-value profit" id="stat-total">0 T</span>
-            <span class="stat-sub" id="stat-net-delta">Profit vs same period last month: —</span>
+            <span class="stat-sub">
+                <span class="delta-label">Profit vs same period last month:</span>
+                <span class="delta-value" id="stat-net-delta">—</span>
+            </span>
         </div>
     </div>
 </div>
@@ -1592,19 +1604,19 @@
                 return `${sign}${Math.abs(Math.round(num)).toLocaleString()} T`;
             };
 
-            const applyDelta = (elId, pct, amount, goodIsPositive = true, emptyText = 'vs last month: —') => {
+            const applyDelta = (elId, pct, amount, goodIsPositive = true) => {
                 const el = document.getElementById(elId);
                 if (!el) return;
                 const p = fmtPct(pct);
                 const a = fmtAmount(amount);
                 if (!p && !a) {
-                    el.textContent = emptyText;
+                    el.textContent = '—';
                     el.style.color = 'var(--text-secondary)';
                     return;
                 }
                 const pctPart = p ? p : '—';
                 const amountPart = a ? ` (${a})` : '';
-                el.textContent = emptyText.replace('—', `${pctPart}${amountPart}`);
+                el.textContent = `${pctPart}${amountPart}`;
 
                 const signSource = (p !== null) ? Number(pct) : Number(amount);
                 const isUp = signSource >= 0;
@@ -1612,10 +1624,10 @@
                 el.style.color = good ? 'var(--success)' : 'var(--danger)';
             };
 
-            applyDelta('stat-today-delta', stats.today_change_pct, stats.today_change_amount, true, 'vs same day last month: —');
-            applyDelta('stat-month-delta', stats.month_change_pct, stats.month_change_amount, true, 'vs same period last month: —');
-            applyDelta('stat-month-expense-delta', stats.month_expense_change_pct, stats.month_expense_change_amount, false, 'vs same period last month: —');
-            applyDelta('stat-net-delta', stats.month_net_change_pct, stats.month_net_change_amount, true, 'Profit vs same period last month: —');
+            applyDelta('stat-today-delta', stats.today_change_pct, stats.today_change_amount, true);
+            applyDelta('stat-month-delta', stats.month_change_pct, stats.month_change_amount, true);
+            applyDelta('stat-month-expense-delta', stats.month_expense_change_pct, stats.month_expense_change_amount, false);
+            applyDelta('stat-net-delta', stats.month_net_change_pct, stats.month_net_change_amount, true);
         } catch (error) {
             console.error('Failed to load stats:', error);
         }
