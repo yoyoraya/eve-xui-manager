@@ -242,11 +242,35 @@
                 <option value="enable">Enable</option>
                 <option value="disable">Disable</option>
                 <option value="delete">Delete</option>
+                <option value="add_days">Add Days</option>
+                <option value="add_volume">Add Volume (GB)</option>
                 {% if is_superadmin %}
                 <option value="assign_owner">Assign Owner</option>
                 <option value="unassign_owner">Unassign Owner</option>
                 {% endif %}
             </select>
+
+            <div id="bulk-delta-container" style="display:none;">
+                <input id="bulk-days-delta" type="number" class="form-input" min="1" step="1" placeholder="Days" style="max-width: 110px; display:none;">
+                <input id="bulk-volume-delta" type="number" class="form-input" min="1" step="1" placeholder="GB" style="max-width: 110px; display:none;">
+            </div>
+
+            <div id="bulk-conditions" style="display:flex; gap:10px; align-items:center;">
+                <select id="bulk-cond-enable" class="form-select" style="max-width: 160px;" title="Target by enabled/disabled">
+                    <option value="any" selected>Any Status</option>
+                    <option value="enabled">Enabled only</option>
+                    <option value="disabled">Disabled only</option>
+                </select>
+                <select id="bulk-cond-expiry" class="form-select" style="max-width: 190px;" title="Target by expiry type">
+                    <option value="any" selected>Any Expiry</option>
+                    <option value="unlimited">Unlimited</option>
+                    <option value="start_after_use">Not started</option>
+                    <option value="expired">Expired</option>
+                    <option value="today">Today</option>
+                    <option value="soon">Soon</option>
+                    <option value="normal">Normal</option>
+                </select>
+            </div>
 
             {% if is_superadmin %}
             <div id="bulk-reseller-container" style="display:none;">
@@ -3590,6 +3614,17 @@
         if (resellerContainer) {
             resellerContainer.style.display = (typeof IS_SUPERADMIN !== 'undefined' && IS_SUPERADMIN && action === 'assign_owner') ? 'block' : 'none';
         }
+
+        const deltaContainer = document.getElementById('bulk-delta-container');
+        const daysInput = document.getElementById('bulk-days-delta');
+        const volInput = document.getElementById('bulk-volume-delta');
+        if (deltaContainer && daysInput && volInput) {
+            const isDays = action === 'add_days';
+            const isVol = action === 'add_volume';
+            deltaContainer.style.display = (isDays || isVol) ? 'block' : 'none';
+            daysInput.style.display = isDays ? 'block' : 'none';
+            volInput.style.display = isVol ? 'block' : 'none';
+        }
     }
 
     async function loadResellersForBulk() {
@@ -3627,6 +3662,31 @@
         }
 
         const data = {};
+        const conditions = {
+            enable_state: document.getElementById('bulk-cond-enable')?.value || 'any',
+            expiry_type: document.getElementById('bulk-cond-expiry')?.value || 'any'
+        };
+
+        if (action === 'add_days') {
+            const raw = document.getElementById('bulk-days-delta')?.value;
+            const v = parseInt(raw);
+            if (!Number.isFinite(v) || v <= 0) {
+                showToast('Please enter days (> 0)', 'error');
+                return;
+            }
+            data.days_delta = v;
+        }
+
+        if (action === 'add_volume') {
+            const raw = document.getElementById('bulk-volume-delta')?.value;
+            const v = parseInt(raw);
+            if (!Number.isFinite(v) || v <= 0) {
+                showToast('Please enter volume GB (> 0)', 'error');
+                return;
+            }
+            data.volume_gb_delta = v;
+        }
+
         if (action === 'assign_owner') {
             const resellerId = document.getElementById('bulk-reseller-select')?.value;
             if (resellerId === null || resellerId === undefined || String(resellerId).trim() === '') {
@@ -3648,7 +3708,7 @@
             const response = await fetch('/api/client/bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, clients, data })
+                body: JSON.stringify({ action, clients, data, conditions })
             });
 
             const result = await response.json();
@@ -3693,7 +3753,8 @@
                         setBulkProgress(false);
                         const successCount = progress.success || 0;
                         const failedCount = progress.failed || 0;
-                        showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}`);
+                        const skippedCount = progress.skipped || 0;
+                        showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`);
                         
                         // Optimistic UI update for assign/unassign - update local data instantly
                         if (action === 'assign_owner' || action === 'unassign_owner') {
@@ -3701,6 +3762,14 @@
                                 (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
                             const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
                             applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName);
+                        }
+
+                        // Optimistic UI update for enable/disable
+                        if (action === 'enable' || action === 'disable') {
+                            const newEnable = action === 'enable';
+                            clients.forEach(c => {
+                                patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable });
+                            });
                         }
                         
                         // Clear selection and re-render

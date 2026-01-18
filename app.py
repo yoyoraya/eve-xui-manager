@@ -219,6 +219,7 @@ def _run_bulk_job(job_id: str):
             action = job.get('action')
             clients = job.get('clients') or []
             data = job.get('data') or {}
+            conditions = job.get('conditions') or {}
             user_id = job.get('user_id')
 
             user = db.session.get(Admin, user_id)
@@ -253,6 +254,209 @@ def _run_bulk_job(job_id: str):
             if normalized_server_ids:
                 for s in Server.query.filter(Server.id.in_(normalized_server_ids)).all():
                     servers_by_id[s.id] = s
+
+            def _normalize_bulk_conditions(raw: Any) -> dict:
+                if not isinstance(raw, dict):
+                    return {}
+                enable_state = (raw.get('enable_state') or 'any').strip().lower()
+                if enable_state not in ('any', 'enabled', 'disabled'):
+                    enable_state = 'any'
+                expiry_type = (raw.get('expiry_type') or 'any').strip().lower()
+                if expiry_type not in ('any', 'unlimited', 'start_after_use', 'expired', 'today', 'soon', 'normal'):
+                    expiry_type = 'any'
+                return {
+                    'enable_state': enable_state,
+                    'expiry_type': expiry_type,
+                }
+
+            normalized_conditions = _normalize_bulk_conditions(conditions)
+
+            def _fetch_client_snapshot(_user: 'Admin', _server: 'Server', _inbound_id: int, _email: str):
+                """Fetch a best-effort client dict with at least enable/expiryTime/totalGB/up/down."""
+                target_client = None
+                cached_client_row = None
+
+                try:
+                    cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+                except Exception:
+                    cached_inbounds = []
+
+                for ib in cached_inbounds:
+                    try:
+                        if int(ib.get('server_id', -1)) != int(_server.id):
+                            continue
+                        if int(ib.get('id', -1)) != int(_inbound_id):
+                            continue
+                        for c in ib.get('clients', []):
+                            if (c.get('email') or '') == _email:
+                                cached_client_row = c
+                                if isinstance(c, dict) and 'raw_client' in c and isinstance(c.get('raw_client'), dict):
+                                    target_client = copy.deepcopy(c.get('raw_client'))
+                                break
+                    except Exception:
+                        continue
+                    if cached_client_row:
+                        break
+
+                session_obj, error = get_xui_session(_server)
+                if error:
+                    return None, error
+
+                if not target_client:
+                    inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, _server.host, _server.panel_type)
+                    if fetch_err:
+                        return None, fetch_err
+                    persist_detected_panel_type(_server, detected_type)
+                    target_client, _ = find_client(inbounds, _inbound_id, _email)
+                    if not target_client:
+                        return None, 'Client not found'
+
+                # Merge missing caps/usage from cached row when available.
+                if cached_client_row and isinstance(target_client, dict):
+                    for k in ('enable', 'up', 'down', 'totalGB', 'expiryTime'):
+                        try:
+                            if target_client.get(k) in (None, '') and cached_client_row.get(k) not in (None, ''):
+                                target_client[k] = cached_client_row.get(k)
+                            elif k in ('up', 'down', 'totalGB', 'expiryTime'):
+                                if int(target_client.get(k) or 0) == 0 and int(cached_client_row.get(k) or 0) != 0:
+                                    target_client[k] = cached_client_row.get(k)
+                        except Exception:
+                            pass
+
+                return target_client, None
+
+            def _matches_conditions(client_obj: dict, cond: dict) -> bool:
+                if not cond:
+                    return True
+                if not isinstance(client_obj, dict):
+                    return False
+
+                enable_state = (cond.get('enable_state') or 'any')
+                if enable_state != 'any':
+                    is_enabled = bool(client_obj.get('enable'))
+                    if enable_state == 'enabled' and not is_enabled:
+                        return False
+                    if enable_state == 'disabled' and is_enabled:
+                        return False
+
+                expiry_type = (cond.get('expiry_type') or 'any')
+                if expiry_type != 'any':
+                    try:
+                        exp_info = format_remaining_days(client_obj.get('expiryTime', 0))
+                        cur_type = (exp_info.get('type') or '').strip().lower()
+                    except Exception:
+                        cur_type = ''
+                    if cur_type != expiry_type:
+                        return False
+
+                return True
+
+            def _apply_client_limit_delta(_user: 'Admin', _server: 'Server', _inbound_id: int, _email: str,
+                                          days_delta: int | None = None, volume_gb_delta: int | None = None):
+                if _user.role == 'reseller':
+                    if not _has_client_access(_user, _server.id, _email, inbound_id=_inbound_id):
+                        return False, 'Access denied', 403
+
+                # validate deltas
+                if days_delta is not None:
+                    try:
+                        days_delta = int(days_delta)
+                    except Exception:
+                        return False, 'Invalid days value', 400
+                    if days_delta <= 0:
+                        return False, 'Days must be > 0', 400
+                if volume_gb_delta is not None:
+                    try:
+                        volume_gb_delta = int(volume_gb_delta)
+                    except Exception:
+                        return False, 'Invalid volume value', 400
+                    if volume_gb_delta <= 0:
+                        return False, 'Volume must be > 0', 400
+
+                target_client, err = _fetch_client_snapshot(_user, _server, _inbound_id, _email)
+                if err:
+                    return False, err, 400
+                if not isinstance(target_client, dict):
+                    return False, 'Client not found', 404
+
+                # Calculate new expiry (if requested)
+                if days_delta is not None:
+                    current_expiry = target_client.get('expiryTime', 0)
+                    try:
+                        current_expiry_int = int(current_expiry or 0)
+                    except (TypeError, ValueError):
+                        current_expiry_int = 0
+
+                    if current_expiry_int < 0:
+                        # Not started yet: add to pending duration
+                        new_expiry = current_expiry_int - (days_delta * 86400000)
+                    elif current_expiry_int > 0:
+                        current_date = datetime.fromtimestamp(current_expiry_int / 1000)
+                        new_date = current_date + timedelta(days=days_delta)
+                        new_expiry = int(new_date.timestamp() * 1000)
+                    else:
+                        new_date = datetime.now() + timedelta(days=days_delta)
+                        new_expiry = int(new_date.timestamp() * 1000)
+                    target_client['expiryTime'] = new_expiry
+
+                # Calculate new cap (if requested)
+                if volume_gb_delta is not None:
+                    try:
+                        current_total_bytes = int(target_client.get('totalGB') or 0)
+                    except (TypeError, ValueError):
+                        current_total_bytes = 0
+
+                    # If current is unlimited (0), keep unlimited.
+                    if current_total_bytes == 0:
+                        new_total_bytes = 0
+                    else:
+                        new_total_bytes = current_total_bytes + (volume_gb_delta * 1024 * 1024 * 1024)
+                    target_client['totalGB'] = new_total_bytes
+
+                # Push update to panel
+                session_obj, error = get_xui_session(_server)
+                if error:
+                    return False, error, 400
+
+                client_id = target_client.get('id', target_client.get('password', _email))
+                update_payload = {
+                    'id': _inbound_id,
+                    'settings': json.dumps({'clients': [target_client]})
+                }
+
+                replacements = {
+                    'id': _inbound_id,
+                    'inbound_id': _inbound_id,
+                    'inboundId': _inbound_id,
+                    'clientId': client_id,
+                    'client_id': client_id,
+                    'email': _email
+                }
+
+                templates = collect_endpoint_templates(_server.panel_type, 'client_update', CLIENT_UPDATE_FALLBACKS)
+                errors = []
+                for template in templates:
+                    full_url = build_panel_url(_server.host, template, replacements)
+                    if not full_url:
+                        continue
+                    try:
+                        resp = session_obj.post(full_url, json=update_payload, verify=False, timeout=10)
+                    except Exception as exc:
+                        errors.append(f"{template}: {exc}")
+                        continue
+                    if resp.status_code == 200:
+                        try:
+                            resp_json = resp.json()
+                            if isinstance(resp_json, dict) and resp_json.get('success') is False:
+                                errors.append(f"{template}: success false")
+                                continue
+                        except ValueError:
+                            pass
+                        return True, None, 200
+                    errors.append(f"{template}: {resp.status_code}")
+
+                app.logger.warning(f"Bulk update client failed for {_email}: {'; '.join(errors)}")
+                return False, 'Update failed', 400
 
             for item in clients:
                 client_ref = item
@@ -306,6 +510,35 @@ def _run_bulk_job(job_id: str):
                         BULK_JOBS[job_id] = j
                     continue
 
+                # Optional conditional targeting
+                if normalized_conditions and (normalized_conditions.get('enable_state') != 'any' or normalized_conditions.get('expiry_type') != 'any'):
+                    try:
+                        snap, snap_err = _fetch_client_snapshot(user, server, inbound_id, email)
+                        if snap_err:
+                            raise RuntimeError(snap_err)
+                        if not _matches_conditions(snap, normalized_conditions):
+                            with BULK_JOBS_LOCK:
+                                j = BULK_JOBS.get(job_id) or {}
+                                pr = j.get('progress') or {}
+                                pr['processed'] = int(pr.get('processed', 0) or 0) + 1
+                                pr['skipped'] = int(pr.get('skipped', 0) or 0) + 1
+                                j['progress'] = pr
+                                BULK_JOBS[job_id] = j
+                            continue
+                    except Exception as exc:
+                        with BULK_JOBS_LOCK:
+                            j = BULK_JOBS.get(job_id) or {}
+                            pr = j.get('progress') or {}
+                            pr['processed'] = int(pr.get('processed', 0) or 0) + 1
+                            pr['failed'] = int(pr.get('failed', 0) or 0) + 1
+                            j['progress'] = pr
+                            errs = j.get('errors') or []
+                            if len(errs) < 50:
+                                errs.append({'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email}, 'error': str(exc) or 'Condition check failed'})
+                            j['errors'] = errs
+                            BULK_JOBS[job_id] = j
+                        continue
+
                 ok = False
                 err = None
 
@@ -313,6 +546,12 @@ def _run_bulk_job(job_id: str):
                     ok, err, _status = _toggle_client_core(user, server, inbound_id, email, action == 'enable')
                 elif action == 'delete':
                     ok, err, _status = _delete_client_core(user, server, inbound_id, email)
+                elif action == 'add_days':
+                    delta = data.get('days_delta')
+                    ok, err, _status = _apply_client_limit_delta(user, server, inbound_id, email, days_delta=delta, volume_gb_delta=None)
+                elif action == 'add_volume':
+                    delta = data.get('volume_gb_delta')
+                    ok, err, _status = _apply_client_limit_delta(user, server, inbound_id, email, days_delta=None, volume_gb_delta=delta)
                 elif action == 'assign_owner':
                     email_l = (email or '').lower()
                     try:
@@ -4260,8 +4499,9 @@ def bulk_client_action():
     action = payload.get('action')
     clients = payload.get('clients')
     data = payload.get('data') or {}
+    conditions = payload.get('conditions') or {}
 
-    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner'}
+    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner', 'add_days', 'add_volume'}
     if action not in allowed_actions:
         return jsonify({"success": False, "error": "Invalid action"}), 400
     if not isinstance(clients, list) or len(clients) == 0:
@@ -4271,6 +4511,20 @@ def bulk_client_action():
     if action in ('assign_owner', 'unassign_owner'):
         if session.get('role') == 'reseller':
             return jsonify({"success": False, "error": "Access denied"}), 403
+
+    if action in ('add_days', 'add_volume'):
+        # Basic payload validation here; deep validation happens in the worker.
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "Invalid data"}), 400
+        if action == 'add_days':
+            if 'days_delta' not in data:
+                return jsonify({"success": False, "error": "days_delta required"}), 400
+        if action == 'add_volume':
+            if 'volume_gb_delta' not in data:
+                return jsonify({"success": False, "error": "volume_gb_delta required"}), 400
+
+    if conditions is not None and not isinstance(conditions, dict):
+        return jsonify({"success": False, "error": "Invalid conditions"}), 400
 
     if action == 'assign_owner':
         reseller_id = data.get('reseller_id')
@@ -4292,6 +4546,7 @@ def bulk_client_action():
         'action': action,
         'clients': clients,
         'data': data,
+        'conditions': conditions,
         'user_id': user.id,
         'created_at': _utc_iso_now(),
         'created_at_ts': time.time(),
@@ -4302,6 +4557,7 @@ def bulk_client_action():
             'processed': 0,
             'success': 0,
             'failed': 0,
+            'skipped': 0,
         },
         'errors': [],
         'error': None,
