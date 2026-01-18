@@ -1397,6 +1397,37 @@
         return `${gb.toFixed(2)} GB`;
     }
 
+    // Remove a client from local data (optimistic delete)
+    function removeLocalClient(serverId, inboundId, email) {
+        const sid = parseInt(serverId);
+        const iid = String(inboundId);
+        const em = String(email || '').toLowerCase();
+        if (!Number.isFinite(sid) || !iid || !em) return false;
+
+        let changed = false;
+        for (const inbound of (allInboundsData || [])) {
+            if (parseInt(inbound?.server_id) !== sid) continue;
+            if (String(inbound?.id) !== iid) continue;
+            if (!Array.isArray(inbound.clients)) continue;
+            const idx = inbound.clients.findIndex(c => String(c?.email || '').toLowerCase() === em);
+            if (idx >= 0) {
+                inbound.clients.splice(idx, 1);
+                inbound.client_count = inbound.clients.length;
+                changed = true;
+            }
+            break;
+        }
+
+        if (changed) {
+            applyFilters();
+            const searchInput = document.getElementById('global-search-input');
+            if (searchInput && searchInput.value.trim().length > 0) {
+                performGlobalSearch(true);
+            }
+        }
+        return changed;
+    }
+
     async function refreshServerData(serverId, options = {}) {
         const sid = parseInt(serverId);
         if (!Number.isFinite(sid)) return;
@@ -3867,6 +3898,13 @@
                                     patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta });
                                 });
                             }
+                        }
+
+                        // Optimistic UI update for delete - remove from local data instantly
+                        if (action === 'delete') {
+                            clients.forEach(c => {
+                                removeLocalClient(c.server_id, c.inbound_id, c.email);
+                            });
                         }
                         
                         // Clear selection and re-render
