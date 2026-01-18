@@ -1307,6 +1307,44 @@
                 client.down_formatted = formatBytes(downVal);
                 changed = true;
             }
+            // Support addDays: add days to current expiry (optimistic)
+            if (patch && Object.prototype.hasOwnProperty.call(patch, 'addDays')) {
+                const daysToAdd = parseInt(patch.addDays) || 0;
+                if (daysToAdd > 0) {
+                    let currentExp = parseInt(client.expiryTimestamp) || 0;
+                    if (currentExp < 0) {
+                        // Not started: add to pending
+                        currentExp = currentExp - (daysToAdd * 86400000);
+                    } else if (currentExp > 0) {
+                        currentExp = currentExp + (daysToAdd * 86400000);
+                    } else {
+                        // Unlimited (0): set to now + days
+                        currentExp = Date.now() + (daysToAdd * 86400000);
+                    }
+                    client.expiryTimestamp = currentExp;
+                    client.expiryTime = _formatExpiryForDisplay(currentExp);
+                    client.expiryType = _getExpiryType(currentExp);
+                    changed = true;
+                }
+            }
+            // Support addVolumeGB: add GB to current totalGB cap (optimistic)
+            if (patch && Object.prototype.hasOwnProperty.call(patch, 'addVolumeGB')) {
+                const gbToAdd = parseInt(patch.addVolumeGB) || 0;
+                if (gbToAdd > 0) {
+                    let currentTotalBytes = parseInt(client.totalGB) || 0;
+                    if (currentTotalBytes > 0) {
+                        currentTotalBytes = currentTotalBytes + (gbToAdd * 1024 * 1024 * 1024);
+                        client.totalGB = currentTotalBytes;
+                        client.totalGB_formatted = _formatGBForDisplay(currentTotalBytes);
+                        // Recalculate remaining
+                        const usedBytes = (parseInt(client.up) || 0) + (parseInt(client.down) || 0);
+                        const remainingBytes = Math.max(0, currentTotalBytes - usedBytes);
+                        client.remaining_formatted = _formatGBForDisplay(remainingBytes);
+                        changed = true;
+                    }
+                    // If unlimited (0), stays unlimited
+                }
+            }
             break;
         }
 
@@ -1318,6 +1356,45 @@
             }
         }
         return changed;
+    }
+
+    // Helper: format expiryTimestamp (ms) to display string
+    function _formatExpiryForDisplay(ts) {
+        if (ts === 0) return 'Unlimited';
+        if (ts < 0) {
+            const days = Math.abs(ts) / 86400000;
+            return `Not started (${Math.round(days)} days)`;
+        }
+        const now = Date.now();
+        if (ts < now) {
+            const daysAgo = Math.floor((now - ts) / 86400000);
+            return `Expired (${daysAgo}d ago)`;
+        }
+        const daysLeft = Math.ceil((ts - now) / 86400000);
+        if (daysLeft === 0) return 'Today';
+        return `${daysLeft} days left`;
+    }
+
+    // Helper: get expiry type from timestamp
+    function _getExpiryType(ts) {
+        if (ts === 0) return 'unlimited';
+        if (ts < 0) return 'start_after_use';
+        const now = Date.now();
+        if (ts < now) return 'expired';
+        const daysLeft = Math.ceil((ts - now) / 86400000);
+        if (daysLeft === 0) return 'today';
+        if (daysLeft < 7) return 'soon';
+        return 'normal';
+    }
+
+    // Helper: format bytes to GB display
+    function _formatGBForDisplay(bytes) {
+        if (!bytes || bytes <= 0) return 'Unlimited';
+        const gb = bytes / (1024 * 1024 * 1024);
+        if (gb >= 1024) {
+            return `${(gb / 1024).toFixed(2)} TB`;
+        }
+        return `${gb.toFixed(2)} GB`;
     }
 
     async function refreshServerData(serverId, options = {}) {
@@ -3771,10 +3848,31 @@
                                 patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable });
                             });
                         }
+
+                        // Optimistic UI update for add_days
+                        if (action === 'add_days' && data.days_delta) {
+                            const daysDelta = parseInt(data.days_delta) || 0;
+                            if (daysDelta > 0) {
+                                clients.forEach(c => {
+                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta });
+                                });
+                            }
+                        }
+
+                        // Optimistic UI update for add_volume
+                        if (action === 'add_volume' && data.volume_gb_delta) {
+                            const volDelta = parseInt(data.volume_gb_delta) || 0;
+                            if (volDelta > 0) {
+                                clients.forEach(c => {
+                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta });
+                                });
+                            }
+                        }
                         
                         // Clear selection and re-render
                         clearBulkSelection();
-                        refreshData(true);  // Silent refresh to sync with server
+                        // Background sync (silent) - UI already updated optimistically
+                        setTimeout(() => refreshData(true), 500);
                         return;
                     }
                     if (job.state === 'error') {
