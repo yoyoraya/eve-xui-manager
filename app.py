@@ -5731,6 +5731,7 @@ def get_transactions():
         if search_term:
             pattern = f"%{search_term}%"
             query = query.filter(or_(
+                Transaction.client_email.ilike(pattern),
                 Transaction.description.ilike(pattern),
                 Transaction.type.ilike(pattern),
                 Admin.username.ilike(pattern)
