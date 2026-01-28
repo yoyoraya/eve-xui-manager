@@ -6078,6 +6078,9 @@ def get_payments():
             tx_query = tx_query.filter(Transaction.admin_id == target_user_id)
     if card_id:
         tx_query = tx_query.filter(Transaction.card_id == card_id)
+    server_id = request.args.get('server_id', type=int)
+    if server_id:
+        tx_query = tx_query.filter(Transaction.server_id == server_id)
     if search_term:
         pattern = f"%{search_term}%"
         tx_query = tx_query.filter(or_(
@@ -6578,6 +6581,7 @@ def get_finance_stats():
                 prev_same_day_end = None
 
     card_id = request.args.get('card_id', type=int)
+    server_id = request.args.get('server_id', type=int)
     target_user_id = request.args.get('user_id', type=int)
 
     excluded_types_upper = {'SERVER_COST', 'SERVER_RENEWAL', 'SERVER_TRAFFIC'}
@@ -6593,6 +6597,9 @@ def get_finance_stats():
         if card_id:
             charge_query = charge_query.filter(Transaction.card_id == card_id)
             usage_query = usage_query.filter(Transaction.card_id == card_id)
+        if server_id:
+            charge_query = charge_query.filter(Transaction.server_id == server_id)
+            usage_query = usage_query.filter(Transaction.server_id == server_id)
 
         def sum_amount(q, start_time=None):
             if start_time:
@@ -6683,6 +6690,8 @@ def get_finance_stats():
             tx_income_query = tx_income_query.filter(Transaction.admin_id == target_user_id)
         if card_id:
             tx_income_query = tx_income_query.filter(Transaction.card_id == card_id)
+        if server_id:
+            tx_income_query = tx_income_query.filter(Transaction.server_id == server_id)
 
         pay_income_query = Payment.query.filter(Payment.amount > 0)
         if target_user_id:
@@ -6734,6 +6743,8 @@ def get_finance_stats():
             expense_query = expense_query.filter(Transaction.admin_id == target_user_id)
         if card_id:
             expense_query = expense_query.filter(Transaction.card_id == card_id)
+        if server_id:
+            expense_query = expense_query.filter(Transaction.server_id == server_id)
 
         total_expense = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
             Transaction.id.in_(expense_query.with_entities(Transaction.id))
@@ -6846,6 +6857,7 @@ def get_finance_overview():
         requested_range = 'month'
 
     card_id = request.args.get('card_id', type=int)
+    server_id = request.args.get('server_id', type=int)
     target_user_id = request.args.get('user_id', type=int)
 
     tehran_offset = timedelta(hours=3, minutes=30)
@@ -6964,6 +6976,8 @@ def get_finance_overview():
 
     if card_id:
         tx_query = tx_query.filter(Transaction.card_id == card_id)
+    if server_id:
+        tx_query = tx_query.filter(Transaction.server_id == server_id)
 
     tx_query = tx_query.filter(Transaction.created_at >= start_utc, Transaction.created_at < end_utc)
     tx_query = tx_query.filter(Transaction.type != 'audit')
