@@ -213,6 +213,11 @@
                 <input type="hidden" id="subLink" value="{{ client.subscription_url }}">
             </div>
 
+            <div class="mb-4 text-white font-semibold flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+                {{ 'آموزش اتصال در دستگاه‌های مختلف' if is_fa else 'Connection Tutorial' }}
+            </div>
+
             <!-- OS Platform Tabs -->
             <div class="flex items-center gap-2 mb-6 border-b border-white/10 pb-3 overflow-x-auto no-scrollbar">
                 <button onclick="switchOsTab('android')" id="os-tab-android" class="os-tab-btn active flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-white/10 rounded-lg transition-colors">
