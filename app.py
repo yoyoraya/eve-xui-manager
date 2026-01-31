@@ -5508,8 +5508,21 @@ def add_client(server_id, inbound_id):
         else:
              get_url = f"{base}{webpath}/panel/api/inbounds/get/{inbound_id}"
              
-        get_resp = session_obj.get(get_url, verify=False, timeout=10)
-        if get_resp.status_code != 200: raise Exception("Failed to fetch inbound data from panel")
+        try:
+            # Use a short connect timeout and a longer read timeout to reduce false failures on slow panels.
+            get_resp = session_obj.get(get_url, verify=False, timeout=(3, 20))
+        except requests.exceptions.ConnectTimeout:
+            app.logger.warning(f"Panel connect timeout while fetching inbound (server_id={server.id}, host={server.host}, url={get_url})")
+            return jsonify({"success": False, "error": f"Connection timeout to panel for server '{server.name}'. Check port/firewall and panel availability."}), 504
+        except requests.exceptions.ReadTimeout:
+            app.logger.warning(f"Panel read timeout while fetching inbound (server_id={server.id}, host={server.host}, url={get_url})")
+            return jsonify({"success": False, "error": f"Panel response timeout for server '{server.name}'. The panel may be slow or overloaded."}), 504
+        except requests.exceptions.ConnectionError as exc:
+            app.logger.warning(f"Panel connection error while fetching inbound (server_id={server.id}, host={server.host}, url={get_url}): {exc}")
+            return jsonify({"success": False, "error": f"Unable to connect to panel for server '{server.name}'. Check host/port and network connectivity."}), 502
+
+        if get_resp.status_code != 200:
+            raise Exception("Failed to fetch inbound data from panel")
         
         inbound_data = get_resp.json().get('obj', get_resp.json().get('data', {}))
         if not inbound_data: raise Exception("Empty inbound data")
@@ -5529,7 +5542,17 @@ def add_client(server_id, inbound_id):
         else:
             up_url = f"{base}{webpath}/panel/api/inbounds/update/{inbound_id}"
             
-        up_resp = session_obj.post(up_url, json=update_data, verify=False, timeout=10)
+        try:
+            up_resp = session_obj.post(up_url, json=update_data, verify=False, timeout=(3, 20))
+        except requests.exceptions.ConnectTimeout:
+            app.logger.warning(f"Panel connect timeout while updating inbound (server_id={server.id}, host={server.host}, url={up_url})")
+            return jsonify({"success": False, "error": f"Connection timeout to panel for server '{server.name}'. Check port/firewall and panel availability."}), 504
+        except requests.exceptions.ReadTimeout:
+            app.logger.warning(f"Panel read timeout while updating inbound (server_id={server.id}, host={server.host}, url={up_url})")
+            return jsonify({"success": False, "error": f"Panel response timeout for server '{server.name}'. The panel may be slow or overloaded."}), 504
+        except requests.exceptions.ConnectionError as exc:
+            app.logger.warning(f"Panel connection error while updating inbound (server_id={server.id}, host={server.host}, url={up_url}): {exc}")
+            return jsonify({"success": False, "error": f"Unable to connect to panel for server '{server.name}'. Check host/port and network connectivity."}), 502
         
         if up_resp.status_code == 200 and up_resp.json().get('success'):
 
@@ -5599,6 +5622,7 @@ def add_client(server_id, inbound_id):
             return jsonify({"success": False, "error": f"Panel Error: {msg}"})
 
     except Exception as e:
+        app.logger.error(f"Add client error (server_id={server_id}, inbound_id={inbound_id}): {e}")
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/packages', methods=['GET'])
