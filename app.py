@@ -7312,7 +7312,7 @@ def client_subscription(server_id, sub_id):
         "percentage_used": percentage_used,
         "expiry": expiry_info['text'],
         "remaining": format_bytes(remaining) if remaining is not None else None,
-        "subscription_url": f"{request.base_url}?format=b64",
+        "subscription_url": f"{request.base_url}",
         "configs": configs,
         "server_name": server.name
     }
