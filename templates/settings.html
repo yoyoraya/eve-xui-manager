@@ -53,6 +53,15 @@
                     </div>
                     <small class="text-secondary">Switch between Dark and Light mode.</small>
                 </div>
+
+                <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
+                    <label>Subscription Page Language</label>
+                    <select id="subscription-page-lang" class="form-select" onchange="saveSubscriptionPageSettings()">
+                        <option value="en">English</option>
+                        <option value="fa">Persian (فارسی)</option>
+                    </select>
+                    <small class="text-secondary">Controls the public subscription page language shown to clients.</small>
+                </div>
             </div>
         </div>
 
@@ -920,7 +929,7 @@
         document.getElementById(`tab-${tabName}`).classList.add('active');
 
         if (tabName === 'general') {
-            syncThemeToggleUI();
+            loadGeneralSettings();
         } else if (tabName === 'backups') {
             loadBackups();
             loadBackupSettings();
@@ -932,6 +941,45 @@
             loadRenewTemplates();
         } else if (tabName === 'templates') {
             loadTemplates();
+        }
+    }
+
+    function loadGeneralSettings() {
+        syncThemeToggleUI();
+        loadSubscriptionPageSettings();
+    }
+
+    async function loadSubscriptionPageSettings() {
+        try {
+            const res = await fetch('/api/settings/subscription-page');
+            const data = await res.json();
+            if (data && data.success) {
+                const sel = document.getElementById('subscription-page-lang');
+                if (sel) sel.value = (data.lang === 'fa') ? 'fa' : 'en';
+            }
+        } catch (e) {
+            console.error('Error loading subscription page settings', e);
+        }
+    }
+
+    async function saveSubscriptionPageSettings() {
+        const sel = document.getElementById('subscription-page-lang');
+        const lang = sel ? sel.value : 'en';
+
+        try {
+            const res = await fetch('/api/settings/subscription-page', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ lang })
+            });
+            const data = await res.json();
+            if (data && data.success) {
+                showToast('Settings saved');
+            } else {
+                showToast((data && data.error) ? data.error : 'Error saving settings', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
         }
     }
 

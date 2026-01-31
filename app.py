@@ -3909,6 +3909,38 @@ def settings_page():
                          admin_username=user.username,
                          role=user.role)
 
+
+@app.route('/api/settings/subscription-page', methods=['GET'])
+@superadmin_required
+def get_subscription_page_settings():
+    lang = (_get_or_create_system_setting('subscription_page_lang', 'en') or 'en').strip().lower()
+    if lang not in ('fa', 'en'):
+        lang = 'en'
+    return jsonify({'success': True, 'lang': lang})
+
+
+@app.route('/api/settings/subscription-page', methods=['POST'])
+@superadmin_required
+def save_subscription_page_settings():
+    try:
+        data = request.get_json() or {}
+    except Exception:
+        data = {}
+
+    lang = (data.get('lang') or '').strip().lower()
+    if lang not in ('fa', 'en'):
+        return jsonify({'success': False, 'error': 'Invalid language. Allowed: fa, en'}), 400
+
+    setting = db.session.get(SystemSetting, 'subscription_page_lang')
+    if not setting:
+        setting = SystemSetting(key='subscription_page_lang', value=lang)
+        db.session.add(setting)
+    else:
+        setting.value = lang
+
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Subscription page settings saved', 'lang': lang})
+
 @app.route('/api/clients/search')
 @login_required
 @limiter.limit("60 per minute")
@@ -7558,6 +7590,10 @@ def client_subscription(server_id, sub_id):
     except Exception:
         announcements_payload = []
 
+    page_lang = (_get_or_create_system_setting('subscription_page_lang', 'en') or 'en').strip().lower()
+    if page_lang not in ('fa', 'en'):
+        page_lang = 'en'
+
     return render_template(
         'subscription.html',
         client=client_payload,
@@ -7566,6 +7602,7 @@ def client_subscription(server_id, sub_id):
         support=support_info,
         channels=channels_info,
         announcements=announcements_payload,
+        page_lang=page_lang,
     )
 
 @app.route('/sub-manager')
