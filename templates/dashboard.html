@@ -1809,7 +1809,7 @@
                                         </td>
                                         <td class="action-cell">
                                             <div class="action-buttons">
-                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}')" title="QR Code">
+                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}', ${client.server_id}, '${client.subId || client.id || ''}')" title="QR Code">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <rect x="3" y="3" width="7" height="7"></rect>
                                                         <rect x="14" y="3" width="7" height="7"></rect>
@@ -1923,14 +1923,13 @@
         return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
     }
 
-    async function showQrCode(encodedLink, email, subUrl, jsonUrl, dashSubUrl) {
-        const link = decodeURIComponent(encodedLink);
+    async function showQrCode(encodedLink, email, subUrl, jsonUrl, dashSubUrl, serverId, subId) {
+        let link = decodeURIComponent(encodedLink);
         document.getElementById('qr-email').textContent = email;
         document.getElementById('title-config').textContent = email;
         
         document.getElementById('input-sub').value = subUrl || '';
         document.getElementById('input-json').value = jsonUrl || '';
-        document.getElementById('input-config').value = link || '';
         
         // Fix relative URL for dashSubUrl if needed
         let finalDashUrl = dashSubUrl || '';
@@ -1940,9 +1939,24 @@
         document.getElementById('input-dash').value = finalDashUrl;
         
         try {
+            // Fetch direct link from panel subscription if serverId and subId are provided
+            if (serverId && subId) {
+                try {
+                    const directLinkResp = await fetch(`/api/client/direct-link/${serverId}/${encodeURIComponent(subId)}`);
+                    const directLinkData = await directLinkResp.json();
+                    if (directLinkData.success && directLinkData.direct_link) {
+                        link = directLinkData.direct_link;
+                    }
+                } catch (e) {
+                    console.warn('Failed to fetch direct link from panel:', e);
+                }
+            }
+            
+            document.getElementById('input-config').value = link || '';
+            
             // Generate Config QR
             if (link) {
-                const configResp = await fetch(`/api/client/qrcode?link=${encodedLink}`);
+                const configResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(link)}`);
                 const configData = await configResp.json();
                 if (configData.success) {
                     document.getElementById('img-config').src = configData.qrcode;
@@ -3542,7 +3556,7 @@
                                         </td>
                                         <td class="action-cell">
                                             <div class="action-buttons">
-                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}')" title="QR Code">
+                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}', ${inbound.server_id}, '${client.subId || client.id || ''}')" title="QR Code">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                         <rect x="3" y="3" width="7" height="7"></rect>
                                                         <rect x="14" y="3" width="7" height="7"></rect>
