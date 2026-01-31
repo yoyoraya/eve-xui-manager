@@ -7367,6 +7367,8 @@ def client_subscription(server_id, sub_id):
         "total_limit": format_bytes(total_limit) if total_limit > 0 else "Unlimited",
         "percentage_used": percentage_used,
         "expiry": expiry_info['text'],
+        "expiry_days": expiry_info.get('days', 0),
+        "expiry_type": expiry_info.get('type', 'normal'),
         "remaining": format_bytes(remaining) if remaining is not None else None,
         "subscription_url": f"{request.base_url}",
         "configs": configs,

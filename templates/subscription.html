@@ -104,7 +104,7 @@
                 {% if client.server_name %}
                 <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#fb923c]/10 border border-[#fb923c]/20">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-[#fb923c]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-                    <span class="text-xs font-normal text-[#fb923c]">{{ ('سرورت 👉 ' ~ client.server_name) if is_fa else ('Your Server 👉 ' ~ client.server_name) }}</span>
+                    <span class="text-xs font-normal text-[#fb923c]">{{ ('سرورت 👈 ' ~ client.server_name) if is_fa else ('Your Server 👉 ' ~ client.server_name) }}</span>
                 </div>
                 {% endif %}
             </div>
@@ -129,14 +129,28 @@
                     <div class="text-xs text-muted mb-1">{{ 'اعتبار' if is_fa else 'Validity' }}</div>
                     <div class="text-sm font-medium text-white flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                        {{ client.expiry }}
+                        {% if is_fa %}
+                            {% if client.expiry_type == 'expired' %}
+                                منقضی شده
+                            {% elif client.expiry_type == 'today' %}
+                                امروز
+                            {% elif client.expiry_type == 'unlimited' %}
+                                نامحدود
+                            {% elif client.expiry_type == 'normal' %}
+                                {{ client.expiry_days }} روز مانده
+                            {% else %}
+                                نامشخص
+                            {% endif %}
+                        {% else %}
+                            {{ client.expiry }}
+                        {% endif %}
                     </div>
                 </div>
                 <div class="bg-bg/50 p-3 rounded-xl border border-white/5">
-                    <div class="text-xs text-muted mb-1">{{ 'باقی‌مونده' if is_fa else 'Remaining' }}</div>
+                    <div class="text-xs text-muted mb-1">{{ 'حجم باقی‌مانده' if is_fa else 'Remaining' }}</div>
                     <div class="text-sm font-medium text-success flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
-                        {{ client.remaining if client.remaining else ('نامشخص' if is_fa else 'N/A') }}
+                        {{ client.remaining if client.remaining else ('نامحدود' if is_fa else 'N/A') }}
                     </div>
                 </div>
             </div>
@@ -214,7 +228,7 @@
             </div>
 
             <div class="mb-4 text-white font-semibold flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="m10 8 6 4-6 4V8Z"></path></svg>
                 {{ 'آموزش اتصال در دستگاه‌های مختلف' if is_fa else 'Connection Tutorial' }}
             </div>
 
@@ -434,14 +448,17 @@
                 return;
             }
 
+            const dir = IS_FA ? 'rtl' : 'ltr';
+            const textAlign = IS_FA ? 'right' : 'left';
+
             container.innerHTML = filteredFaqs.map(faq => `
                 <div class="border border-white/10 rounded-lg overflow-hidden bg-white/5">
-                    <button onclick="toggleFAQ(${faq.id})" class="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-white/5 transition-colors" style="direction: rtl;">
+                    <button onclick="toggleFAQ(${faq.id})" class="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors" style="direction: ${dir}; text-align: ${textAlign};">
                         <span class="font-medium text-white">${faq.title}</span>
                         <svg id="faq-icon-${faq.id}" class="w-4 h-4 text-muted transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                     </button>
                     <div id="faq-content-${faq.id}" class="hidden border-t border-white/10 bg-bg/50">
-                        <div class="p-4 text-sm text-muted space-y-4" style="direction: rtl; text-align: right;">
+                        <div class="p-4 text-sm text-muted space-y-4" style="direction: ${dir}; text-align: ${textAlign};">
                             ${faq.image_url ? `<img src="${faq.image_url}" alt="${faq.title}" class="w-full rounded-lg mb-3">` : ''}
                             <div class="prose prose-invert max-w-none text-sm">
                                 ${faq.content}
