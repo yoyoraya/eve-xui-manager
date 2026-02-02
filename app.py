@@ -7379,6 +7379,13 @@ def client_subscription(server_id, sub_id):
     # Prepare fallback headers for client apps (used for both upstream-proxy and manual generation)
     expiry_time_ms = expiry_raw_ms or 0
     expiry_time_sec = int(expiry_time_ms / 1000) if expiry_time_ms and expiry_time_ms > 0 else 0
+    
+    # Fix: If expire is 0 (unlimited), set to far future to prevent v2rayNG from hanging/looping
+    # v2rayNG interprets expire=0 incorrectly, causing subscription loading issues
+    if expiry_time_sec == 0:
+        import time as _time
+        expiry_time_sec = int(_time.time()) + 315360000  # 10 years in the future
+    
     user_info_header = f"upload={up}; download={down}; total={total_limit}; expire={expiry_time_sec}"
     fallback_headers = {
         'Subscription-Userinfo': user_info_header,
@@ -7432,6 +7439,47 @@ def client_subscription(server_id, sub_id):
     accept = (request.headers.get('Accept') or '').lower()
     accept_prefers_html = ('text/html' in accept) or ('application/xhtml+xml' in accept)
     is_client_app = wants_b64 or any(token in user_agent for token in agent_tokens) or (accept and not accept_prefers_html)
+
+    # v2rayNG is more reliable when the subscription response is base64.
+    # Some versions can appear to hang/spin when the server returns plain text.
+    if 'v2rayng' in user_agent:
+        wants_b64 = True
+
+    def _looks_like_config_payload(text: str) -> bool:
+        t = (text or '').lstrip()
+        if not t:
+            return False
+        schemes = (
+            'vmess://', 'vless://', 'trojan://', 'ss://', 'ssr://',
+            'hysteria://', 'hysteria2://', 'tuic://', 'warp://'
+        )
+        return t.startswith(schemes)
+
+    def _normalize_subscription_bytes(raw: bytes) -> bytes:
+        """Return plain-text subscription bytes.
+
+        Upstream panels sometimes return base64; this normalizes to plain text
+        (one config per line) so we can reliably re-encode for clients.
+        """
+        raw = raw or b''
+        try:
+            raw_text = raw.decode('utf-8', errors='ignore')
+        except Exception:
+            raw_text = ''
+
+        if _looks_like_config_payload(raw_text) or ('\n' in raw_text and '://' in raw_text):
+            return raw
+
+        # Try strict base64 decode. If it yields config-like text, use it.
+        try:
+            decoded = base64.b64decode(raw, validate=True)
+            decoded_text = decoded.decode('utf-8', errors='ignore')
+            if _looks_like_config_payload(decoded_text) or ('\n' in decoded_text and '://' in decoded_text):
+                return decoded
+        except Exception:
+            pass
+
+        return raw
 
     # Always try to fetch configs from upstream subscription first
     upstream_configs = []
@@ -7490,6 +7538,29 @@ def client_subscription(server_id, sub_id):
                     if v:
                         upstream_headers[k] = v
 
+                # Fix problematic Subscription-Userinfo values that cause v2rayNG to hang/loop
+                # When expire=0 or total=0, some clients interpret this incorrectly
+                if 'Subscription-Userinfo' in upstream_headers:
+                    sub_info = upstream_headers['Subscription-Userinfo']
+                    # Parse the header to check for problematic values
+                    info_parts = {}
+                    for part in sub_info.split(';'):
+                        part = part.strip()
+                        if '=' in part:
+                            k_part, v_part = part.split('=', 1)
+                            info_parts[k_part.strip()] = v_part.strip()
+                    
+                    # If expire=0, set to far future (10 years) to indicate "unlimited"
+                    # This prevents v2rayNG from thinking the subscription is expired
+                    if info_parts.get('expire', '0') == '0':
+                        import time as _time
+                        info_parts['expire'] = str(int(_time.time()) + 315360000)  # 10 years
+                    
+                    # Rebuild the header
+                    upstream_headers['Subscription-Userinfo'] = '; '.join(
+                        f"{k}={v}" for k, v in info_parts.items()
+                    )
+
                 if 'Subscription-Userinfo' not in upstream_headers:
                     upstream_headers['Subscription-Userinfo'] = fallback_headers['Subscription-Userinfo']
                 if 'Profile-Title' not in upstream_headers:
@@ -7499,12 +7570,14 @@ def client_subscription(server_id, sub_id):
                 if 'Content-Type' not in upstream_headers:
                     upstream_headers['Content-Type'] = fallback_headers['Content-Type']
 
+                normalized_payload = _normalize_subscription_bytes(resp.content or b'')
+
                 if wants_b64:
-                    encoded = base64.b64encode(resp.content or b'').decode('utf-8')
+                    encoded = base64.b64encode(normalized_payload).decode('utf-8')
                     upstream_headers['Content-Type'] = 'text/plain; charset=utf-8'
                     return encoded, 200, upstream_headers
 
-                return resp.content, 200, upstream_headers
+                return normalized_payload, 200, upstream_headers
             else:
                 app.logger.warning(f"Upstream sub fetch failed: {resp.status_code} for {upstream_sub_url}")
         except Exception as e:

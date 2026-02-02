@@ -218,7 +218,7 @@
 
             <div class="flex gap-2 mb-6 bg-bg p-1.5 rounded-xl border border-border">
                 <div class="flex-1 px-3 flex items-center overflow-hidden">
-                    <div class="truncate text-sm text-muted font-mono">{{ client.subscription_url }}</div>
+                    <div class="break-all text-sm text-muted font-mono">{{ client.subscription_url }}</div>
                 </div>
                 <button onclick="copyLink('subLink')" class="bg-primary hover:bg-accent text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 whitespace-nowrap">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -287,15 +287,26 @@
                 <svg id="arrow" class="w-5 h-5 text-muted transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </button>
             <div id="configContent" class="hidden p-5 pt-0 border-t border-white/5 bg-bg/30">
+                {% if is_fa %}
+                <div class="mt-4 p-4 rounded-xl bg-primary/5 border border-primary/20 text-sm leading-relaxed text-white/90" style="direction: rtl; text-align: right;">
+                    این لینک به صورت دستی تنظیمات اکانت را وارد برنامه می‌کند. <br>
+                    کافیست لینک زیر را کپی کنید. <br>
+                    برنامه VPN را باز کنید. <br>
+                    روی + بزنید. <br>
+                    و import from clipboard کنید. <br>
+                    پروفایلی که میاد رو انتخاب کنید و روی دکمه اتصال بزنید.
+                </div>
+                {% endif %}
                 <div class="space-y-3 mt-4">
                     {% for config in client.configs %}
-                    <div class="relative group cursor-pointer" onclick="copyToClipboard('{{ config }}')">
-                        <div class="bg-bg border border-border rounded-lg p-3 pr-10 font-mono text-xs text-muted truncate transition-colors group-hover:border-primary/50 group-hover:text-text">
-                            {{ config }}
+                    <div class="flex gap-2 bg-bg p-1.5 rounded-xl border border-border">
+                        <div class="flex-1 px-3 flex items-center overflow-hidden">
+                            <div class="break-all text-xs text-muted font-mono">{{ config }}</div>
                         </div>
-                        <div class="absolute right-3 top-1/2 -translate-y-1/2 text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onclick="copyToClipboard('{{ config }}')" class="bg-primary hover:bg-accent text-white px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 whitespace-nowrap">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </div>
+                            {{ 'کپی' if is_fa else 'COPY' }}
+                        </button>
                     </div>
                     {% endfor %}
                 </div>
