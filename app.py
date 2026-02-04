@@ -4900,9 +4900,12 @@ def renew_client(server_id, inbound_id, email):
             return _finish({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}, 402)
     
     # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
-    # NOTE: cached display rows may include usage stats while `raw_client` might not.
+    # NOTE: cached display rows include usage stats while `raw_client` often does not.
     target_client = None
     cached_client_row = None
+    fetched_inbound_row = None
+    stats_up = 0
+    stats_down = 0
     cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
     for ib in cached_inbounds:
         try:
@@ -4933,44 +4936,66 @@ def renew_client(server_id, inbound_id, email):
                 return _finish({"success": False, "error": "Failed to fetch inbounds"}, 400)
 
             persist_detected_panel_type(server, detected_type)
-            target_client, _ = find_client(inbounds, inbound_id, email)
+            target_client, fetched_inbound_row = find_client(inbounds, inbound_id, email)
             if not target_client:
                 return _finish({"success": False, "error": "Client not found"}, 404)
 
+            # Try to capture traffic usage from the inbound's clientStats.
+            # Many panels do NOT include up/down in the client settings list.
+            try:
+                for st in (fetched_inbound_row or {}).get('clientStats', []) or []:
+                    if (st.get('email') or '') == email:
+                        stats_up = int(st.get('up') or 0)
+                        stats_down = int(st.get('down') or 0)
+                        break
+            except Exception:
+                stats_up = 0
+                stats_down = 0
+
         # If we used cached raw_client, merge in traffic/cap fields from the cached row.
         # This avoids treating used_bytes as 0 and producing incorrect remaining volume.
+        # NOTE: cached_client_row.expiryTime is a human string; use expiryTimestamp instead.
         if cached_client_row and isinstance(target_client, dict):
-            for k in ("up", "down", "totalGB", "expiryTime"):
-                try:
-                    if target_client.get(k) in (None, "") and cached_client_row.get(k) not in (None, ""):
-                        target_client[k] = cached_client_row.get(k)
-                    # If raw_client has 0 but cached row has a non-zero value, prefer cached.
-                    elif int(target_client.get(k) or 0) == 0 and int(cached_client_row.get(k) or 0) != 0:
-                        target_client[k] = cached_client_row.get(k)
-                except Exception:
-                    # Best-effort merge only
-                    pass
-
-        # Snapshot current remaining values for message rendering
-        # (Used only when NOT resetting traffic and NOT start_after_first_use)
-        now_utc_for_calc = datetime.utcnow()
-        now_ms_for_calc = int(now_utc_for_calc.timestamp() * 1000)
+            try:
+                if target_client.get('up') in (None, '', 0) and cached_client_row.get('up') not in (None, ''):
+                    target_client['up'] = cached_client_row.get('up')
+            except Exception:
+                pass
+            try:
+                if target_client.get('down') in (None, '', 0) and cached_client_row.get('down') not in (None, ''):
+                    target_client['down'] = cached_client_row.get('down')
+            except Exception:
+                pass
+            try:
+                if target_client.get('totalGB') in (None, '', 0) and cached_client_row.get('totalGB') not in (None, ''):
+                    target_client['totalGB'] = cached_client_row.get('totalGB')
+            except Exception:
+                pass
+            try:
+                if target_client.get('expiryTime') in (None, '', 0) and cached_client_row.get('expiryTimestamp') not in (None, ''):
+                    target_client['expiryTime'] = cached_client_row.get('expiryTimestamp')
+            except Exception:
+                pass
 
         try:
             current_expiry_ms = int(target_client.get('expiryTime') or 0)
         except (TypeError, ValueError):
             current_expiry_ms = 0
 
+        # Snapshot current remaining values for message rendering.
+        # IMPORTANT: keep rounding consistent with UI (format_remaining_days uses floor .days).
         remaining_days_before = 0
-        if current_expiry_ms > 0:
-            diff_ms = current_expiry_ms - now_ms_for_calc
-            if diff_ms > 0:
-                # ceil(diff_ms / 86400000)
-                remaining_days_before = int((diff_ms + 86400000 - 1) // 86400000)
-        elif current_expiry_ms < 0:
-            # Not started yet (start-after-first-use style). Represented as negative milliseconds.
-            pending_ms = abs(current_expiry_ms)
-            remaining_days_before = int((pending_ms + 86400000 - 1) // 86400000)
+        try:
+            expiry_info_before = format_remaining_days(current_expiry_ms)
+            raw_days = int(expiry_info_before.get('days') or 0)
+            if raw_days > 0:
+                remaining_days_before = raw_days
+            elif expiry_info_before.get('type') == 'start_after_use' and raw_days >= 0:
+                remaining_days_before = raw_days
+            else:
+                remaining_days_before = 0
+        except Exception:
+            remaining_days_before = 0
 
         try:
             current_total_bytes = int(target_client.get('totalGB') or 0)
@@ -4985,6 +5010,14 @@ def renew_client(server_id, inbound_id, email):
             used_down = int(target_client.get('down') or 0)
         except (TypeError, ValueError):
             used_down = 0
+
+        # If the raw client doesn't carry traffic fields (common), fall back to clientStats.
+        try:
+            if used_up == 0 and used_down == 0 and (stats_up or stats_down):
+                used_up = int(stats_up or 0)
+                used_down = int(stats_down or 0)
+        except Exception:
+            pass
         used_bytes = max(0, used_up + used_down)
 
         remaining_gb_before = 0
