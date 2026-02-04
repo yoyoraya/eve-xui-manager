@@ -369,7 +369,7 @@
 <div class="modal-overlay hidden" id="qr-modal">
     <div class="modal modal-xl">
         <div class="modal-header">
-            <h2>QR Codes - <span id="qr-email" class="qr-email"></span></h2>
+            <h2>QR Codes - <span id="qr-email" class="qr-email" style="word-break: break-all;"></span></h2>
             <button class="modal-close" onclick="closeQrModal()">&times;</button>
         </div>
         <div class="modal-body qr-body" style="padding: 15px;">
@@ -550,9 +550,9 @@
             <button class="modal-close" onclick="closeRenewSuccessModal()">&times;</button>
         </div>
         <div class="modal-body">
-            <div id="renew-prev-state" style="margin-bottom: 15px; font-size: 0.85rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; direction: ltr;">
+            <div id="renew-prev-state" style="margin-bottom: 15px; font-size: 0.85rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; direction: ltr; word-break: break-all;">
             </div>
-            <div id="renew-success-text" style="white-space: pre-wrap; margin-bottom: 20px; font-size: 1.1rem; line-height: 1.6; background: var(--bg-dark); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); direction: ltr; text-align: left;"></div>
+            <div id="renew-success-text" style="white-space: pre-wrap; word-break: break-all; margin-bottom: 20px; font-size: 1.1rem; line-height: 1.6; background: var(--bg-dark); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); direction: ltr; text-align: left;"></div>
             <button class="btn btn-primary w-full" onclick="copyRenewSuccessText()">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 Copy Text
@@ -842,7 +842,7 @@
         <div class="modal-body">
             <div class="form-group">
                 <label>Client Details</label>
-                <textarea id="new-client-details" class="form-input" rows="12" readonly style="font-family: 'Vazirmatn', sans-serif; direction: rtl; white-space: pre; line-height: 1.7;"></textarea>
+                <textarea id="new-client-details" class="form-input" rows="12" readonly style="font-family: 'Vazirmatn', sans-serif; direction: rtl; white-space: pre-wrap; word-break: break-all; line-height: 1.7;"></textarea>
                 <button class="btn btn-secondary btn-block" style="margin-top: 8px;" onclick="copyNewClientDetails()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     Copy Details

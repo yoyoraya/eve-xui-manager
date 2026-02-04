@@ -1872,6 +1872,22 @@ CLIENT_DELETE_FALLBACKS = [
 ]
 
 
+INBOUND_GET_FALLBACKS = [
+    "/panel/api/inbounds/get/:id",
+    "/xui/API/inbounds/get/:id",
+    "/xui/inbound/get/:id",
+    "/xui/inbounds/get/:id",
+]
+
+
+INBOUND_UPDATE_FALLBACKS = [
+    "/panel/api/inbounds/update/:id",
+    "/xui/API/inbounds/update/:id",
+    "/xui/inbound/update/:id",
+    "/xui/inbounds/update/:id",
+]
+
+
 def collect_endpoint_templates(panel_type, attr_name, fallbacks):
     """Return ordered list of endpoint templates for the requested action."""
     templates = []
@@ -2745,6 +2761,31 @@ def extract_base_and_webpath(host_url):
     webpath = parsed.path.rstrip('/') if parsed.path and parsed.path != '/' else ''
     return base, webpath
 
+
+def _safe_response_json(resp: requests.Response):
+    """Best-effort JSON parse for upstream panel responses.
+
+    Returns (data, error_message). Never raises JSONDecodeError.
+    """
+    try:
+        raw = resp.content or b''
+        if not raw:
+            return None, f"Empty response (status {resp.status_code})"
+        return resp.json(), None
+    except Exception:
+        try:
+            content_type = (resp.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+        except Exception:
+            content_type = ''
+        try:
+            text = (resp.text or '')
+        except Exception:
+            text = ''
+        snippet = re.sub(r"\s+", " ", (text[:200] if text else '')).strip()
+        if not snippet:
+            snippet = '<no body>'
+        return None, f"Non-JSON response (status {resp.status_code}, content-type {content_type}): {snippet}"
+
 def get_xui_session(server):
     # Try to reuse session from cache
     now = time.time()
@@ -2758,18 +2799,28 @@ def get_xui_session(server):
     session_obj = requests.Session()
     try:
         base, webpath = extract_base_and_webpath(server.host)
-        login_url = f"{base}{webpath}/login"
+        normalized_type = (getattr(server, 'panel_type', None) or 'auto').strip().lower()
+        panel_api = get_panel_api(normalized_type)
+        login_ep = (getattr(panel_api, 'login_endpoint', None) if panel_api else None) or '/login'
+        login_url = login_ep if login_ep.startswith('http') else f"{base}{webpath}{login_ep}"
         # Keep login timeout short so refresh endpoints stay responsive.
         panel_password = get_server_password(server)
         login_resp = session_obj.post(login_url, data={"username": server.username, "password": panel_password}, verify=False, timeout=3)
-        if login_resp.status_code == 200 and login_resp.json().get('success'):
+        login_json, login_err = _safe_response_json(login_resp)
+        if login_err:
+            return None, f"Login failed: {login_err}. Check server Panel URL / webpath and panel type."
+
+        if login_resp.status_code == 200 and isinstance(login_json, dict) and login_json.get('success'):
             # Cache the successful session
             XUI_SESSION_CACHE[server.id] = {
                 'session': session_obj,
                 'expiry': now + XUI_SESSION_TTL
             }
             return session_obj, None
-        return None, f"Login failed: {login_resp.status_code}"
+        msg = None
+        if isinstance(login_json, dict):
+            msg = login_json.get('msg') or login_json.get('message')
+        return None, f"Login failed: {login_resp.status_code}{(' - ' + str(msg)) if msg else ''}"
     except Exception as e:
         return None, f"Error: {str(e)}"
 
@@ -5640,31 +5691,61 @@ def add_client(server_id, inbound_id):
             "tgId": "",
             "reset": 0
         }
-        
-        base, webpath = extract_base_and_webpath(server.host)
-        if server.panel_type == 'alireza':
-             get_url = f"{base}{webpath}/xui/inbound/get/{inbound_id}"
-        else:
-             get_url = f"{base}{webpath}/panel/api/inbounds/get/{inbound_id}"
-             
-        try:
-            # Use a short connect timeout and a longer read timeout to reduce false failures on slow panels.
-            get_resp = session_obj.get(get_url, verify=False, timeout=(3, 20))
-        except requests.exceptions.ConnectTimeout:
-            app.logger.warning(f"Panel connect timeout while fetching inbound (server_id={server.id}, host={server.host}, url={get_url})")
-            return jsonify({"success": False, "error": f"Connection timeout to panel for server '{server.name}'. Check port/firewall and panel availability."}), 504
-        except requests.exceptions.ReadTimeout:
-            app.logger.warning(f"Panel read timeout while fetching inbound (server_id={server.id}, host={server.host}, url={get_url})")
-            return jsonify({"success": False, "error": f"Panel response timeout for server '{server.name}'. The panel may be slow or overloaded."}), 504
-        except requests.exceptions.ConnectionError as exc:
-            app.logger.warning(f"Panel connection error while fetching inbound (server_id={server.id}, host={server.host}, url={get_url}): {exc}")
-            return jsonify({"success": False, "error": f"Unable to connect to panel for server '{server.name}'. Check host/port and network connectivity."}), 502
 
-        if get_resp.status_code != 200:
-            raise Exception("Failed to fetch inbound data from panel")
-        
-        inbound_data = get_resp.json().get('obj', get_resp.json().get('data', {}))
-        if not inbound_data: raise Exception("Empty inbound data")
+        inbound_data = None
+        last_fetch_error = None
+        last_fetch_url = None
+
+        for tpl in collect_endpoint_templates(server.panel_type, 'inbounds_get', INBOUND_GET_FALLBACKS):
+            get_url = build_panel_url(server.host, tpl, {'id': inbound_id})
+            if not get_url:
+                continue
+            last_fetch_url = get_url
+            try:
+                # Use a short connect timeout and a longer read timeout to reduce false failures on slow panels.
+                get_resp = session_obj.get(get_url, verify=False, timeout=(3, 20))
+            except requests.exceptions.ConnectTimeout:
+                app.logger.warning(f"Panel connect timeout while fetching inbound (server_id={server.id}, host={server.host}, url={get_url})")
+                return jsonify({"success": False, "error": f"Connection timeout to panel for server '{server.name}'. Check port/firewall and panel availability."}), 504
+            except requests.exceptions.ReadTimeout:
+                app.logger.warning(f"Panel read timeout while fetching inbound (server_id={server.id}, host={server.host}, url={get_url})")
+                return jsonify({"success": False, "error": f"Panel response timeout for server '{server.name}'. The panel may be slow or overloaded."}), 504
+            except requests.exceptions.ConnectionError as exc:
+                app.logger.warning(f"Panel connection error while fetching inbound (server_id={server.id}, host={server.host}, url={get_url}): {exc}")
+                return jsonify({"success": False, "error": f"Unable to connect to panel for server '{server.name}'. Check host/port and network connectivity."}), 502
+
+            if get_resp.status_code != 200:
+                last_fetch_error = f"Unexpected status {get_resp.status_code}"
+                continue
+
+            get_json, get_err = _safe_response_json(get_resp)
+            if get_err:
+                last_fetch_error = get_err
+                continue
+
+            if not isinstance(get_json, dict):
+                last_fetch_error = "Unexpected response shape"
+                continue
+
+            obj = get_json.get('obj')
+            if obj is None:
+                obj = get_json.get('data')
+
+            if isinstance(obj, dict) and obj:
+                inbound_data = obj
+                break
+
+            # Some panels wrap as {success:true, data:{...}} or return empty on wrong endpoint.
+            last_fetch_error = "Empty inbound data"
+
+        if not inbound_data:
+            details = last_fetch_error or 'Failed to fetch inbound data from panel'
+            if last_fetch_url:
+                details = f"{details} (last url: {last_fetch_url})"
+            return jsonify({
+                "success": False,
+                "error": f"{details}. If this is an Alireza panel, ensure endpoints like /xui/API/... are reachable and server Panel URL/webpath is correct."
+            }), 502
 
         settings = json.loads(inbound_data['settings'])
         
@@ -5675,25 +5756,44 @@ def add_client(server_id, inbound_id):
         
         update_data = inbound_data.copy()
         update_data['settings'] = json.dumps(settings)
-        
-        if server.panel_type == 'alireza':
-            up_url = f"{base}{webpath}/xui/inbound/update/{inbound_id}"
-        else:
-            up_url = f"{base}{webpath}/panel/api/inbounds/update/{inbound_id}"
-            
-        try:
-            up_resp = session_obj.post(up_url, json=update_data, verify=False, timeout=(3, 20))
-        except requests.exceptions.ConnectTimeout:
-            app.logger.warning(f"Panel connect timeout while updating inbound (server_id={server.id}, host={server.host}, url={up_url})")
-            return jsonify({"success": False, "error": f"Connection timeout to panel for server '{server.name}'. Check port/firewall and panel availability."}), 504
-        except requests.exceptions.ReadTimeout:
-            app.logger.warning(f"Panel read timeout while updating inbound (server_id={server.id}, host={server.host}, url={up_url})")
-            return jsonify({"success": False, "error": f"Panel response timeout for server '{server.name}'. The panel may be slow or overloaded."}), 504
-        except requests.exceptions.ConnectionError as exc:
-            app.logger.warning(f"Panel connection error while updating inbound (server_id={server.id}, host={server.host}, url={up_url}): {exc}")
-            return jsonify({"success": False, "error": f"Unable to connect to panel for server '{server.name}'. Check host/port and network connectivity."}), 502
-        
-        if up_resp.status_code == 200 and up_resp.json().get('success'):
+
+        update_ok = False
+        update_error = None
+
+        for tpl in collect_endpoint_templates(server.panel_type, 'inbounds_update', INBOUND_UPDATE_FALLBACKS):
+            up_url = build_panel_url(server.host, tpl, {'id': inbound_id})
+            if not up_url:
+                continue
+            try:
+                up_resp = session_obj.post(up_url, json=update_data, verify=False, timeout=(3, 20))
+            except requests.exceptions.ConnectTimeout:
+                app.logger.warning(f"Panel connect timeout while updating inbound (server_id={server.id}, host={server.host}, url={up_url})")
+                return jsonify({"success": False, "error": f"Connection timeout to panel for server '{server.name}'. Check port/firewall and panel availability."}), 504
+            except requests.exceptions.ReadTimeout:
+                app.logger.warning(f"Panel read timeout while updating inbound (server_id={server.id}, host={server.host}, url={up_url})")
+                return jsonify({"success": False, "error": f"Panel response timeout for server '{server.name}'. The panel may be slow or overloaded."}), 504
+            except requests.exceptions.ConnectionError as exc:
+                app.logger.warning(f"Panel connection error while updating inbound (server_id={server.id}, host={server.host}, url={up_url}): {exc}")
+                return jsonify({"success": False, "error": f"Unable to connect to panel for server '{server.name}'. Check host/port and network connectivity."}), 502
+
+            if up_resp.status_code != 200:
+                update_error = f"Unexpected status {up_resp.status_code}"
+                continue
+
+            up_json, up_err = _safe_response_json(up_resp)
+            if up_err:
+                update_error = up_err
+                continue
+            if isinstance(up_json, dict) and up_json.get('success'):
+                update_ok = True
+                break
+
+            if isinstance(up_json, dict):
+                update_error = up_json.get('msg') or up_json.get('message') or 'Panel update failed'
+            else:
+                update_error = 'Panel update failed'
+
+        if update_ok:
 
             sender_card = data.get('sender_card', '') or ''
             card_id = data.get('card_id')
@@ -5781,8 +5881,7 @@ def add_client(server_id, inbound_id):
                 }
             })
         else:
-            msg = up_resp.json().get('msg', 'Unknown error') if up_resp.content else 'Panel update failed'
-            return jsonify({"success": False, "error": f"Panel Error: {msg}"})
+            return jsonify({"success": False, "error": f"Panel Error: {update_error or 'Panel update failed'}"})
 
     except Exception as e:
         app.logger.error(f"Add client error (server_id={server_id}, inbound_id={inbound_id}): {e}")
