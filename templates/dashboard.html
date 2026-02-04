@@ -1918,18 +1918,21 @@
                 });
 
                 if (missingServers.length > 0) {
-                    let errorServers = 0;
+                    const errorServerNames = [];
                     missingServers.forEach(s => {
                         const sid = parseInt(s?.id);
                         const st = statusMap.get(sid) || {};
                         const isErr = Boolean(st && (st.error || st.success === false || st.reachable === false || st.reachable_error));
-                        if (isErr) errorServers += 1;
+                        if (isErr) errorServerNames.push(s.name || `ID:${sid}`);
                     });
 
                     if (countEl) {
-                        const extra = errorServers > 0
-                            ? ` • ${errorServers} server error`
-                            : ` • ${missingServers.length} server empty`;
+                        let extra = '';
+                        if (errorServerNames.length > 0) {
+                            extra = ` • ${errorServerNames.length} server error (${errorServerNames.join(', ')})`;
+                        } else {
+                            extra = ` • ${missingServers.length} server empty`;
+                        }
                         countEl.textContent = `${inbounds.length} inbounds${extra}`;
                     }
 
