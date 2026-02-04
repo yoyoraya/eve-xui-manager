@@ -4791,6 +4791,7 @@ def bulk_client_job(job_id):
 def renew_client(server_id, inbound_id, email):
     """Renew client expiry and/or volume"""
     t0 = time.perf_counter()
+    renewal_trace_id = secrets.token_hex(4)
     timing = {
         "total_ms": None,
         "used_cache_client": False,
@@ -4798,6 +4799,7 @@ def renew_client(server_id, inbound_id, email):
         "fetch_inbounds_ms": None,
         "update_post_ms": None,
         "reset_traffic_ms": None,
+        "verify_fetch_ms": None,
         "update_endpoint": None,
         "update_status": None,
     }
@@ -4808,12 +4810,13 @@ def renew_client(server_id, inbound_id, email):
         except Exception:
             timing["total_ms"] = None
         if isinstance(payload, dict):
+            payload.setdefault("trace_id", renewal_trace_id)
             payload.setdefault("timing", timing)
         # Log only slow renews (keeps logs clean)
         try:
             if timing.get("total_ms") is not None and timing["total_ms"] >= 2000:
                 app.logger.info(
-                    f"Renew timing: server={server_id}, inbound={inbound_id}, email={email}, timing={timing}"
+                    f"Renew timing: trace={renewal_trace_id}, server={server_id}, inbound={inbound_id}, email={email}, timing={timing}"
                 )
         except Exception:
             pass
@@ -5179,6 +5182,49 @@ def renew_client(server_id, inbound_id, email):
                         log_transaction(user.id, price, 'renew', "User Renewal (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
                     db.session.commit()
 
+                # Post-update verify (best-effort): fetch inbounds and confirm expiry/volume.
+                verify = {
+                    "attempted": True,
+                    "ok": None,
+                    "error": None,
+                    "expected": {
+                        "expiryTime": new_expiry,
+                        "totalGB": new_volume,
+                    },
+                    "observed": {
+                        "expiryTime": None,
+                        "totalGB": None,
+                    },
+                }
+                try:
+                    t_v0 = time.perf_counter()
+                    v_inbounds, v_err, _ = fetch_inbounds(session_obj, server.host, server.panel_type)
+                    timing["verify_fetch_ms"] = int((time.perf_counter() - t_v0) * 1000)
+                    if v_err or not v_inbounds:
+                        verify["ok"] = False
+                        verify["error"] = v_err or "verify_fetch_failed"
+                    else:
+                        v_client, _ = find_client(v_inbounds, inbound_id, email)
+                        if not v_client:
+                            verify["ok"] = False
+                            verify["error"] = "client_not_found_after_update"
+                        else:
+                            try:
+                                verify["observed"]["expiryTime"] = int(v_client.get('expiryTime') or 0)
+                            except Exception:
+                                verify["observed"]["expiryTime"] = None
+                            try:
+                                verify["observed"]["totalGB"] = int(v_client.get('totalGB') or 0)
+                            except Exception:
+                                verify["observed"]["totalGB"] = None
+
+                            ok_exp = (verify["observed"]["expiryTime"] == int(new_expiry or 0))
+                            ok_vol = (verify["observed"]["totalGB"] == int(new_volume or 0))
+                            verify["ok"] = bool(ok_exp and ok_vol)
+                except Exception as exc:
+                    verify["ok"] = False
+                    verify["error"] = str(exc)
+
                 # Build copyable success text (dynamic template)
                 now_utc = datetime.utcnow()
 
@@ -5252,7 +5298,7 @@ def renew_client(server_id, inbound_id, email):
                     'dashboard_link': dashboard_link,
                 })
 
-                return _finish({"success": True, "copy_text": copy_text})
+                return _finish({"success": True, "copy_text": copy_text, "verify": verify})
 
             errors.append(f"{template}: {resp.status_code}")
             timing["update_endpoint"] = template

@@ -550,6 +550,8 @@
             <button class="modal-close" onclick="closeRenewSuccessModal()">&times;</button>
         </div>
         <div class="modal-body">
+            <div id="renew-api-status" style="margin-bottom: 10px; font-size: 0.8rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); display: none; gap: 6px; flex-wrap: wrap; direction: ltr; word-break: break-word;">
+            </div>
             <div id="renew-prev-state" style="margin-bottom: 15px; font-size: 0.85rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; direction: ltr; word-break: break-all;">
             </div>
             <div id="renew-success-text" style="white-space: pre-wrap; word-break: break-all; margin-bottom: 20px; font-size: 1.1rem; line-height: 1.6; background: var(--bg-dark); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); direction: ltr; text-align: left;"></div>
@@ -2412,7 +2414,12 @@
                 body: JSON.stringify(payload)
             });
             
-            const data = await response.json();
+            let data = null;
+            try {
+                data = await response.json();
+            } catch (e) {
+                data = { success: false, error: 'Invalid response from server (non-JSON)' };
+            }
             if (data.success) {
                 closeRenewModal();
                 
@@ -2435,6 +2442,42 @@
                     <span class="server-badge" style="background: rgba(99, 102, 241, 0.1); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.2); padding: 2px 8px; border-radius: 4px;">Remaining: ${currentClientRemainingVolume || 'Unlimited'}</span>
                 `;
                 document.getElementById('renew-prev-state').innerHTML = prevHtml;
+
+                // Show API status/verification summary
+                try {
+                    const box = document.getElementById('renew-api-status');
+                    if (box) {
+                        const trace = (data && data.trace_id) ? String(data.trace_id) : '';
+                        const timing = (data && data.timing) ? data.timing : {};
+                        const verify = (data && data.verify) ? data.verify : null;
+
+                        const ok = verify ? Boolean(verify.ok) : null;
+                        const attempted = verify ? Boolean(verify.attempted) : false;
+                        const endpoint = (timing && timing.update_endpoint) ? String(timing.update_endpoint) : '';
+                        const totalMs = (timing && typeof timing.total_ms !== 'undefined') ? timing.total_ms : null;
+
+                        let pill = '';
+                        if (attempted) {
+                            pill = ok
+                                ? `<span class="status-pill active" style="background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.3); color: #bbf7d0;">Verified</span>`
+                                : `<span class="status-pill inactive" style="background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.28); color: #fecaca;">Not verified</span>`;
+                        } else {
+                            pill = `<span class="status-pill inactive">Unknown</span>`;
+                        }
+
+                        const parts = [];
+                        parts.push(pill);
+                        if (endpoint) parts.push(`<span class="server-badge">Endpoint: ${escapeHtml(endpoint)}</span>`);
+                        if (trace) parts.push(`<span class="server-badge">Trace: ${escapeHtml(trace)}</span>`);
+                        if (Number.isFinite(totalMs)) parts.push(`<span class="server-badge">${totalMs}ms</span>`);
+                        if (verify && verify.error) parts.push(`<span style="color: #fca5a5;">${escapeHtml(String(verify.error))}</span>`);
+
+                        box.innerHTML = parts.join(' ');
+                        box.style.display = 'flex';
+                    }
+                } catch (e) {
+                    // ignore
+                }
 
                 const fallbackVolLabel = (finalVolume === null) ? '—' : `${finalVolume}GB`;
                 const fallbackText = `🔰${email}\n⌛${finalDays} Days 📊${fallbackVolLabel}\nتمدید شد`;
