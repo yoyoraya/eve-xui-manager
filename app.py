@@ -3545,7 +3545,7 @@ def fetch_worker(server_dict):
         server_obj = SimpleNamespace(**server_dict)
         session_obj, error = get_xui_session(server_obj)
         if error:
-            return server_dict['id'], None, error, 'auto'
+            return server_dict['id'], None, None, error, 'auto'
         
         inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
         online_index, _ = fetch_onlines(session_obj, server_obj.host, server_obj.panel_type)
@@ -3597,8 +3597,8 @@ def api_refresh():
             "stats": {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, 
                       "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "total_traffic": "0 B", 
                       "total_upload": "0 B", "total_download": "0 B"}, 
-            "servers": [],
-            "server_count": 0
+            "servers": (data.get('servers_status') or []),
+            "server_count": len(data.get('servers_status') or [])
             ,
             "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
             "refresh_job": _summarize_job(job)
@@ -3947,10 +3947,12 @@ def api_refresh_single_server(server_id):
             continue
 
     cached_stats = None
+    cached_status = None
     for st in (GLOBAL_SERVER_DATA.get('servers_status') or []):
         try:
             if int(st.get('server_id', -1)) == int(server.id):
                 cached_stats = st.get('stats')
+                cached_status = st
                 break
         except Exception:
             continue
@@ -3965,6 +3967,7 @@ def api_refresh_single_server(server_id):
         "inbounds": cached_inbounds,
         "stats": global_stats,
         "server_stats": cached_stats or {},
+        "server_status": cached_status or {},
         "server_count": server_count,
         "panel_type": server.panel_type,
         "last_update": GLOBAL_SERVER_DATA.get('last_update'),

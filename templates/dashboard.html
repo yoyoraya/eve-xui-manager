@@ -1022,6 +1022,7 @@
     let inboundsData = [];
     let allInboundsData = [];
     let pendingServers = [];
+    let serverStatuses = []; // /api/refresh -> servers (status list)
     let refreshController = null;
     const serverRefreshControllers = new Map(); // serverId -> AbortController
     let activeRefreshJobId = null;
@@ -1456,6 +1457,23 @@
 
             if (data && data.success) {
                 mergeServerInboundsIntoCache(sid, data.inbounds || []);
+
+                // Keep per-server status/errors in sync for empty/error rendering.
+                if (data.server_status && typeof data.server_status === 'object') {
+                    const st = data.server_status;
+                    const stId = parseInt(st.server_id ?? data.server_id);
+                    if (Number.isFinite(stId)) {
+                        const list = Array.isArray(serverStatuses) ? serverStatuses : [];
+                        const idx = list.findIndex(x => parseInt(x?.server_id) === stId);
+                        if (idx >= 0) {
+                            list[idx] = Object.assign({}, list[idx], st);
+                            serverStatuses = list;
+                        } else {
+                            serverStatuses = list.concat([st]);
+                        }
+                    }
+                }
+
                 updateStats(data.stats || {}, data.server_count || (allServers ? allServers.length : 0));
                 applyFilters();
 
@@ -1587,7 +1605,7 @@
             if (data.success) {
                 allInboundsData = data.inbounds;
                 inboundsData = data.inbounds;
-                // allServers = data.servers || []; // Don't overwrite config with status
+                serverStatuses = data.servers || [];
                 
                 // Clear pending servers since we have full data
                 pendingServers = [];
@@ -1701,7 +1719,8 @@
 
     function updateInbounds(inbounds) {
         const container = document.getElementById('inbounds-container');
-        document.getElementById('inbounds-count').textContent = `${inbounds.length} total`;
+        const countEl = document.getElementById('inbounds-count');
+        if (countEl) countEl.textContent = `${inbounds.length} inbounds`;
         
         let html = '';
 
@@ -1868,6 +1887,91 @@
             </div>
         `;
         }).join('');
+
+        // Add per-server empty/error cards for servers whose inbounds didn't load.
+        try {
+            const searchActive = (typeof isSearchActive === 'function') ? isSearchActive() : false;
+            if (!searchActive) {
+                const presentServerIds = new Set();
+                for (const ib of (inbounds || [])) {
+                    const sid = parseInt(ib?.server_id);
+                    if (Number.isFinite(sid)) presentServerIds.add(sid);
+                }
+
+                const statuses = Array.isArray(serverStatuses) ? serverStatuses : [];
+                const statusMap = new Map();
+                statuses.forEach(st => {
+                    const sid = parseInt(st?.server_id);
+                    if (Number.isFinite(sid)) statusMap.set(sid, st);
+                });
+
+                const visibleSelected = (typeof selectedServerIds !== 'undefined' && selectedServerIds && selectedServerIds.size > 0)
+                    ? new Set(Array.from(selectedServerIds).map(x => parseInt(x)).filter(Number.isFinite))
+                    : null;
+
+                const serversList = Array.isArray(allServers) ? allServers : [];
+                const missingServers = serversList.filter(s => {
+                    const sid = parseInt(s?.id);
+                    if (!Number.isFinite(sid)) return false;
+                    if (visibleSelected && !visibleSelected.has(sid)) return false;
+                    return !presentServerIds.has(sid);
+                });
+
+                if (missingServers.length > 0) {
+                    let errorServers = 0;
+                    missingServers.forEach(s => {
+                        const sid = parseInt(s?.id);
+                        const st = statusMap.get(sid) || {};
+                        const isErr = Boolean(st && (st.error || st.success === false || st.reachable === false || st.reachable_error));
+                        if (isErr) errorServers += 1;
+                    });
+
+                    if (countEl) {
+                        const extra = errorServers > 0
+                            ? ` • ${errorServers} server error`
+                            : ` • ${missingServers.length} server empty`;
+                        countEl.textContent = `${inbounds.length} inbounds${extra}`;
+                    }
+
+                    html += missingServers.map(s => {
+                        const sid = parseInt(s?.id);
+                        const st = statusMap.get(sid) || {};
+                        const ok = (st && (st.success === true || st.reachable === true)) && !st.error;
+                        const isErr = !ok && Boolean(st && (st.error || st.success === false || st.reachable === false || st.reachable_error));
+                        const title = isErr ? 'Inbounds not loaded' : 'No inbounds found';
+                        const reason = isErr
+                            ? (st.error || st.reachable_error || 'Failed to fetch inbounds from panel')
+                            : 'This server returned zero inbounds.';
+                        const pill = isErr
+                            ? `<span class="status-pill inactive" style="background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.28); color: #fecaca;">Error</span>`
+                            : `<span class="status-pill inactive">Empty</span>`;
+                        const panelType = (s?.panel_type || st?.panel_type || '') ? escapeHtml(String(s?.panel_type || st?.panel_type)) : '';
+
+                        return `
+                        <div class="inbound-card" style="border-style: dashed; opacity: 0.95;">
+                            <div class="inbound-header">
+                                <div class="inbound-title">
+                                    <span class="protocol-badge" style="background: rgba(148,163,184,0.14); color: rgba(226,232,240,0.9);">${isErr ? 'ERROR' : 'EMPTY'}</span>
+                                    <h3>${escapeHtml(s?.name || ('Server #' + sid))}</h3>
+                                    ${panelType ? `<span class="port-badge">${panelType}</span>` : ''}
+                                    <span class="server-badge">#${sid}</span>
+                                </div>
+                                <div class="inbound-status">${pill}</div>
+                            </div>
+                            <div class="inbound-meta-compact" style="align-items: center; gap: 8px; flex-wrap: wrap;">
+                                <span class="meta-tag" style="min-width: 220px; max-width: 100%;">
+                                    <span class="label">${escapeHtml(title)}:</span>
+                                    <span class="value" style="opacity: 0.9;">${escapeHtml(String(reason))}</span>
+                                </span>
+                                <button class="btn btn-secondary" style="padding: 6px 10px;" onclick="refreshServerData(${sid}, { mode: 'full', force: true, poll: true, enqueue: true })">Retry</button>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+            }
+        } catch (e) {
+            // UI-only best-effort
+        }
 
         // Add placeholders for pending servers
         if (typeof pendingServers !== 'undefined' && pendingServers.length > 0) {
