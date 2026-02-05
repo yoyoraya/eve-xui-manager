@@ -751,6 +751,52 @@ remote_db_migration() {
     echo -e "Note: old server remains untouched."
 }
 
+backup_local_db_if_configured() {
+    # Best-effort safety net: if DATABASE_URL is set locally, take a compressed dump.
+    if [ ! -f "$ENV_FILE" ]; then
+        return 0
+    fi
+    LOCAL_DB_URL=$(grep -E '^DATABASE_URL=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- || true)
+    if [ -z "$LOCAL_DB_URL" ]; then
+        return 0
+    fi
+    print_warning "Backing up current local DB (best-effort)..."
+    BACKUP_FILE="/tmp/eve_manager_local_backup_$(date +%s).sql.gz"
+    if pg_dump --no-owner --no-privileges "$LOCAL_DB_URL" | gzip -9 > "$BACKUP_FILE"; then
+        print_success "Local DB backup saved to $BACKUP_FILE"
+    else
+        print_warning "Local DB backup failed (continuing)"
+    fi
+}
+
+import_remote_db_only() {
+    require_root
+    detect_os
+    install_dependencies
+
+    if [ ! -d "$APP_DIR" ]; then
+        print_error "App directory not found: $APP_DIR"
+        print_warning "Run full install first (menu option 1)"
+        exit 1
+    fi
+    if [ ! -f "$ENV_FILE" ]; then
+        print_error ".env not found: $ENV_FILE"
+        print_warning "Run full install first (menu option 1)"
+        exit 1
+    fi
+
+    backup_local_db_if_configured
+
+    remote_db_migration
+
+    print_warning "Running app migrations on restored DB..."
+    run_migrations
+
+    print_warning "Restarting service..."
+    systemctl restart ${SERVICE_NAME} || true
+    print_success "Remote DB import complete"
+}
+
 install_with_remote_migration() {
     require_root
     detect_os
@@ -796,6 +842,7 @@ show_menu() {
     echo "5) Uninstall Project"
     echo -e "${YELLOW}6) Install + Migrate from Remote Server (SSH)${NC}"
     echo -e "${YELLOW}7) Migrate to PostgreSQL (Automatic)${NC}"
+    echo -e "${YELLOW}9) Import Remote PostgreSQL into This Server (SSH)${NC}"
     echo "8) Exit"
     read -rp "Select an option: " choice
     case $choice in
@@ -847,6 +894,9 @@ show_menu() {
         7)
             require_root
             migrate_to_postgres
+            ;;
+        9)
+            import_remote_db_only
             ;;
         8) exit 0 ;;
         *) print_error "Invalid option" ;;
