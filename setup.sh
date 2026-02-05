@@ -256,6 +256,7 @@ install_dependencies() {
         git \
         curl \
         wget \
+        rsync \
         nginx \
         build-essential \
         supervisor \
@@ -263,6 +264,7 @@ install_dependencies() {
         openssl \
         certbot \
         python3-certbot-nginx \
+        postgresql-client \
         libmagic1
     print_success "Dependencies installed"
 }
@@ -351,7 +353,11 @@ setup_python_env() {
     sudo -u "$APP_USER" bash -c "cd $APP_DIR && source venv/bin/activate && if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install .; fi"
     sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && pip install gunicorn psycopg2-binary"
     print_success "Virtual environment configured"
-    run_migrations
+    if [ "${SKIP_DB_MIGRATIONS:-}" != "true" ]; then
+        run_migrations
+    else
+        print_warning "Skipping init_db/migrations (will run after restore)"
+    fi
 }
 
 create_env_file() {
@@ -646,6 +652,132 @@ migrate_to_postgres() {
     echo -e "DB Pass: ${MIG_DB_PASS}"
 }
 
+# -------------------------------------------------------------
+# REMOTE SERVER MIGRATION (SSH) - FULL AUTO
+# -------------------------------------------------------------
+remote_db_migration() {
+    print_header "Remote Migration (SSH)"
+
+    # Ensure DB server available on new host
+    print_warning "Installing PostgreSQL server/client..."
+    apt-get update -qq
+    apt-get install -y postgresql postgresql-contrib libpq-dev postgresql-client
+
+    read -rp "Old server SSH (user@host): " OLD_SSH
+    read -rp "Old server SSH port [22]: " OLD_SSH_PORT
+    OLD_SSH_PORT=${OLD_SSH_PORT:-22}
+    read -rp "Old app dir [/opt/eve-xui-manager]: " OLD_APP_DIR
+    OLD_APP_DIR=${OLD_APP_DIR:-/opt/eve-xui-manager}
+    OLD_ENV_PATH="${OLD_APP_DIR}/.env"
+
+    if [ -z "$OLD_SSH" ]; then
+        print_error "Old SSH host is required"
+        exit 1
+    fi
+
+    print_warning "Reading old .env (DATABASE_URL, SERVER_PASSWORD_KEY)..."
+    OLD_DB_URL=$(ssh -p "$OLD_SSH_PORT" "$OLD_SSH" "grep -E '^DATABASE_URL=' '$OLD_ENV_PATH' | tail -n 1 | cut -d= -f2-" || true)
+    OLD_SPK=$(ssh -p "$OLD_SSH_PORT" "$OLD_SSH" "grep -E '^SERVER_PASSWORD_KEY=' '$OLD_ENV_PATH' | tail -n 1 | cut -d= -f2-" || true)
+
+    if [ -z "$OLD_DB_URL" ]; then
+        print_warning "DATABASE_URL not found; please enter it manually."
+        read -rp "Old DATABASE_URL: " OLD_DB_URL
+    fi
+
+    if [ -z "$OLD_DB_URL" ]; then
+        print_error "DATABASE_URL is required for migration"
+        exit 1
+    fi
+
+    # Ensure SERVER_PASSWORD_KEY is preserved (needed to decrypt server passwords)
+    if [ -n "$OLD_SPK" ]; then
+        if grep -q '^SERVER_PASSWORD_KEY=' "$ENV_FILE"; then
+            sed -i "s|^SERVER_PASSWORD_KEY=.*|SERVER_PASSWORD_KEY=${OLD_SPK}|" "$ENV_FILE"
+        else
+            echo "SERVER_PASSWORD_KEY=${OLD_SPK}" >> "$ENV_FILE"
+        fi
+        chmod 600 "$ENV_FILE"
+        print_success "SERVER_PASSWORD_KEY synced from old server"
+    else
+        print_warning "SERVER_PASSWORD_KEY not found on old server (.env)."
+    fi
+
+    # Set local DB credentials
+    read -rp "New DB name [${DB_NAME}]: " NEW_DB_NAME
+    NEW_DB_NAME=${NEW_DB_NAME:-$DB_NAME}
+    read -rp "New DB user [${DB_USER}]: " NEW_DB_USER
+    NEW_DB_USER=${NEW_DB_USER:-$DB_USER}
+    read -rp "New DB password for '${NEW_DB_USER}' [leave blank to generate]: " NEW_DB_PASS_INPUT
+    if [ -z "$NEW_DB_PASS_INPUT" ]; then
+        NEW_DB_PASS="$(generate_secret 20 alnum)"
+    else
+        NEW_DB_PASS="$NEW_DB_PASS_INPUT"
+    fi
+
+    print_warning "Creating local PostgreSQL DB/user..."
+    sudo -u postgres psql -c "CREATE DATABASE ${NEW_DB_NAME};" || true
+    sudo -u postgres psql -c "CREATE USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
+    sudo -u postgres psql -c "ALTER USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${NEW_DB_NAME} TO ${NEW_DB_USER};" || true
+
+    NEW_DB_URL="postgresql://${NEW_DB_USER}:${NEW_DB_PASS}@localhost/${NEW_DB_NAME}"
+    if grep -q "DATABASE_URL" "$ENV_FILE"; then
+        sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${NEW_DB_URL}|" "$ENV_FILE"
+    else
+        echo "DATABASE_URL=${NEW_DB_URL}" >> "$ENV_FILE"
+    fi
+    chown "$APP_USER:$APP_USER" "$ENV_FILE"
+
+    print_warning "Dumping old database over SSH (this does NOT modify old server)..."
+    DUMP_FILE="/tmp/eve_manager_dump_$(date +%s).sql.gz"
+    if ! ssh -p "$OLD_SSH_PORT" "$OLD_SSH" "pg_dump --no-owner --no-privileges '${OLD_DB_URL}'" | gzip -9 > "$DUMP_FILE"; then
+        print_error "pg_dump failed. Check SSH access and pg_dump on old server."
+        exit 1
+    fi
+    print_success "DB dump saved to $DUMP_FILE"
+
+    print_warning "Restoring DB on new server..."
+    if ! gunzip -c "$DUMP_FILE" | psql "$NEW_DB_URL"; then
+        print_error "Restore failed. Check DB credentials or dump file."
+        exit 1
+    fi
+    print_success "Database restored"
+
+    print_warning "Syncing instance/ folder (read-only from old server)..."
+    rsync -az -e "ssh -p ${OLD_SSH_PORT}" "${OLD_SSH}:${OLD_APP_DIR}/instance/" "$APP_DIR/instance/" || true
+
+    print_success "Remote migration complete"
+    echo -e "New DB URL: ${NEW_DB_URL}"
+    echo -e "Note: old server remains untouched."
+}
+
+install_with_remote_migration() {
+    require_root
+    detect_os
+    ask_domain
+    prompt_admin_credentials
+    update_system
+    ensure_python_pkg
+    install_dependencies
+    create_app_user
+    prepare_directories
+    clone_or_update_repo
+    create_env_file
+    ensure_server_password_key
+
+    SKIP_DB_MIGRATIONS=true setup_python_env
+
+    remote_db_migration
+    run_migrations
+
+    setup_systemd
+    ensure_systemd_envfile_evemanager
+    setup_nginx
+    print_header "Installation + Migration Complete!"
+    echo -e "URL:      http://${DOMAIN}"
+    echo -e "Logs:     journalctl -u ${SERVICE_NAME} -f"
+}
+
 update_self() {
     print_header "Updating Installer Script..."
     curl -o "$0" -fsSL "${REPO_URL%.git}/raw/main/setup.sh"
@@ -662,6 +794,7 @@ show_menu() {
     echo "3) Configure SSL (Certbot)"
     echo "4) Update this script"
     echo "5) Uninstall Project"
+    echo -e "${YELLOW}6) Install + Migrate from Remote Server (SSH)${NC}"
     echo -e "${YELLOW}7) Migrate to PostgreSQL (Automatic)${NC}"
     echo "8) Exit"
     read -rp "Select an option: " choice
@@ -708,11 +841,14 @@ show_menu() {
             require_root
             uninstall_project
             ;;
+        6)
+            install_with_remote_migration
+            ;;
         7)
             require_root
             migrate_to_postgres
             ;;
-        6|8) exit 0 ;;
+        8) exit 0 ;;
         *) print_error "Invalid option" ;;
     esac
 }
