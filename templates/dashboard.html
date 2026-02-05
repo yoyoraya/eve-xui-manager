@@ -555,10 +555,15 @@
             <div id="renew-prev-state" style="margin-bottom: 15px; font-size: 0.85rem; color: var(--text-secondary); background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; direction: ltr; word-break: break-all;">
             </div>
             <div id="renew-success-text" style="white-space: pre-wrap; word-break: break-all; margin-bottom: 20px; font-size: 1.1rem; line-height: 1.6; background: var(--bg-dark); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); direction: ltr; text-align: left;"></div>
-            <button class="btn btn-primary w-full" onclick="copyRenewSuccessText()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                Copy Text
-            </button>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-secondary" style="flex: 1;" onclick="recheckRenewal()" id="renew-recheck-btn">
+                    Re-check
+                </button>
+                <button class="btn btn-primary" style="flex: 1;" onclick="copyRenewSuccessText()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    Copy Text
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -2369,6 +2374,84 @@
         });
     }
 
+    let lastRenewContext = null;
+
+    function renderRenewApiStatus(data) {
+        try {
+            const box = document.getElementById('renew-api-status');
+            if (!box) return;
+
+            const trace = (data && data.trace_id) ? String(data.trace_id) : '';
+            const timing = (data && data.timing) ? data.timing : {};
+            const verify = (data && data.verify) ? data.verify : null;
+
+            const ok = verify ? Boolean(verify.ok) : null;
+            const attempted = verify ? Boolean(verify.attempted) : false;
+            const endpoint = (timing && timing.update_endpoint) ? String(timing.update_endpoint) : '';
+            const totalMs = (timing && typeof timing.total_ms !== 'undefined') ? timing.total_ms : null;
+
+            let pill = '';
+            if (attempted) {
+                pill = ok
+                    ? `<span class="status-pill active" style="background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.3); color: #bbf7d0;">Verified</span>`
+                    : `<span class="status-pill inactive" style="background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.28); color: #fecaca;">Not verified</span>`;
+            } else {
+                pill = `<span class="status-pill inactive">Unknown</span>`;
+            }
+
+            const parts = [];
+            parts.push(pill);
+            if (endpoint) parts.push(`<span class="server-badge">Endpoint: ${escapeHtml(endpoint)}</span>`);
+            if (trace) parts.push(`<span class="server-badge">Trace: ${escapeHtml(trace)}</span>`);
+            if (Number.isFinite(totalMs)) parts.push(`<span class="server-badge">${totalMs}ms</span>`);
+            if (verify && verify.error) parts.push(`<span style="color: #fca5a5;">${escapeHtml(String(verify.error))}</span>`);
+
+            box.innerHTML = parts.join(' ');
+            box.style.display = 'flex';
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    async function recheckRenewal() {
+        if (!lastRenewContext) {
+            showToast('Nothing to re-check', 'error');
+            return;
+        }
+        const btn = document.getElementById('renew-recheck-btn');
+        const old = btn ? btn.innerText : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerText = 'Checking...';
+        }
+        try {
+            const { serverId, inboundId, email, expectedExpiryTime, expectedTotalGB } = lastRenewContext;
+            const resp = await fetch(`/api/client/${serverId}/${inboundId}/${encodeURIComponent(email)}/renew/verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    expected_expiryTime: expectedExpiryTime,
+                    expected_totalGB: expectedTotalGB
+                })
+            });
+            const data = await resp.json();
+            if (data && data.success && data.verify) {
+                renderRenewApiStatus(data);
+                if (data.verify.ok) showToast('Verified');
+                else showToast('Not verified', 'error');
+            } else {
+                showToast((data && data.error) ? data.error : 'Verify failed', 'error');
+            }
+        } catch (e) {
+            showToast('Verify error: ' + e.message, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = old || 'Re-check';
+            }
+        }
+    }
+
     async function submitRenewal() {
         const serverId = document.getElementById('renew-server-id').value;
         const inboundId = document.getElementById('renew-inbound-id').value;
@@ -2443,41 +2526,25 @@
                 `;
                 document.getElementById('renew-prev-state').innerHTML = prevHtml;
 
-                // Show API status/verification summary
+                // Track last renew context for "Re-check" and render status.
                 try {
-                    const box = document.getElementById('renew-api-status');
-                    if (box) {
-                        const trace = (data && data.trace_id) ? String(data.trace_id) : '';
-                        const timing = (data && data.timing) ? data.timing : {};
-                        const verify = (data && data.verify) ? data.verify : null;
-
-                        const ok = verify ? Boolean(verify.ok) : null;
-                        const attempted = verify ? Boolean(verify.attempted) : false;
-                        const endpoint = (timing && timing.update_endpoint) ? String(timing.update_endpoint) : '';
-                        const totalMs = (timing && typeof timing.total_ms !== 'undefined') ? timing.total_ms : null;
-
-                        let pill = '';
-                        if (attempted) {
-                            pill = ok
-                                ? `<span class="status-pill active" style="background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.3); color: #bbf7d0;">Verified</span>`
-                                : `<span class="status-pill inactive" style="background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.28); color: #fecaca;">Not verified</span>`;
-                        } else {
-                            pill = `<span class="status-pill inactive">Unknown</span>`;
-                        }
-
-                        const parts = [];
-                        parts.push(pill);
-                        if (endpoint) parts.push(`<span class="server-badge">Endpoint: ${escapeHtml(endpoint)}</span>`);
-                        if (trace) parts.push(`<span class="server-badge">Trace: ${escapeHtml(trace)}</span>`);
-                        if (Number.isFinite(totalMs)) parts.push(`<span class="server-badge">${totalMs}ms</span>`);
-                        if (verify && verify.error) parts.push(`<span style="color: #fca5a5;">${escapeHtml(String(verify.error))}</span>`);
-
-                        box.innerHTML = parts.join(' ');
-                        box.style.display = 'flex';
+                    let expectedExpiryTime = null;
+                    let expectedTotalGB = null;
+                    if (data && data.verify && data.verify.expected) {
+                        expectedExpiryTime = data.verify.expected.expiryTime;
+                        expectedTotalGB = data.verify.expected.totalGB;
                     }
+                    lastRenewContext = {
+                        serverId: String(serverId),
+                        inboundId: String(inboundId),
+                        email: String(email),
+                        expectedExpiryTime,
+                        expectedTotalGB,
+                    };
                 } catch (e) {
-                    // ignore
+                    lastRenewContext = null;
                 }
+                renderRenewApiStatus(data);
 
                 const fallbackVolLabel = (finalVolume === null) ? '—' : `${finalVolume}GB`;
                 const fallbackText = `🔰${email}\n⌛${finalDays} Days 📊${fallbackVolLabel}\nتمدید شد`;

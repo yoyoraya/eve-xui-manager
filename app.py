@@ -5059,12 +5059,10 @@ def renew_client(server_id, inbound_id, email):
             if current_expiry_int < 0:
                 new_expiry = current_expiry_int - (days_to_add * 86400000)
             elif current_expiry_int > 0:
-                current_date = datetime.fromtimestamp(current_expiry_int / 1000)
-                new_date = current_date + timedelta(days=days_to_add)
-                new_expiry = int(new_date.timestamp() * 1000)
+                # Add days in milliseconds (avoids DST/timezone edge cases)
+                new_expiry = int(current_expiry_int) + int(days_to_add * 86400000)
             else:
-                new_date = datetime.now() + timedelta(days=days_to_add)
-                new_expiry = int(new_date.timestamp() * 1000)
+                new_expiry = int(time.time() * 1000) + int(days_to_add * 86400000)
         
         # Update volume
         current_volume = current_total_bytes
@@ -5311,6 +5309,108 @@ def renew_client(server_id, inbound_id, email):
     except Exception as e:
         app.logger.error(f"Renew error: {str(e)}")
         return _finish({"success": False, "error": str(e)}, 400)
+
+
+@app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew/verify', methods=['POST'])
+@login_required
+def verify_renew_client(server_id, inbound_id, email):
+    """Re-check a client's expiry/volume on the panel after a renew.
+
+    Expected values are optional:
+      {"expected_expiryTime": <ms>, "expected_totalGB": <bytes>}
+    """
+    trace_id = secrets.token_hex(4)
+    t0 = time.perf_counter()
+
+    def _finish(payload: dict, status_code: int = 200):
+        try:
+            payload.setdefault('timing', {})
+            payload['timing']['total_ms'] = int((time.perf_counter() - t0) * 1000)
+        except Exception:
+            payload.setdefault('timing', {})
+            payload['timing']['total_ms'] = None
+        payload.setdefault('trace_id', trace_id)
+        return jsonify(payload), status_code
+
+    user = db.session.get(Admin, session.get('admin_id'))
+    if not user:
+        return _finish({'success': False, 'error': 'User not found'}, 401)
+
+    server = Server.query.get_or_404(server_id)
+
+    try:
+        data = request.get_json() or {}
+    except Exception:
+        data = {}
+
+    expected_expiry = data.get('expected_expiryTime', None)
+    expected_total = data.get('expected_totalGB', None)
+    try:
+        expected_expiry = None if expected_expiry is None else int(expected_expiry)
+    except Exception:
+        expected_expiry = None
+    try:
+        expected_total = None if expected_total is None else int(expected_total)
+    except Exception:
+        expected_total = None
+
+    # Access control for resellers
+    if user.role == 'reseller':
+        if not _has_client_access(user, server_id, email, inbound_id=inbound_id):
+            return _finish({'success': False, 'error': 'Access denied'}, 403)
+
+    t_login0 = time.perf_counter()
+    session_obj, error = get_xui_session(server)
+    login_ms = int((time.perf_counter() - t_login0) * 1000)
+    if error:
+        return _finish({'success': False, 'error': error, 'timing': {'login_ms': login_ms}}, 400)
+
+    verify = {
+        'attempted': True,
+        'ok': None,
+        'error': None,
+        'expected': {'expiryTime': expected_expiry, 'totalGB': expected_total},
+        'observed': {'expiryTime': None, 'totalGB': None},
+    }
+
+    try:
+        t_v0 = time.perf_counter()
+        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+        verify_fetch_ms = int((time.perf_counter() - t_v0) * 1000)
+        persist_detected_panel_type(server, detected_type)
+        if fetch_err or not inbounds:
+            verify['ok'] = False
+            verify['error'] = fetch_err or 'verify_fetch_failed'
+            return _finish({'success': True, 'verify': verify, 'timing': {'login_ms': login_ms, 'verify_fetch_ms': verify_fetch_ms}})
+
+        v_client, _ = find_client(inbounds, inbound_id, email)
+        if not v_client:
+            verify['ok'] = False
+            verify['error'] = 'client_not_found'
+            return _finish({'success': True, 'verify': verify, 'timing': {'login_ms': login_ms, 'verify_fetch_ms': verify_fetch_ms}})
+
+        try:
+            verify['observed']['expiryTime'] = int(v_client.get('expiryTime') or 0)
+        except Exception:
+            verify['observed']['expiryTime'] = None
+        try:
+            verify['observed']['totalGB'] = int(v_client.get('totalGB') or 0)
+        except Exception:
+            verify['observed']['totalGB'] = None
+
+        # If expected values are not provided, we just return observed.
+        if expected_expiry is None and expected_total is None:
+            verify['ok'] = True
+        else:
+            ok_exp = True if expected_expiry is None else (verify['observed']['expiryTime'] == expected_expiry)
+            ok_vol = True if expected_total is None else (verify['observed']['totalGB'] == expected_total)
+            verify['ok'] = bool(ok_exp and ok_vol)
+
+        return _finish({'success': True, 'verify': verify, 'timing': {'login_ms': login_ms, 'verify_fetch_ms': verify_fetch_ms}})
+    except Exception as exc:
+        verify['ok'] = False
+        verify['error'] = str(exc)
+        return _finish({'success': True, 'verify': verify, 'timing': {'login_ms': login_ms}})
 
 @app.route('/api/admins', methods=['GET'])
 @user_management_required
