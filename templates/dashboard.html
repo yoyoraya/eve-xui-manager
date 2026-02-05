@@ -1315,6 +1315,27 @@
                 client.down_formatted = formatBytes(downVal);
                 changed = true;
             }
+
+            // Directly set expiry timestamp (authoritative value from server)
+            if (patch && Object.prototype.hasOwnProperty.call(patch, 'expiryTimestamp')) {
+                const ts = Number(patch.expiryTimestamp);
+                if (Number.isFinite(ts)) {
+                    client.expiryTimestamp = ts;
+                    client.expiryTime = _formatExpiryForDisplay(ts);
+                    client.expiryType = _getExpiryType(ts);
+                    changed = true;
+                }
+            }
+
+            // Directly set total cap bytes (authoritative value from server)
+            if (patch && Object.prototype.hasOwnProperty.call(patch, 'totalGB')) {
+                const totalBytes = Number(patch.totalGB);
+                if (Number.isFinite(totalBytes)) {
+                    client.totalGB = totalBytes;
+                    client.totalGB_formatted = _formatGBForDisplay(totalBytes);
+                    changed = true;
+                }
+            }
             // Support addDays: add days to current expiry (optimistic)
             if (patch && Object.prototype.hasOwnProperty.call(patch, 'addDays')) {
                 const daysToAdd = parseInt(patch.addDays) || 0;
@@ -1344,13 +1365,39 @@
                         currentTotalBytes = currentTotalBytes + (gbToAdd * 1024 * 1024 * 1024);
                         client.totalGB = currentTotalBytes;
                         client.totalGB_formatted = _formatGBForDisplay(currentTotalBytes);
-                        // Recalculate remaining
-                        const usedBytes = (parseInt(client.up) || 0) + (parseInt(client.down) || 0);
-                        const remainingBytes = Math.max(0, currentTotalBytes - usedBytes);
-                        client.remaining_formatted = _formatGBForDisplay(remainingBytes);
                         changed = true;
                     }
                     // If unlimited (0), stays unlimited
+                }
+            }
+
+            // Recompute remaining/volume status after any traffic or cap change
+            if (changed) {
+                const upB = parseInt(client.up) || 0;
+                const downB = parseInt(client.down) || 0;
+                const usedBytes = Math.max(0, upB + downB);
+                const capBytes = parseInt(client.totalGB) || 0;
+
+                if (!capBytes || capBytes <= 0) {
+                    client.remaining_bytes = -1;
+                    client.remaining_formatted = 'Unlimited';
+                    client.volume_status = 'expiry-start-after';
+                    client.totalGB_formatted = 'Unlimited';
+                } else {
+                    const remainingBytes = Math.max(0, capBytes - usedBytes);
+                    client.remaining_bytes = remainingBytes;
+                    client.totalGB_formatted = _formatGBForDisplay(capBytes);
+                    client.remaining_formatted = _formatGBForDisplay(remainingBytes);
+                    if (remainingBytes <= 0) {
+                        client.remaining_formatted = 'Suspended';
+                        client.volume_status = 'suspended';
+                    } else if (remainingBytes < 1073741824) {
+                        // < 1GB
+                        client.remaining_formatted = `${client.remaining_formatted} Low`;
+                        client.volume_status = 'low';
+                    } else {
+                        client.volume_status = '';
+                    }
                 }
             }
             break;
@@ -2553,6 +2600,33 @@
                     : fallbackText;
                 document.getElementById('renew-success-text').innerText = successText;
                 document.getElementById('renew-success-modal').classList.remove('hidden');
+
+                // Update UI instantly using authoritative values returned by the API.
+                // This avoids stale values when server cache refresh is delayed or served by another worker.
+                try {
+                    const verify = data && data.verify ? data.verify : null;
+                    const observed = verify && verify.observed ? verify.observed : {};
+                    const expected = verify && verify.expected ? verify.expected : {};
+                    const expTs = (observed && observed.expiryTime !== null && observed.expiryTime !== undefined)
+                        ? observed.expiryTime
+                        : (expected ? expected.expiryTime : null);
+                    const capBytes = (observed && observed.totalGB !== null && observed.totalGB !== undefined)
+                        ? observed.totalGB
+                        : (expected ? expected.totalGB : null);
+
+                    const patch = {};
+                    if (expTs !== null && expTs !== undefined) patch.expiryTimestamp = expTs;
+                    if (capBytes !== null && capBytes !== undefined) patch.totalGB = capBytes;
+                    if (resetTraffic) {
+                        patch.up = 0;
+                        patch.down = 0;
+                    }
+                    if (Object.keys(patch).length > 0) {
+                        patchLocalClient(serverId, inboundId, email, patch);
+                    }
+                } catch (e) {
+                    // ignore optimistic patch failures
+                }
 
                 if (typeof data.remaining_credit !== 'undefined') {
                     updateWalletDisplay(data.remaining_credit);
