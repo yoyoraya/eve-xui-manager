@@ -797,6 +797,76 @@ import_remote_db_only() {
     print_success "Remote DB import complete"
 }
 
+backup_letsencrypt_dirs() {
+    local ts
+    ts="$(date +%s)"
+    if [ -d "/etc/letsencrypt" ]; then
+        print_warning "Backing up /etc/letsencrypt to /etc/letsencrypt.bak.${ts}"
+        cp -a /etc/letsencrypt "/etc/letsencrypt.bak.${ts}" || true
+    fi
+    if [ -d "/var/lib/letsencrypt" ]; then
+        print_warning "Backing up /var/lib/letsencrypt to /var/lib/letsencrypt.bak.${ts}"
+        cp -a /var/lib/letsencrypt "/var/lib/letsencrypt.bak.${ts}" || true
+    fi
+}
+
+import_ssl_from_remote() {
+    require_root
+    detect_os
+    install_dependencies
+
+    print_header "Import SSL (Let's Encrypt) from Remote Server (SSH)"
+    print_warning "This will copy private keys from the old server to this server."
+    read -rp "Continue? (type YES): " confirm
+    if [ "$confirm" != "YES" ]; then
+        print_warning "Cancelled"
+        return 0
+    fi
+
+    # Domain is used to validate that cert files exist and to generate nginx config.
+    if [ -z "${DOMAIN}" ]; then
+        ask_domain
+    fi
+
+    read -rp "Old server SSH (user@host): " OLD_SSH
+    read -rp "Old server SSH port [22]: " OLD_SSH_PORT
+    OLD_SSH_PORT=${OLD_SSH_PORT:-22}
+
+    if [ -z "$OLD_SSH" ]; then
+        print_error "Old SSH host is required"
+        exit 1
+    fi
+
+    backup_letsencrypt_dirs
+
+    print_warning "Streaming /etc/letsencrypt and /var/lib/letsencrypt from remote..."
+    if ssh -p "$OLD_SSH_PORT" "$OLD_SSH" "sudo tar -C / -czf - etc/letsencrypt var/lib/letsencrypt" | tar -C / -xzf -; then
+        print_success "SSL files imported (sudo)"
+    else
+        print_warning "Remote sudo tar failed; retrying without sudo (requires root SSH on remote)..."
+        ssh -p "$OLD_SSH_PORT" "$OLD_SSH" "tar -C / -czf - etc/letsencrypt var/lib/letsencrypt" | tar -C / -xzf -
+        print_success "SSL files imported"
+    fi
+
+    # Validate cert presence
+    SSL_FULLCHAIN="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+    SSL_PRIVKEY="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+    if [ ! -f "$SSL_FULLCHAIN" ] || [ ! -f "$SSL_PRIVKEY" ]; then
+        print_warning "Imported SSL files, but cert for '${DOMAIN}' was not found at expected paths."
+        print_warning "Check /etc/letsencrypt/live/ and ensure DOMAIN matches the existing certificate name."
+    fi
+
+    print_warning "Rebuilding nginx config to use imported SSL (if available)..."
+    setup_nginx
+    nginx -t && systemctl restart nginx
+    print_success "Nginx reloaded"
+
+    echo
+    print_header "Notes"
+    echo "- Certificate is now installed on this server (no re-issue)."
+    echo "- Renewal will still require the domain to point here when certbot runs."
+}
+
 install_with_remote_migration() {
     require_root
     detect_os
@@ -843,6 +913,7 @@ show_menu() {
     echo -e "${YELLOW}6) Install + Migrate from Remote Server (SSH)${NC}"
     echo -e "${YELLOW}7) Migrate to PostgreSQL (Automatic)${NC}"
     echo -e "${YELLOW}9) Import Remote PostgreSQL into This Server (SSH)${NC}"
+    echo -e "${YELLOW}10) Import SSL from Remote Server (SSH)${NC}"
     echo "8) Exit"
     read -rp "Select an option: " choice
     case $choice in
@@ -897,6 +968,9 @@ show_menu() {
             ;;
         9)
             import_remote_db_only
+            ;;
+        10)
+            import_ssl_from_remote
             ;;
         8) exit 0 ;;
         *) print_error "Invalid option" ;;
