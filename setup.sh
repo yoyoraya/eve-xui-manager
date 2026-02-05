@@ -715,10 +715,11 @@ remote_db_migration() {
     fi
 
     print_warning "Creating local PostgreSQL DB/user..."
-    sudo -u postgres psql -c "CREATE DATABASE ${NEW_DB_NAME};" || true
-    sudo -u postgres psql -c "CREATE USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
-    sudo -u postgres psql -c "ALTER USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
-    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${NEW_DB_NAME} TO ${NEW_DB_USER};" || true
+    # -H avoids noisy "could not change directory to /root" messages under sudo.
+    sudo -H -u postgres psql -c "CREATE DATABASE ${NEW_DB_NAME};" || true
+    sudo -H -u postgres psql -c "CREATE USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
+    sudo -H -u postgres psql -c "ALTER USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
+    sudo -H -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${NEW_DB_NAME} TO ${NEW_DB_USER};" || true
 
     NEW_DB_URL="postgresql://${NEW_DB_USER}:${NEW_DB_PASS}@localhost/${NEW_DB_NAME}"
     if grep -q "DATABASE_URL" "$ENV_FILE"; then
@@ -728,23 +729,55 @@ remote_db_migration() {
     fi
     chown "$APP_USER:$APP_USER" "$ENV_FILE"
 
-    print_warning "Dumping old database over SSH (this does NOT modify old server)..."
-    DUMP_FILE="/tmp/eve_manager_dump_$(date +%s).sql.gz"
-    if ! ssh -p "$OLD_SSH_PORT" "$OLD_SSH" "pg_dump --no-owner --no-privileges '${OLD_DB_URL}'" | gzip -9 > "$DUMP_FILE"; then
-        print_error "pg_dump failed. Check SSH access and pg_dump on old server."
-        exit 1
-    fi
-    print_success "DB dump saved to $DUMP_FILE"
-
-    print_warning "Restoring DB on new server..."
-    if ! gunzip -c "$DUMP_FILE" | psql "$NEW_DB_URL"; then
-        print_error "Restore failed. Check DB credentials or dump file."
-        exit 1
-    fi
-    print_success "Database restored"
-
     print_warning "Syncing instance/ folder (read-only from old server)..."
     rsync -az -e "ssh -p ${OLD_SSH_PORT}" "${OLD_SSH}:${OLD_APP_DIR}/instance/" "$APP_DIR/instance/" || true
+
+    # Decide migration path based on old DATABASE_URL
+    # - If old server used SQLite (or DATABASE_URL missing), we copy instance/servers.db then migrate into new Postgres.
+    # - If old server used Postgres, we stream pg_dump over SSH and restore directly.
+    OLD_DB_URL_LC="$(echo "${OLD_DB_URL}" | tr '[:upper:]' '[:lower:]')"
+    if [ -z "${OLD_DB_URL}" ] || [[ "${OLD_DB_URL_LC}" == sqlite:* ]]; then
+        print_warning "Old server appears to use SQLite; migrating instance/servers.db into PostgreSQL..."
+        SQLITE_DB_LOCAL="${APP_DIR}/instance/servers.db"
+        if [ ! -f "${SQLITE_DB_LOCAL}" ]; then
+            print_error "SQLite DB not found after instance sync: ${SQLITE_DB_LOCAL}"
+            print_warning "Verify old server has ${OLD_APP_DIR}/instance/servers.db"
+            exit 1
+        fi
+
+        if [ ! -f "${APP_DIR}/migrate_db.py" ]; then
+            print_error "migrate_db.py not found in ${APP_DIR} (update code first)."
+            exit 1
+        fi
+
+        print_warning "Running SQLite → PostgreSQL migration script on new server..."
+        sudo -u "$APP_USER" bash -c "set -a; source $ENV_FILE; set +a; source $APP_DIR/venv/bin/activate && cd $APP_DIR && SQLITE_DB_PATH='$SQLITE_DB_LOCAL' python3 migrate_db.py"
+        print_success "SQLite data migrated into PostgreSQL"
+    else
+        print_warning "Dumping old PostgreSQL database over SSH (this does NOT modify old server)..."
+        DUMP_FILE="/tmp/eve_manager_dump_$(date +%s).sql.gz"
+
+        # Use remote .env to avoid quoting issues with special chars in passwords.
+        # Best-effort install of pg_dump on old server (requires sudo/root on remote).
+        if ! ssh -p "$OLD_SSH_PORT" "$OLD_SSH" "bash -lc 'set -e; [ -f ""$OLD_ENV_PATH"" ] && set -a && source ""$OLD_ENV_PATH"" && set +a || true; command -v pg_dump >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y postgresql-client >/dev/null); pg_dump --no-owner --no-privileges --dbname=""${DATABASE_URL:-$OLD_DB_URL}""'" | gzip -9 > "$DUMP_FILE"; then
+            print_error "pg_dump failed. Check SSH access and that old DATABASE_URL is valid."
+            print_warning "Tip: On old server run: pg_dump --no-owner --no-privileges \"$OLD_DB_URL\" > /tmp/test.sql"
+            exit 1
+        fi
+        print_success "DB dump saved to $DUMP_FILE"
+
+        print_warning "Restoring DB on new server..."
+        if ! gunzip -c "$DUMP_FILE" | psql "$NEW_DB_URL"; then
+            print_error "Restore failed. Check DB credentials or dump file."
+            exit 1
+        fi
+        print_success "Database restored"
+    fi
+
+    print_warning "Verifying imported data (row counts)..."
+    psql "$NEW_DB_URL" -v ON_ERROR_STOP=0 -tAc "SELECT 'admins=' || COUNT(*) FROM admins;" 2>/dev/null || true
+    psql "$NEW_DB_URL" -v ON_ERROR_STOP=0 -tAc "SELECT 'servers=' || COUNT(*) FROM servers;" 2>/dev/null || true
+    psql "$NEW_DB_URL" -v ON_ERROR_STOP=0 -tAc "SELECT 'packages=' || COUNT(*) FROM packages;" 2>/dev/null || true
 
     print_success "Remote migration complete"
     echo -e "New DB URL: ${NEW_DB_URL}"
@@ -773,6 +806,11 @@ import_remote_db_only() {
     require_root
     detect_os
     install_dependencies
+
+    # If the imported DB is empty (or old server used SQLite and had no admins),
+    # init_db.py will create a first superadmin. Prompt so the password is known.
+    reset_admin_defaults
+    prompt_admin_credentials
 
     if [ ! -d "$APP_DIR" ]; then
         print_error "App directory not found: $APP_DIR"
