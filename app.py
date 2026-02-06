@@ -4956,19 +4956,32 @@ def renew_client(server_id, inbound_id, email):
                 stats_down = 0
 
         # If we used cached raw_client, merge in traffic/cap fields from the cached row.
-        # This avoids treating used_bytes as 0 and producing incorrect remaining volume.
+        # This avoids undercounting usage when `raw_client` is missing one direction
+        # OR contains a stale smaller number.
         # NOTE: cached_client_row.expiryTime is a human string; use expiryTimestamp instead.
         if cached_client_row and isinstance(target_client, dict):
             try:
-                if target_client.get('up') in (None, '', 0) and cached_client_row.get('up') not in (None, ''):
-                    target_client['up'] = cached_client_row.get('up')
+                cached_up = int(cached_client_row.get('up') or 0)
             except Exception:
-                pass
+                cached_up = 0
             try:
-                if target_client.get('down') in (None, '', 0) and cached_client_row.get('down') not in (None, ''):
-                    target_client['down'] = cached_client_row.get('down')
+                cur_up = int(target_client.get('up') or 0)
             except Exception:
-                pass
+                cur_up = 0
+            if cached_up > cur_up:
+                target_client['up'] = cached_up
+
+            try:
+                cached_down = int(cached_client_row.get('down') or 0)
+            except Exception:
+                cached_down = 0
+            try:
+                cur_down = int(target_client.get('down') or 0)
+            except Exception:
+                cur_down = 0
+            if cached_down > cur_down:
+                target_client['down'] = cached_down
+
             try:
                 if target_client.get('totalGB') in (None, '', 0) and cached_client_row.get('totalGB') not in (None, ''):
                     target_client['totalGB'] = cached_client_row.get('totalGB')
@@ -5015,10 +5028,23 @@ def renew_client(server_id, inbound_id, email):
             used_down = 0
 
         # If the raw client doesn't carry traffic fields (common), fall back to clientStats.
+        # Some panels only include one direction (up/down) in the client settings list.
+        # Prefer clientStats when it provides missing OR higher values to avoid undercounting usage.
         try:
-            if used_up == 0 and used_down == 0 and (stats_up or stats_down):
-                used_up = int(stats_up or 0)
-                used_down = int(stats_down or 0)
+            if stats_up or stats_down:
+                try:
+                    su = int(stats_up or 0)
+                except Exception:
+                    su = 0
+                try:
+                    sd = int(stats_down or 0)
+                except Exception:
+                    sd = 0
+
+                if su:
+                    used_up = max(int(used_up or 0), su)
+                if sd:
+                    used_down = max(int(used_down or 0), sd)
         except Exception:
             pass
         used_bytes = max(0, used_up + used_down)
