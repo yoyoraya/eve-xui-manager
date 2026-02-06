@@ -3409,15 +3409,45 @@
     function applyFilters() {
         // Keep container CSS state in sync even when other filters re-run
         applyDisabledVisibility();
+
+        function _localSearchFromCache(query) {
+            const q = String(query || '').trim().toLowerCase();
+            if (!q) return [];
+            const out = [];
+            const inbounds = Array.isArray(allInboundsData) ? allInboundsData : [];
+            for (const inbound of inbounds) {
+                const clients = Array.isArray(inbound?.clients) ? inbound.clients : [];
+                for (const client of clients) {
+                    const em = String(client?.email || '').toLowerCase();
+                    if (!em) continue;
+                    if (!em.includes(q)) continue;
+                    out.push({
+                        server_id: inbound.server_id,
+                        inbound_id: inbound.id,
+                        server_name: inbound.server_name,
+                        inbound: {
+                            remark: inbound.remark,
+                            protocol: inbound.protocol,
+                            port: inbound.port,
+                            enable: inbound.enable,
+                        },
+                        client: client,
+                    });
+                }
+            }
+            return out;
+        }
         
         // If we have search results, filter them
         const searchResultsDiv = document.getElementById('search-results');
         if (searchResultsDiv.style.display !== 'none') {
             // Re-run search or filter existing results?
-            // For now, let's just re-run search if there is a query
+            // Use local cached data to update immediately after actions.
             const searchInput = document.getElementById('global-search-input');
             if (searchInput.value.trim().length > 0) {
-                performGlobalSearch(true);
+                const q = searchInput.value.trim().toLowerCase();
+                const local = _localSearchFromCache(q);
+                displaySearchResults(local, q);
                 return;
             }
         }
