@@ -1285,11 +1285,13 @@
         allInboundsData = merge(allInboundsData);
     }
 
-    function patchLocalClient(serverId, inboundId, email, patch) {
+    function patchLocalClient(serverId, inboundId, email, patch, options = {}) {
         const sid = parseInt(serverId);
         const iid = String(inboundId);
         const em = String(email || '').toLowerCase();
         if (!Number.isFinite(sid) || !iid || !em) return false;
+
+        const shouldRender = (options && Object.prototype.hasOwnProperty.call(options, 'render')) ? Boolean(options.render) : true;
 
         let changed = false;
         for (const inbound of (allInboundsData || [])) {
@@ -1403,13 +1405,7 @@
             break;
         }
 
-        if (changed) {
-            applyFilters();
-            const searchInput = document.getElementById('global-search-input');
-            if (searchInput && searchInput.value.trim().length > 0) {
-                performGlobalSearch(true);
-            }
-        }
+        if (changed && shouldRender) applyFilters();
         return changed;
     }
 
@@ -1453,11 +1449,13 @@
     }
 
     // Remove a client from local data (optimistic delete)
-    function removeLocalClient(serverId, inboundId, email) {
+    function removeLocalClient(serverId, inboundId, email, options = {}) {
         const sid = parseInt(serverId);
         const iid = String(inboundId);
         const em = String(email || '').toLowerCase();
         if (!Number.isFinite(sid) || !iid || !em) return false;
+
+        const shouldRender = (options && Object.prototype.hasOwnProperty.call(options, 'render')) ? Boolean(options.render) : true;
 
         let changed = false;
         for (const inbound of (allInboundsData || [])) {
@@ -1473,13 +1471,7 @@
             break;
         }
 
-        if (changed) {
-            applyFilters();
-            const searchInput = document.getElementById('global-search-input');
-            if (searchInput && searchInput.value.trim().length > 0) {
-                performGlobalSearch(true);
-            }
-        }
+        if (changed && shouldRender) applyFilters();
         return changed;
     }
 
@@ -1530,11 +1522,6 @@
 
                 updateStats(data.stats || {}, data.server_count || (allServers ? allServers.length : 0));
                 applyFilters();
-
-                const searchInput = document.getElementById('global-search-input');
-                if (searchInput && searchInput.value.trim().length > 0) {
-                    performGlobalSearch(true);
-                }
 
                 const jobId = data.refresh_job && data.refresh_job.id;
                 const jobState = data.refresh_job && data.refresh_job.state;
@@ -1679,13 +1666,6 @@
                     } else {
                         showToast('Data updated successfully');
                     }
-                }
-                
-                // If there is an active search, re-run it
-                const searchInput = document.getElementById('global-search-input');
-                if (searchInput && searchInput.value.trim().length > 0) {
-                    // Re-run search immediately after refresh (no debounce)
-                    performGlobalSearch(true);
                 }
             } else {
                 if (!isSilent) showToast(data.error || 'Error updating data', 'error');
@@ -3996,8 +3976,10 @@
     }
 
     // Optimistic update: patch local data immediately after bulk assign/unassign
-    function applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName) {
+    function applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName, options = {}) {
         if (!Array.isArray(allInboundsData)) return;
+
+        const shouldRender = (options && Object.prototype.hasOwnProperty.call(options, 'render')) ? Boolean(options.render) : true;
         
         // Build a lookup set for quick matching
         const clientSet = new Set();
@@ -4029,13 +4011,7 @@
         }
         
         // Re-render the UI with updated data
-        applyFilters();
-        
-        // If search is active, re-run search to update displayed results
-        const searchInput = document.getElementById('global-search-input');
-        if (searchInput && searchInput.value.trim().length > 0) {
-            performGlobalSearch(true);
-        }
+        if (shouldRender) applyFilters();
     }
 
     function setBulkProgress(visible, processed = 0, total = 0) {
@@ -4198,21 +4174,25 @@
                         const failedCount = progress.failed || 0;
                         const skippedCount = progress.skipped || 0;
                         showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`);
+
+                        let localChanged = false;
                         
                         // Optimistic UI update for assign/unassign - update local data instantly
                         if (action === 'assign_owner' || action === 'unassign_owner') {
                             const newOwnerName = action === 'unassign_owner' ? null : 
                                 (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
                             const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
-                            applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName);
+                            applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName, { render: false });
+                            localChanged = true;
                         }
 
                         // Optimistic UI update for enable/disable
                         if (action === 'enable' || action === 'disable') {
                             const newEnable = action === 'enable';
                             clients.forEach(c => {
-                                patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable });
+                                patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable }, { render: false });
                             });
+                            localChanged = true;
                         }
 
                         // Optimistic UI update for add_days
@@ -4220,8 +4200,9 @@
                             const daysDelta = parseInt(data.days_delta) || 0;
                             if (daysDelta > 0) {
                                 clients.forEach(c => {
-                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta });
+                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta }, { render: false });
                                 });
+                                localChanged = true;
                             }
                         }
 
@@ -4230,20 +4211,23 @@
                             const volDelta = parseInt(data.volume_gb_delta) || 0;
                             if (volDelta > 0) {
                                 clients.forEach(c => {
-                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta });
+                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta }, { render: false });
                                 });
+                                localChanged = true;
                             }
                         }
 
                         // Optimistic UI update for delete - remove from local data instantly
                         if (action === 'delete') {
                             clients.forEach(c => {
-                                removeLocalClient(c.server_id, c.inbound_id, c.email);
+                                removeLocalClient(c.server_id, c.inbound_id, c.email, { render: false });
                             });
+                            localChanged = true;
                         }
                         
                         // Clear selection and re-render
                         clearBulkSelection();
+                        if (localChanged) applyFilters();
                         // Background sync (silent) - UI already updated optimistically
                         setTimeout(() => refreshData(true), 500);
                         return;
