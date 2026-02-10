@@ -1492,7 +1492,16 @@ def _extract_backup_bytes_from_response(resp: requests.Response) -> tuple[bytes 
     if resp.status_code != 200:
         return None, None, f"HTTP {resp.status_code}"
 
+    if not resp.content:
+        return None, None, "Empty response (status 200)"
+
     return resp.content, _guess_backup_extension(content_type, filename_hint), None
+
+
+def _is_sqlite_payload(payload: bytes | None) -> bool:
+    if not payload or len(payload) < 16:
+        return False
+    return payload.startswith(b"SQLite format 3")
 
 
 def _collect_backup_endpoints(panel_type: str) -> list[tuple[str, str]]:
@@ -1503,6 +1512,8 @@ def _collect_backup_endpoints(panel_type: str) -> list[tuple[str, str]]:
         candidates.extend([
             ('POST', '/panel/api/backup'),
             ('GET', '/panel/api/backup'),
+            ('GET', '/panel/api/server/getDb'),
+            ('GET', '/server/getDb'),
         ])
     if normalized in ('alireza', 'alireza0', 'xui', 'x-ui', 'auto', ''):
         candidates.extend([
@@ -1510,15 +1521,21 @@ def _collect_backup_endpoints(panel_type: str) -> list[tuple[str, str]]:
             ('GET', '/xui/API/backup'),
             ('POST', '/xui/api/backup'),
             ('GET', '/xui/api/backup'),
+            ('GET', '/xui/server/getDb'),
+            ('GET', '/api/server/getDb'),
         ])
 
     candidates.extend([
         ('POST', '/panel/api/backup'),
         ('GET', '/panel/api/backup'),
+        ('GET', '/panel/api/server/getDb'),
+        ('GET', '/server/getDb'),
         ('POST', '/xui/API/backup'),
         ('GET', '/xui/API/backup'),
         ('POST', '/xui/api/backup'),
         ('GET', '/xui/api/backup'),
+        ('GET', '/xui/server/getDb'),
+        ('GET', '/api/server/getDb'),
     ])
 
     seen = set()
@@ -1550,6 +1567,9 @@ def _fetch_xui_backup(session_obj: requests.Session, server: 'Server') -> tuple[
 
         payload, ext, err = _extract_backup_bytes_from_response(resp)
         if payload:
+            if (template.endswith('/getDb') or (ext or '').lower() == '.db') and not _is_sqlite_payload(payload):
+                errors.append(f"{method} {template}: Invalid DB payload")
+                continue
             return payload, ext, None
         errors.append(f"{method} {template}: {err or resp.status_code}")
 
@@ -1596,12 +1616,12 @@ def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
         for server in servers:
             session_obj, error = get_xui_session(server)
             if error:
-                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': error})
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"X-UI Connection Failed: {error}"})
                 continue
 
             payload, ext, err = _fetch_xui_backup(session_obj, server)
             if err or not payload:
-                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': err or 'Backup failed'})
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"X-UI Backup Download Failed: {err or 'Empty response'}"})
                 continue
 
             safe_server_name = secure_filename(server.name) or f"server_{server.id}"
@@ -1616,12 +1636,12 @@ def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
             try:
                 resp = _telegram_send_document(token, chat_id, file_path, caption, proxies=proxies)
             except Exception as exc:
-                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': str(exc)})
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"Telegram Upload Failed (Network/Proxy): {str(exc)}"})
                 continue
 
             resp_json, resp_err = _safe_response_json(resp)
             if resp_err:
-                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': resp_err})
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"Telegram API Error: {resp_err}"})
                 continue
             if isinstance(resp_json, dict) and resp_json.get('ok'):
                 results.append({'server_id': server.id, 'server_name': server.name, 'success': True})
@@ -1629,11 +1649,23 @@ def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
                 msg = None
                 if isinstance(resp_json, dict):
                     msg = resp_json.get('description') or resp_json.get('error')
-                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': msg or 'Telegram send failed'})
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"Telegram API Refused: {msg or 'Unknown error'}"})
 
         success_count = sum(1 for r in results if r.get('success'))
+        
+        # specific top-level error generation
+        main_error = None
+        if success_count == 0 and results:
+            # Collect unique error prefixes
+            errs = sorted(list(set(r.get('error', 'Unknown') for r in results)))
+            if len(errs) == 1:
+                main_error = errs[0]
+            else:
+                main_error = f"All backups failed. Errors: {'; '.join(errs[:2])}..."
+
         return {
             'success': success_count > 0,
+            'error': main_error,
             'results': results,
             'success_count': success_count,
             'total': len(results)
@@ -3194,6 +3226,10 @@ def get_xui_session(server):
             XUI_SESSION_CACHE.pop(server.id, None)
 
     session_obj = requests.Session()
+    # Explicitly disable proxies for X-UI connections as requested
+    session_obj.trust_env = False
+    session_obj.proxies = {'http': None, 'https': None}
+
     try:
         base, webpath = extract_base_and_webpath(server.host)
         normalized_type = (getattr(server, 'panel_type', None) or 'auto').strip().lower()

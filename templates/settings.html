@@ -1351,7 +1351,18 @@
                 showToast(`Backup sent (${done}/${total})`);
                 loadTelegramBackupSettings();
             } else {
-                showToast(data.error || 'Backup failed', 'error');
+                let message = data.error || 'Backup failed';
+                if (Array.isArray(data.results) && data.results.length) {
+                    const details = data.results
+                        .filter(item => !item.success && item.error)
+                        .map(item => `${item.server_name || 'Server'}: ${item.error}`)
+                        .slice(0, 4)
+                        .join('\n');
+                    if (details) {
+                        message = `${message}\n${details}`;
+                    }
+                }
+                showToast(message, 'error');
             }
         } catch (e) {
             showToast('Network error', 'error');
