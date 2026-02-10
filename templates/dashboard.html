@@ -3039,10 +3039,6 @@
             inboundSelect.appendChild(option);
         }
 
-        // Refresh server data in the background to keep last-user info live.
-        queueSilentServerRefresh(serverId, 0);
-        // Fetch last users from cache-only endpoint (fast) to keep it accurate.
-        fetchLastUsersForServer(serverId);
     }
 
     function onInboundSelected() {
@@ -3063,38 +3059,59 @@
             const data = JSON.parse(select.value);
             const serverKey = String(data.server_id);
             const inboundKey = String(data.inbound_id);
-            const cachedMap = lastUserCacheByServer.get(serverKey) || {};
-            const cachedLast = Object.prototype.hasOwnProperty.call(cachedMap, inboundKey)
-                ? cachedMap[inboundKey]
-                : undefined;
 
-            if (cachedLast !== undefined) {
-                if (cachedLast) {
-                    display.innerText = `Last User: ${cachedLast}`;
-                    display.style.color = '#fbbf24';
-                    display.title = cachedLast;
-                } else {
-                    display.innerText = 'Last User: None';
-                    display.style.color = 'var(--text-secondary)';
-                    display.title = '';
-                }
-                return;
-            }
+            // 1) Show from local cache instantly (zero latency)
+            showLastUserFromCache(serverKey, inboundKey, display);
 
-            const inbound = getCachedInboundsForServer(data.server_id).find(i => i.id == data.inbound_id);
-            if (inbound && inbound.clients && inbound.clients.length > 0) {
-                const lastClient = inbound.clients[inbound.clients.length - 1];
-                display.innerText = `Last User: ${lastClient.email}`;
+            // 2) Fire a lightweight background fetch to refresh the cache
+            //    (catches accounts created in the last few minutes)
+            fetchLastUsersForServer(data.server_id).then(() => {
+                // Re-apply if the same inbound is still selected
+                const curVal = select.value;
+                if (!curVal) return;
+                try {
+                    const cur = JSON.parse(curVal);
+                    if (String(cur.server_id) === serverKey && String(cur.inbound_id) === inboundKey) {
+                        showLastUserFromCache(serverKey, inboundKey, display);
+                    }
+                } catch (_) {}
+            });
+        } catch (e) {
+            console.error(e);
+            display.innerText = 'Last User: Error';
+            display.style.color = 'var(--text-secondary)';
+            display.title = '';
+        }
+    }
+
+    function showLastUserFromCache(serverKey, inboundKey, display) {
+        const cachedMap = lastUserCacheByServer.get(serverKey) || {};
+        const cachedLast = Object.prototype.hasOwnProperty.call(cachedMap, inboundKey)
+            ? cachedMap[inboundKey]
+            : undefined;
+
+        if (cachedLast !== undefined) {
+            if (cachedLast) {
+                display.innerText = `Last User: ${cachedLast}`;
                 display.style.color = '#fbbf24';
-                display.title = lastClient.email;
+                display.title = cachedLast;
             } else {
                 display.innerText = 'Last User: None';
                 display.style.color = 'var(--text-secondary)';
                 display.title = '';
             }
-        } catch (e) {
-            console.error(e);
-            display.innerText = 'Last User: Error';
+            return;
+        }
+
+        // Fallback: read from cached inbounds data
+        const inbound = getCachedInboundsForServer(parseInt(serverKey)).find(i => String(i.id) === inboundKey);
+        if (inbound && inbound.clients && inbound.clients.length > 0) {
+            const lastClient = inbound.clients[inbound.clients.length - 1];
+            display.innerText = `Last User: ${lastClient.email}`;
+            display.style.color = '#fbbf24';
+            display.title = lastClient.email;
+        } else {
+            display.innerText = 'Last User: None';
             display.style.color = 'var(--text-secondary)';
             display.title = '';
         }
@@ -3151,6 +3168,15 @@
             const data = await response.json();
             if (data.success) {
                 showToast('Client created successfully');
+
+                // Instantly update local last-user cache so the next
+                // inbound selection shows this new email without any fetch.
+                const sid = String(inboundData.server_id);
+                const iid = String(inboundData.inbound_id);
+                const map = lastUserCacheByServer.get(sid) || {};
+                map[iid] = email;
+                lastUserCacheByServer.set(sid, map);
+
                 closeAddClientModal();
                 // Always refresh only the affected server immediately
                 refreshData(true, { force: true, wait: true, serverId: inboundData.server_id });
