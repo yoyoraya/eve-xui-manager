@@ -1156,6 +1156,8 @@
         loadServers().then(() => {
             // Kick off a background refresh (non-blocking) and render cached data immediately.
             refreshData(true, { mode: 'full', poll: true }).finally(() => hideLoading());
+            // Pre-fetch last-user data for all servers (silently) so adds are fast
+            prefetchAllLastUsers();
         });
         document.getElementById('global-search-input').addEventListener('input', () => performGlobalSearch(false));
         if (IS_SUPERADMIN) {
@@ -1164,6 +1166,12 @@
         }
         onBulkActionChanged();
     });
+
+    async function prefetchAllLastUsers() {
+        if (!Array.isArray(serverListCache) || !serverListCache.length) return;
+        // Fetch last users for all servers in parallel, silently
+        Promise.allSettled(serverListCache.map(srv => fetchLastUsersForServer(srv.id)));
+    }
 
     function toggleAutoRefresh() {
         const toggle = document.getElementById('auto-refresh-toggle');
@@ -3039,6 +3047,8 @@
             inboundSelect.appendChild(option);
         }
 
+        // Fire a silent background fetch for this server's last users (no await, no UI block)
+        fetchLastUsersForServer(serverId).catch(() => {});
     }
 
     function onInboundSelected() {
