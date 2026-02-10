@@ -1036,6 +1036,7 @@
     let refreshJobPollTimer = null;
     const refreshJobContext = new Map(); // jobId -> { serverId?: number|null }
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
+    const lastUserCacheByServer = new Map(); // serverId -> { inboundId: email|null }
 
     const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days
     const expandedInboundKeys = new Set(); // `${server_id}:${inbound_id}` -> expanded client list
@@ -1283,6 +1284,92 @@
         };
 
         allInboundsData = merge(allInboundsData);
+        inboundsData = allInboundsData;
+    }
+
+    function getCachedInboundsForServer(serverId) {
+        const sid = parseInt(serverId);
+        if (!Number.isFinite(sid)) return [];
+        const list = (Array.isArray(allInboundsData) && allInboundsData.length)
+            ? allInboundsData
+            : (Array.isArray(inboundsData) ? inboundsData : []);
+        return list.filter(i => i && i.server_id == sid);
+    }
+
+    function updateLastUserCacheFromInbounds(serverId, serverInbounds) {
+        const sid = String(serverId || '');
+        if (!sid) return;
+        const map = {};
+        (serverInbounds || []).forEach(inbound => {
+            const inboundId = inbound && inbound.id != null ? String(inbound.id) : null;
+            if (!inboundId) return;
+            const clients = Array.isArray(inbound.clients) ? inbound.clients : [];
+            const lastClient = clients.length > 0 ? clients[clients.length - 1] : null;
+            map[inboundId] = lastClient && lastClient.email ? lastClient.email : null;
+        });
+        lastUserCacheByServer.set(sid, map);
+    }
+
+    async function fetchLastUsersForServer(serverId) {
+        const sid = String(serverId || '');
+        if (!sid) return;
+
+        try {
+            const resp = await fetch(`/api/server/${sid}/last-users`);
+            const data = await resp.json();
+            if (!data || !data.success || !data.last_users) return;
+
+            lastUserCacheByServer.set(String(data.server_id), data.last_users || {});
+
+            const serverSelect = document.getElementById('add-client-server-select');
+            const inboundSelect = document.getElementById('add-client-inbound-select');
+            if (serverSelect && inboundSelect && serverSelect.value === String(data.server_id)) {
+                onInboundSelected();
+            }
+        } catch (e) {
+            // ignore; cache-only endpoint should be fast, but don't block UX
+        }
+    }
+
+    function refreshAddClientInboundOptions(serverId) {
+        const modal = document.getElementById('add-client-modal');
+        if (!modal || modal.classList.contains('hidden')) return;
+
+        const serverSelect = document.getElementById('add-client-server-select');
+        const inboundSelect = document.getElementById('add-client-inbound-select');
+        if (!serverSelect || !inboundSelect) return;
+
+        const activeServerId = serverSelect.value;
+        if (!activeServerId || String(activeServerId) !== String(serverId)) return;
+
+        const prevValue = inboundSelect.value;
+        inboundSelect.innerHTML = '<option value="">-- Select Inbound --</option>';
+
+        const serverInbounds = getCachedInboundsForServer(activeServerId);
+        updateLastUserCacheFromInbounds(activeServerId, serverInbounds);
+        if (serverInbounds.length > 0) {
+            serverInbounds.forEach(inbound => {
+                const option = document.createElement('option');
+                option.value = JSON.stringify({
+                    server_id: inbound.server_id,
+                    inbound_id: inbound.id
+                });
+                const activeClients = inbound.clients.filter(c => c.enable).length;
+                option.textContent = `${inbound.remark} - ${inbound.protocol} (${inbound.port}) [${activeClients}]`;
+                inboundSelect.appendChild(option);
+            });
+        } else {
+            const option = document.createElement('option');
+            option.textContent = 'No inbounds available';
+            option.disabled = true;
+            inboundSelect.appendChild(option);
+        }
+
+        if (prevValue) {
+            inboundSelect.value = prevValue;
+        }
+
+        onInboundSelected();
     }
 
     function patchLocalClient(serverId, inboundId, email, patch, options = {}) {
@@ -1529,6 +1616,8 @@
 
             if (data && data.success) {
                 mergeServerInboundsIntoCache(sid, data.inbounds || []);
+
+                refreshAddClientInboundOptions(sid);
 
                 // Keep per-server status/errors in sync for empty/error rendering.
                 if (data.server_status && typeof data.server_status === 'object') {
@@ -2221,6 +2310,9 @@
     }
 
     async function toggleClient(serverId, inboundId, email, enable) {
+        // Optimistic update: apply immediately to avoid waiting for refresh
+        patchLocalClient(serverId, inboundId, email, { enable: enable });
+
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/toggle`, {
                 method: 'POST',
@@ -2231,13 +2323,15 @@
             const data = await response.json();
             if (data.success) {
                 showToast(enable ? 'Client enabled' : 'Client disabled');
-                // Update UI instantly, then sync from server cache in background.
-                patchLocalClient(serverId, inboundId, email, { enable: enable });
                 queueSilentServerRefresh(serverId);
             } else {
+                // Revert on failure
+                patchLocalClient(serverId, inboundId, email, { enable: !enable });
                 showToast(data.error || 'Error', 'error');
             }
         } catch (error) {
+            // Revert on error
+            patchLocalClient(serverId, inboundId, email, { enable: !enable });
             showToast('Error: ' + error.message, 'error');
         }
     }
@@ -2291,6 +2385,14 @@
             return;
         }
 
+        // Optimistic update: reset traffic immediately
+        const patch = { up: 0, down: 0 };
+        if (volume > 0) {
+            patch.totalGB = volume * 1024 * 1024 * 1024;
+        }
+        patchLocalClient(serverId, inboundId, email, patch);
+        closeResetModal();
+
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/reset`, {
                 method: 'POST',
@@ -2307,18 +2409,18 @@
             const data = await response.json();
             if (data.success) {
                 showToast('Traffic reset');
-                closeResetModal();
                 if (typeof data.remaining_credit !== 'undefined') {
                     updateWalletDisplay(data.remaining_credit);
                 }
-                // Update UI instantly (best-effort), then sync from server cache in background.
-                patchLocalClient(serverId, inboundId, email, { up: 0, down: 0 });
                 queueSilentServerRefresh(serverId);
             } else {
                 showToast(data.error || 'Error', 'error');
+                // Refresh to get correct state on error
+                queueSilentServerRefresh(serverId);
             }
         } catch (error) {
             showToast('Error: ' + error.message, 'error');
+            queueSilentServerRefresh(serverId);
         }
     }
 
@@ -2916,8 +3018,9 @@
         }
         
         if (!serverId) return;
-        
-        const serverInbounds = inboundsData.filter(i => i.server_id == serverId);
+
+        const serverInbounds = getCachedInboundsForServer(serverId);
+        updateLastUserCacheFromInbounds(serverId, serverInbounds);
         if (serverInbounds.length > 0) {
             serverInbounds.forEach(inbound => {
                 const option = document.createElement('option');
@@ -2935,6 +3038,11 @@
             option.disabled = true;
             inboundSelect.appendChild(option);
         }
+
+        // Refresh server data in the background to keep last-user info live.
+        queueSilentServerRefresh(serverId, 0);
+        // Fetch last users from cache-only endpoint (fast) to keep it accurate.
+        fetchLastUsersForServer(serverId);
     }
 
     function onInboundSelected() {
@@ -2953,7 +3061,27 @@
 
         try {
             const data = JSON.parse(select.value);
-            const inbound = inboundsData.find(i => i.id == data.inbound_id && i.server_id == data.server_id);
+            const serverKey = String(data.server_id);
+            const inboundKey = String(data.inbound_id);
+            const cachedMap = lastUserCacheByServer.get(serverKey) || {};
+            const cachedLast = Object.prototype.hasOwnProperty.call(cachedMap, inboundKey)
+                ? cachedMap[inboundKey]
+                : undefined;
+
+            if (cachedLast !== undefined) {
+                if (cachedLast) {
+                    display.innerText = `Last User: ${cachedLast}`;
+                    display.style.color = '#fbbf24';
+                    display.title = cachedLast;
+                } else {
+                    display.innerText = 'Last User: None';
+                    display.style.color = 'var(--text-secondary)';
+                    display.title = '';
+                }
+                return;
+            }
+
+            const inbound = getCachedInboundsForServer(data.server_id).find(i => i.id == data.inbound_id);
             if (inbound && inbound.clients && inbound.clients.length > 0) {
                 const lastClient = inbound.clients[inbound.clients.length - 1];
                 display.innerText = `Last User: ${lastClient.email}`;
@@ -4359,6 +4487,17 @@
             return;
         }
 
+        // Get reseller name for optimistic update
+        const resellerSelect = document.getElementById('assign-reseller-select');
+        const resellerLabel = document.getElementById('assign-reseller-label');
+        const resellerName = (resellerSelect && resellerLabel) ? resellerLabel.textContent : null;
+
+        // Optimistic update: apply owner immediately
+        const rid = parseInt(resellerId);
+        const clients = [{ server_id: parseInt(serverId), inbound_id: parseInt(inboundId), email: email }];
+        applyOwnerUpdateToLocal(clients, rid, (rid === 0 ? null : resellerName), { render: true });
+        closeAssignModal();
+
         try {
             const response = await fetch('/api/assign-client', {
                 method: 'POST',
@@ -4366,7 +4505,7 @@
                 body: JSON.stringify({
                     server_id: parseInt(serverId),
                     email: email,
-                    reseller_id: parseInt(resellerId),
+                    reseller_id: rid,
                     inbound_id: (inboundId === null || inboundId === undefined || String(inboundId).trim() === '') ? null : parseInt(inboundId),
                     client_uuid: (clientUuid === null || clientUuid === undefined || String(clientUuid).trim() === '') ? null : String(clientUuid)
                 })
@@ -4375,13 +4514,15 @@
             const result = await response.json();
             if (result.success) {
                 showToast('Client assigned successfully');
-                closeAssignModal();
-                refreshData();
+                queueSilentServerRefresh(serverId);
             } else {
                 showToast(result.error || 'Error assigning client', 'error');
+                // Refresh to get correct state on error
+                queueSilentServerRefresh(serverId);
             }
         } catch (error) {
             showToast('Error assigning client', 'error');
+            queueSilentServerRefresh(serverId);
         }
     }
 

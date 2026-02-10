@@ -4567,6 +4567,39 @@ def api_refresh_single_server(server_id):
     }), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
 
+@app.route('/api/server/<int:server_id>/last-users')
+@login_required
+def api_server_last_users(server_id):
+    """Return last user per inbound from cache only (fast path)."""
+    last_users = {}
+    for inbound in (GLOBAL_SERVER_DATA.get('inbounds') or []):
+        try:
+            if int(inbound.get('server_id', -1)) != int(server_id):
+                continue
+        except Exception:
+            continue
+
+        inbound_id = inbound.get('id')
+        if inbound_id is None:
+            continue
+
+        last_email = None
+        clients = inbound.get('clients') or []
+        if isinstance(clients, list) and clients:
+            last_client = clients[-1] if isinstance(clients[-1], dict) else None
+            if last_client and last_client.get('email'):
+                last_email = last_client.get('email')
+
+        last_users[str(inbound_id)] = last_email
+
+    return jsonify({
+        'success': True,
+        'server_id': server_id,
+        'last_users': last_users,
+        'last_update': GLOBAL_SERVER_DATA.get('last_update')
+    })
+
+
 @app.route('/settings')
 @login_required
 def settings_page():

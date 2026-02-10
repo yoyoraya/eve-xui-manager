@@ -1365,20 +1365,20 @@
 
         function stageToHuman(stage) {
             const s = (stage || '').toString();
-            if (!s) return 'Starting...';
-            if (s === 'queued') return 'Queued...';
-            if (s === 'starting') return 'Starting...';
-            if (s === 'loading_settings') return 'Loading settings...';
-            if (s === 'building_proxy') return 'Preparing Telegram connection...';
-            if (s === 'fetching_servers') return 'Loading servers...';
-            if (s.startsWith('xui_login:')) return `Logging into X-UI: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('xui_download_backup:')) return `Downloading backup: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('telegram_upload:')) return `Uploading to Telegram: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('server_done:')) return `Done: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('xui_failed:')) return `X-UI failed: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('telegram_failed:')) return `Telegram failed: ${s.split(':').slice(1).join(':')}`;
-            if (s === 'done') return 'Completed';
-            if (s === 'error') return 'Failed';
+            if (!s) return '🚀 Starting...';
+            if (s === 'queued') return '⏳ Queued...';
+            if (s === 'starting') return '🚀 Starting operation...';
+            if (s === 'loading_settings') return '⚙️ Loading settings...';
+            if (s === 'building_proxy') return '🔗 Connecting to Telegram...';
+            if (s === 'fetching_servers') return '📡 Fetching server list...';
+            if (s.startsWith('xui_login:')) return `🔐 Logging into: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('xui_download_backup:')) return `⬇️ Downloading backup from: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('telegram_upload:')) return `⬆️ Uploading to Telegram: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('server_done:')) return `✅ Finished: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('xui_failed:')) return `❌ Server error: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('telegram_failed:')) return `❌ Telegram error: ${s.split(':').slice(1).join(':')}`;
+            if (s === 'done') return '✅ Completed';
+            if (s === 'error') return '❌ Failed';
             return s;
         }
 
@@ -1386,7 +1386,7 @@
         let jobId = null;
 
         try {
-            setProgress(true, 0, 0, 'Starting backup...');
+            setProgress(true, 0, 0, '🚀 Starting backup...');
             const startRes = await fetch('/api/telegram-backup/now', { method: 'POST' });
             const startData = await startRes.json();
             if (!startData.success || !startData.job_id) {
@@ -1401,7 +1401,7 @@
                     const res = await fetch(`/api/telegram-backup/job/${jobId}`, { method: 'GET' });
                     const data = await res.json();
                     if (!data.success || !data.job) {
-                        setProgress(true, 0, 0, 'Waiting for status...');
+                        setProgress(true, 0, 0, '⏳ Waiting for status...');
                         return;
                     }
 
@@ -1438,7 +1438,7 @@
                     }
                 } catch (e) {
                     // keep polling; transient error
-                    setProgress(true, 0, 0, 'Polling...');
+                    setProgress(true, 0, 0, '🔄 Checking status...');
                 }
             }
 
