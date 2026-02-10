@@ -1409,6 +1409,32 @@
         return changed;
     }
 
+    // Rename a client locally (optimistic) to avoid waiting for refresh.
+    function renameLocalClient(serverId, inboundId, oldEmail, newEmail, options = {}) {
+        const sid = parseInt(serverId);
+        const iid = String(inboundId);
+        const oldEm = String(oldEmail || '').toLowerCase();
+        const newEm = String(newEmail || '').trim();
+        if (!Number.isFinite(sid) || !iid || !oldEm || !newEm) return false;
+
+        const shouldRender = (options && Object.prototype.hasOwnProperty.call(options, 'render')) ? Boolean(options.render) : true;
+
+        let changed = false;
+        for (const inbound of (allInboundsData || [])) {
+            if (parseInt(inbound?.server_id) !== sid) continue;
+            if (String(inbound?.id) !== iid) continue;
+            const clients = Array.isArray(inbound.clients) ? inbound.clients : [];
+            const client = clients.find(c => String(c?.email || '').toLowerCase() === oldEm);
+            if (!client) break;
+            client.email = newEm;
+            changed = true;
+            break;
+        }
+
+        if (changed && shouldRender) applyFilters();
+        return changed;
+    }
+
     // Helper: format expiryTimestamp (ms) to display string
     function _formatExpiryForDisplay(ts) {
         if (ts === 0) return 'Unlimited';
@@ -4447,6 +4473,37 @@
             if (result.success) {
                 showToast('Client updated successfully');
                 closeEditClientModal();
+
+                // Optimistic update: apply locally immediately (fast), then reconcile via background refresh.
+                try {
+                    const patch = {};
+
+                    if (Object.prototype.hasOwnProperty.call(payload, 'expiryTime')) {
+                        const ts = Number(payload.expiryTime);
+                        if (Number.isFinite(ts)) patch.expiryTimestamp = ts;
+                    }
+                    if (Object.prototype.hasOwnProperty.call(payload, 'totalGB')) {
+                        const gb = Number(payload.totalGB);
+                        if (Number.isFinite(gb)) {
+                            patch.totalGB = Math.max(0, gb) * 1024 * 1024 * 1024;
+                        }
+                    }
+
+                    const oldKey = makeBulkClientKey(serverId, inboundId, oldEmail);
+                    bulkSelectedClientKeys.delete(oldKey);
+
+                    if (Object.keys(patch).length > 0) {
+                        patchLocalClient(serverId, inboundId, oldEmail, patch, { render: false });
+                    }
+                    if (String(newEmail || '').trim().toLowerCase() !== String(oldEmail || '').trim().toLowerCase()) {
+                        renameLocalClient(serverId, inboundId, oldEmail, newEmail, { render: false });
+                    }
+                    applyFilters();
+                    updateBulkUI();
+                } catch (e) {
+                    // ignore optimistic patch failures
+                }
+
                 queueSilentServerRefresh(serverId);
             } else {
                 showToast(result.error || 'Error updating client', 'error');
@@ -4512,6 +4569,18 @@
             if (result.success) {
                 showToast('Client deleted successfully');
                 closeDeleteClientModal();
+
+                // Optimistic update: remove from local cache immediately, then reconcile in background.
+                try {
+                    const removed = removeLocalClient(serverId, inboundId, email, { render: false });
+                    const key = makeBulkClientKey(serverId, inboundId, email);
+                    bulkSelectedClientKeys.delete(key);
+                    if (removed) applyFilters();
+                    updateBulkUI();
+                } catch (e) {
+                    // ignore
+                }
+
                 queueSilentServerRefresh(serverId);
             } else {
                 showToast(result.error || 'Error deleting client', 'error');

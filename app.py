@@ -110,6 +110,11 @@ BULK_JOBS = {}  # job_id -> job dict
 BULK_JOBS_LOCK = threading.Lock()
 BULK_MAX_JOBS = 50
 
+# Telegram backup job tracking (in-memory; per-process)
+TELEGRAM_BACKUP_JOBS = {}  # job_id -> job dict
+TELEGRAM_BACKUP_JOBS_LOCK = threading.Lock()
+TELEGRAM_BACKUP_MAX_JOBS = 20
+
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 # Allowed HTML tags and attributes for FAQ content (XSS Prevention)
@@ -187,6 +192,96 @@ def _summarize_bulk_job(job):
         'progress', 'error'
     )
     return {k: job.get(k) for k in keys if k in job}
+
+
+def _summarize_telegram_backup_job(job):
+    if not isinstance(job, dict):
+        return None
+    keys = (
+        'id', 'state', 'trigger',
+        'created_at', 'started_at', 'finished_at',
+        'stage', 'progress', 'error',
+        'success_count', 'total', 'results'
+    )
+    return {k: job.get(k) for k in keys if k in job}
+
+
+def _prune_telegram_backup_jobs_locked():
+    if len(TELEGRAM_BACKUP_JOBS) <= TELEGRAM_BACKUP_MAX_JOBS:
+        return
+    jobs_sorted = sorted(TELEGRAM_BACKUP_JOBS.items(), key=lambda kv: kv[1].get('created_at_ts', 0))
+    to_delete = max(0, len(TELEGRAM_BACKUP_JOBS) - TELEGRAM_BACKUP_MAX_JOBS)
+    deleted = 0
+    for job_id, job in jobs_sorted:
+        if deleted >= to_delete:
+            break
+        if job.get('state') in ('done', 'error'):
+            TELEGRAM_BACKUP_JOBS.pop(job_id, None)
+            deleted += 1
+
+
+def _update_telegram_backup_job(job_id: str, **patch):
+    with TELEGRAM_BACKUP_JOBS_LOCK:
+        job = TELEGRAM_BACKUP_JOBS.get(job_id)
+        if not job:
+            return
+        for k, v in patch.items():
+            job[k] = v
+        TELEGRAM_BACKUP_JOBS[job_id] = job
+
+
+def _run_telegram_backup_job(job_id: str):
+    with TELEGRAM_BACKUP_JOBS_LOCK:
+        job = TELEGRAM_BACKUP_JOBS.get(job_id)
+        if not job:
+            return
+        job['state'] = 'running'
+        job['started_at'] = _utc_iso_now()
+        job['stage'] = 'starting'
+        TELEGRAM_BACKUP_JOBS[job_id] = job
+
+    def progress_cb(update: dict):
+        if not isinstance(update, dict):
+            return
+        stage = update.get('stage')
+        progress = update.get('progress')
+        patch = {}
+        if stage is not None:
+            patch['stage'] = stage
+        if progress is not None:
+            patch['progress'] = progress
+        if patch:
+            _update_telegram_backup_job(job_id, **patch)
+
+    try:
+        with app.app_context():
+            result = _run_telegram_backup(trigger=str((TELEGRAM_BACKUP_JOBS.get(job_id) or {}).get('trigger') or 'manual'), progress_cb=progress_cb)
+    except Exception as exc:
+        _update_telegram_backup_job(job_id, state='error', finished_at=_utc_iso_now(), error=str(exc), stage='error')
+        return
+
+    if result.get('success'):
+        _update_telegram_backup_job(
+            job_id,
+            state='done',
+            finished_at=_utc_iso_now(),
+            stage='done',
+            success_count=int(result.get('success_count') or 0),
+            total=int(result.get('total') or 0),
+            results=result.get('results') or [],
+            error=None,
+        )
+    else:
+        _update_telegram_backup_job(
+            job_id,
+            state='error',
+            finished_at=_utc_iso_now(),
+            stage='error',
+            success_count=int(result.get('success_count') or 0),
+            total=int(result.get('total') or 0),
+            results=result.get('results') or [],
+            error=result.get('error') or 'Backup failed',
+        )
 
 
 def _prune_bulk_jobs_locked():
@@ -1576,12 +1671,18 @@ def _fetch_xui_backup(session_obj: requests.Session, server: 'Server') -> tuple[
     return None, None, '; '.join(errors) or 'No backup endpoint succeeded'
 
 
-def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
+def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
     if not TELEGRAM_BACKUP_LOCK.acquire(blocking=False):
         return {'success': False, 'error': 'Backup already running'}
 
     tmp_dir = None
     try:
+        if progress_cb:
+            try:
+                progress_cb({'stage': 'loading_settings', 'progress': {'total': 0, 'processed': 0}})
+            except Exception:
+                pass
+
         settings = _get_telegram_backup_settings()
         enabled = bool(settings.get('enabled'))
         if trigger == 'scheduled' and not enabled:
@@ -1591,6 +1692,12 @@ def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
         chat_id = (settings.get('chat_id') or '').strip()
         if not token or not chat_id:
             return {'success': False, 'error': 'Telegram bot token and chat ID are required'}
+
+        if progress_cb:
+            try:
+                progress_cb({'stage': 'building_proxy'})
+            except Exception:
+                pass
 
         proxies = _build_telegram_proxies(
             bool(settings.get('use_proxy')),
@@ -1610,18 +1717,51 @@ def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
         if not servers:
             return {'success': False, 'error': 'No enabled servers found'}
 
+        if progress_cb:
+            try:
+                progress_cb({'stage': 'fetching_servers', 'progress': {'total': len(servers), 'processed': 0}})
+            except Exception:
+                pass
+
         tmp_dir = tempfile.mkdtemp(prefix='telegram_backup_', dir=TELEGRAM_BACKUP_TMP_DIR)
         results = []
 
+        total_servers = len(servers)
+        processed_servers = 0
+
         for server in servers:
+            if progress_cb:
+                try:
+                    progress_cb({'stage': f"xui_login:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                except Exception:
+                    pass
+
             session_obj, error = get_xui_session(server)
             if error:
                 results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"X-UI Connection Failed: {error}"})
+                processed_servers += 1
+                if progress_cb:
+                    try:
+                        progress_cb({'stage': f"xui_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                    except Exception:
+                        pass
                 continue
+
+            if progress_cb:
+                try:
+                    progress_cb({'stage': f"xui_download_backup:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                except Exception:
+                    pass
 
             payload, ext, err = _fetch_xui_backup(session_obj, server)
             if err or not payload:
                 results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"X-UI Backup Download Failed: {err or 'Empty response'}"})
+                processed_servers += 1
+                if progress_cb:
+                    try:
+                        progress_cb({'stage': f"xui_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                    except Exception:
+                        pass
                 continue
 
             safe_server_name = secure_filename(server.name) or f"server_{server.id}"
@@ -1633,10 +1773,21 @@ def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
                 handle.write(payload)
 
             caption = f"{server.name} - {format_jalali(now) or now.isoformat()}"
+            if progress_cb:
+                try:
+                    progress_cb({'stage': f"telegram_upload:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                except Exception:
+                    pass
             try:
                 resp = _telegram_send_document(token, chat_id, file_path, caption, proxies=proxies)
             except Exception as exc:
                 results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"Telegram Upload Failed (Network/Proxy): {str(exc)}"})
+                processed_servers += 1
+                if progress_cb:
+                    try:
+                        progress_cb({'stage': f"telegram_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                    except Exception:
+                        pass
                 continue
 
             resp_json, resp_err = _safe_response_json(resp)
@@ -1650,6 +1801,13 @@ def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
                 if isinstance(resp_json, dict):
                     msg = resp_json.get('description') or resp_json.get('error')
                 results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"Telegram API Refused: {msg or 'Unknown error'}"})
+
+            processed_servers += 1
+            if progress_cb:
+                try:
+                    progress_cb({'stage': f"server_done:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                except Exception:
+                    pass
 
         success_count = sum(1 for r in results if r.get('success'))
         
@@ -9689,10 +9847,40 @@ def test_telegram_backup_settings():
 @app.route('/api/telegram-backup/now', methods=['POST'])
 @superadmin_required
 def telegram_backup_now():
-    result = _run_telegram_backup(trigger='manual')
-    if not result.get('success'):
-        return jsonify({'success': False, 'error': result.get('error') or 'Backup failed'}), 400
-    return jsonify({'success': True, **result})
+    # Enqueue as an async job so UI can show stage/progress.
+    job_id = secrets.token_hex(8)
+    job = {
+        'id': job_id,
+        'state': 'queued',
+        'trigger': 'manual',
+        'created_at': _utc_iso_now(),
+        'created_at_ts': time.time(),
+        'started_at': None,
+        'finished_at': None,
+        'stage': 'queued',
+        'progress': {'total': 0, 'processed': 0},
+        'error': None,
+        'success_count': 0,
+        'total': 0,
+        'results': [],
+    }
+    with TELEGRAM_BACKUP_JOBS_LOCK:
+        TELEGRAM_BACKUP_JOBS[job_id] = job
+        _prune_telegram_backup_jobs_locked()
+
+    t = threading.Thread(target=_run_telegram_backup_job, args=(job_id,), daemon=True)
+    t.start()
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/telegram-backup/job/<job_id>', methods=['GET'])
+@superadmin_required
+def telegram_backup_job_status(job_id):
+    with TELEGRAM_BACKUP_JOBS_LOCK:
+        job = TELEGRAM_BACKUP_JOBS.get(job_id)
+        if not job:
+            return jsonify({'success': False, 'error': 'Job not found'}), 404
+        return jsonify({'success': True, 'job': _summarize_telegram_backup_job(job)})
 
 @app.route('/api/settings/ssl', methods=['GET'])
 @login_required

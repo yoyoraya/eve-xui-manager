@@ -182,15 +182,22 @@
                         <p class="text-secondary">Send X-UI panel backups to Telegram on a schedule.</p>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
-                        <button class="btn btn-secondary" onclick="testTelegramBackupSettings()">
+                        <button class="btn btn-secondary" onclick="testTelegramBackupSettings(this)">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
                             Test Connection
                         </button>
-                        <button class="btn btn-primary" onclick="triggerTelegramBackupNow()">
+                        <button class="btn btn-primary" onclick="triggerTelegramBackupNow(this)">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"></path><path d="M22 2L15 22l-4-9-9-4 20-7z"></path></svg>
                             Backup Now
                         </button>
                     </div>
+                </div>
+
+                <div id="telegram-backup-progress" style="display:none; margin-top: 10px;">
+                    <div style="width: 100%; background: var(--panel-bg); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden;">
+                        <div id="telegram-backup-progress-bar" style="height: 8px; width: 0%; background: var(--primary);"></div>
+                    </div>
+                    <div id="telegram-backup-progress-text" style="margin-top: 6px; font-size: 0.85rem; color: var(--text-secondary);">Waiting...</div>
                 </div>
 
                 <div class="form-group">
@@ -1314,8 +1321,8 @@
         }
     }
 
-    async function testTelegramBackupSettings() {
-        const btn = event.currentTarget;
+    async function testTelegramBackupSettings(btnEl) {
+        const btn = btnEl || (typeof event !== 'undefined' ? event.currentTarget : null);
         const originalText = btn.innerHTML;
         btn.innerHTML = 'Testing...';
         btn.disabled = true;
@@ -1336,34 +1343,107 @@
         }
     }
 
-    async function triggerTelegramBackupNow() {
-        const btn = event.currentTarget;
+    async function triggerTelegramBackupNow(btnEl) {
+        const btn = btnEl || (typeof event !== 'undefined' ? event.currentTarget : null);
         const originalText = btn.innerHTML;
         btn.innerHTML = 'Running...';
         btn.disabled = true;
 
-        try {
-            const res = await fetch('/api/telegram-backup/now', { method: 'POST' });
-            const data = await res.json();
-            if (data.success) {
-                const done = data.success_count || 0;
-                const total = data.total || 0;
-                showToast(`Backup sent (${done}/${total})`);
-                loadTelegramBackupSettings();
-            } else {
-                let message = data.error || 'Backup failed';
-                if (Array.isArray(data.results) && data.results.length) {
-                    const details = data.results
-                        .filter(item => !item.success && item.error)
-                        .map(item => `${item.server_name || 'Server'}: ${item.error}`)
-                        .slice(0, 4)
-                        .join('\n');
-                    if (details) {
-                        message = `${message}\n${details}`;
-                    }
-                }
-                showToast(message, 'error');
+        const wrap = document.getElementById('telegram-backup-progress');
+        const bar = document.getElementById('telegram-backup-progress-bar');
+        const text = document.getElementById('telegram-backup-progress-text');
+
+        function setProgress(visible, processed = 0, total = 0, stageText = '') {
+            if (wrap) wrap.style.display = visible ? '' : 'none';
+            const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : (visible ? 10 : 0);
+            if (bar) bar.style.width = `${pct}%`;
+            if (text) {
+                const t = total > 0 ? `${processed}/${total}` : '';
+                text.textContent = stageText ? (t ? `${stageText} (${t})` : stageText) : (t || '');
             }
+        }
+
+        function stageToHuman(stage) {
+            const s = (stage || '').toString();
+            if (!s) return 'Starting...';
+            if (s === 'queued') return 'Queued...';
+            if (s === 'starting') return 'Starting...';
+            if (s === 'loading_settings') return 'Loading settings...';
+            if (s === 'building_proxy') return 'Preparing Telegram connection...';
+            if (s === 'fetching_servers') return 'Loading servers...';
+            if (s.startsWith('xui_login:')) return `Logging into X-UI: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('xui_download_backup:')) return `Downloading backup: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('telegram_upload:')) return `Uploading to Telegram: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('server_done:')) return `Done: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('xui_failed:')) return `X-UI failed: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('telegram_failed:')) return `Telegram failed: ${s.split(':').slice(1).join(':')}`;
+            if (s === 'done') return 'Completed';
+            if (s === 'error') return 'Failed';
+            return s;
+        }
+
+        let pollTimer = null;
+        let jobId = null;
+
+        try {
+            setProgress(true, 0, 0, 'Starting backup...');
+            const startRes = await fetch('/api/telegram-backup/now', { method: 'POST' });
+            const startData = await startRes.json();
+            if (!startData.success || !startData.job_id) {
+                showToast(startData.error || 'Backup failed to start', 'error');
+                return;
+            }
+
+            jobId = startData.job_id;
+
+            async function poll() {
+                try {
+                    const res = await fetch(`/api/telegram-backup/job/${jobId}`, { method: 'GET' });
+                    const data = await res.json();
+                    if (!data.success || !data.job) {
+                        setProgress(true, 0, 0, 'Waiting for status...');
+                        return;
+                    }
+
+                    const job = data.job;
+                    const progress = job.progress || {};
+                    const total = progress.total || job.total || 0;
+                    const processed = progress.processed || 0;
+                    const stageText = stageToHuman(job.stage);
+                    setProgress(true, processed, total, stageText);
+
+                    if (job.state === 'done') {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        setProgress(false);
+                        const done = job.success_count || 0;
+                        const all = job.total || total || 0;
+                        showToast(`Backup sent (${done}/${all})`);
+                        loadTelegramBackupSettings();
+                    }
+                    if (job.state === 'error') {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        let message = job.error || 'Backup failed';
+                        if (Array.isArray(job.results) && job.results.length) {
+                            const details = job.results
+                                .filter(item => !item.success && item.error)
+                                .map(item => `${item.server_name || 'Server'}: ${item.error}`)
+                                .slice(0, 6)
+                                .join('\n');
+                            if (details) message = `${message}\n${details}`;
+                        }
+                        setProgress(false);
+                        showToast(message, 'error');
+                    }
+                } catch (e) {
+                    // keep polling; transient error
+                    setProgress(true, 0, 0, 'Polling...');
+                }
+            }
+
+            pollTimer = setInterval(poll, 1000);
+            await poll();
         } catch (e) {
             showToast('Network error', 'error');
         } finally {
