@@ -22,6 +22,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             Backup & Restore
         </button>
+        <button class="settings-tab" onclick="switchTab('telegram_backup')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"></path><path d="M22 2L15 22l-4-9-9-4 20-7z"></path></svg>
+            Telegram Backup
+        </button>
         <button class="settings-tab" onclick="switchTab('ssl')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
             SSL Settings
@@ -166,6 +170,112 @@
                             <!-- Backups will be loaded here -->
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-telegram_backup" class="tab-pane">
+            <div class="panel-card" style="margin-bottom: 24px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Telegram Backup</h2>
+                        <p class="text-secondary">Send X-UI panel backups to Telegram on a schedule.</p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button class="btn btn-secondary" onclick="testTelegramBackupSettings()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+                            Test Connection
+                        </button>
+                        <button class="btn btn-primary" onclick="triggerTelegramBackupNow()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"></path><path d="M22 2L15 22l-4-9-9-4 20-7z"></path></svg>
+                            Backup Now
+                        </button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Enable Telegram Backup</label>
+                    <div class="refresh-toggle" style="gap: 10px;">
+                        <label class="toggle-switch" style="margin: 0;">
+                            <input type="checkbox" id="telegram-backup-enabled">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">Enabled</span>
+                    </div>
+                    <small class="text-secondary">When enabled, backups are pulled from each X-UI panel.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Interval (Minutes)</label>
+                    <input type="number" id="telegram-backup-interval" class="form-control" min="1" max="1440" value="60">
+                    <small class="text-secondary">How often to run the scheduled backup.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Bot Token</label>
+                    <input type="text" id="telegram-backup-token" class="form-control" placeholder="123456:ABC-DEF" spellcheck="false" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label>Chat ID</label>
+                    <input type="text" id="telegram-backup-chat-id" class="form-control" placeholder="-1001234567890" spellcheck="false" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label>Use SOCKS Proxy</label>
+                    <div class="refresh-toggle" style="gap: 10px;">
+                        <label class="toggle-switch" style="margin: 0;">
+                            <input type="checkbox" id="telegram-backup-use-proxy">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">SOCKS</span>
+                    </div>
+                    <small class="text-secondary">Use a SOCKS proxy for Telegram requests.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>SOCKS Proxy Mode</label>
+                    <select id="telegram-backup-proxy-mode" class="form-select" onchange="updateTelegramProxyModeUI()">
+                        <option value="url">URL</option>
+                        <option value="hostport">Host &amp; Port</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>SOCKS Proxy URL</label>
+                    <input type="text" id="telegram-backup-proxy" class="form-control" placeholder="socks5h://127.0.0.1:1080" spellcheck="false" autocomplete="off" oninput="updateTelegramProxyModeUI()">
+                </div>
+
+                <div class="form-group">
+                    <label>SOCKS Host</label>
+                    <input type="text" id="telegram-backup-proxy-host" class="form-control" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label>SOCKS Port</label>
+                    <input type="number" id="telegram-backup-proxy-port" class="form-control" placeholder="1080" min="1" max="65535">
+                </div>
+
+                <div class="form-group">
+                    <label>SOCKS Username</label>
+                    <input type="text" id="telegram-backup-proxy-username" class="form-control" placeholder="username" spellcheck="false" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label>SOCKS Password</label>
+                    <input type="password" id="telegram-backup-proxy-password" class="form-control" placeholder="password" spellcheck="false" autocomplete="off">
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Last Run (Jalali)</label>
+                    <div id="telegram-backup-last-run" class="text-secondary">Never</div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                    <button class="btn btn-primary" onclick="saveTelegramBackupSettings()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                        Save Settings
+                    </button>
                 </div>
             </div>
         </div>
@@ -884,6 +994,7 @@
             else if (onclick.includes("'templates'")) loadTemplates();
             else if (onclick.includes("'renew_template'")) loadRenewTemplates();
             else if (onclick.includes("'backups'")) { loadBackups(); loadBackupSettings(); }
+            else if (onclick.includes("'telegram_backup'")) loadTelegramBackupSettings();
             else if (onclick.includes("'ssl'")) loadSSLSettings();
             else if (onclick.includes("'session'")) loadSessionSettings();
         }
@@ -933,6 +1044,8 @@
         } else if (tabName === 'backups') {
             loadBackups();
             loadBackupSettings();
+        } else if (tabName === 'telegram_backup') {
+            loadTelegramBackupSettings();
         } else if (tabName === 'ssl') {
             loadSSLSettings();
         } else if (tabName === 'session') {
@@ -1048,6 +1161,203 @@
             }
         } catch (e) {
             showToast('Network error', 'error');
+        }
+    }
+
+    async function loadTelegramBackupSettings() {
+        try {
+            const res = await fetch('/api/settings/telegram-backup');
+            const data = await res.json();
+            if (!data.success) return;
+
+            const enabled = document.getElementById('telegram-backup-enabled');
+            const interval = document.getElementById('telegram-backup-interval');
+            const token = document.getElementById('telegram-backup-token');
+            const chatId = document.getElementById('telegram-backup-chat-id');
+            const useProxy = document.getElementById('telegram-backup-use-proxy');
+            const proxyMode = document.getElementById('telegram-backup-proxy-mode');
+            const proxy = document.getElementById('telegram-backup-proxy');
+            const proxyHost = document.getElementById('telegram-backup-proxy-host');
+            const proxyPort = document.getElementById('telegram-backup-proxy-port');
+            const proxyUser = document.getElementById('telegram-backup-proxy-username');
+            const proxyPass = document.getElementById('telegram-backup-proxy-password');
+            const lastRun = document.getElementById('telegram-backup-last-run');
+
+            if (enabled) enabled.checked = !!data.enabled;
+            if (interval) interval.value = data.interval_minutes || 60;
+            if (token) token.value = data.bot_token || '';
+            if (chatId) chatId.value = data.chat_id || '';
+            if (useProxy) useProxy.checked = !!data.use_proxy;
+            if (proxyMode) proxyMode.value = data.proxy_mode || 'url';
+            if (proxy) proxy.value = data.proxy_url || '';
+            if (proxyHost) proxyHost.value = data.proxy_host || '';
+            if (proxyPort) proxyPort.value = data.proxy_port || '';
+            if (proxyUser) proxyUser.value = data.proxy_username || '';
+            if (proxyPass) proxyPass.value = data.proxy_password || '';
+            if (lastRun) lastRun.textContent = data.last_run_jalali || 'Never';
+
+            updateTelegramProxyModeUI();
+        } catch (e) {
+            console.error('Error loading telegram backup settings', e);
+        }
+    }
+
+    function updateTelegramProxyModeUI() {
+        const mode = (document.getElementById('telegram-backup-proxy-mode') || {}).value || 'url';
+        const urlGroup = document.getElementById('telegram-backup-proxy').closest('.form-group');
+        const hostGroup = document.getElementById('telegram-backup-proxy-host').closest('.form-group');
+        const portGroup = document.getElementById('telegram-backup-proxy-port').closest('.form-group');
+        const usernameGroup = document.getElementById('telegram-backup-proxy-username').closest('.form-group');
+        const passwordGroup = document.getElementById('telegram-backup-proxy-password').closest('.form-group');
+
+        if (mode === 'hostport') {
+            if (urlGroup) urlGroup.style.display = 'none';
+            if (hostGroup) hostGroup.style.display = '';
+            if (portGroup) portGroup.style.display = '';
+            // Always show username/password in hostport mode
+            if (usernameGroup) usernameGroup.style.display = '';
+            if (passwordGroup) passwordGroup.style.display = '';
+        } else {
+            if (urlGroup) urlGroup.style.display = '';
+            if (hostGroup) hostGroup.style.display = 'none';
+            if (portGroup) portGroup.style.display = 'none';
+            
+            // In URL mode, check if URL already has credentials
+            const proxyUrl = document.getElementById('telegram-backup-proxy').value || '';
+            const hasCredentials = proxyUrl.includes('@');
+            
+            if (hasCredentials) {
+                // URL has credentials, disable username/password fields
+                if (usernameGroup) {
+                    usernameGroup.style.display = '';
+                    const input = document.getElementById('telegram-backup-proxy-username');
+                    if (input) {
+                        input.disabled = true;
+                        input.placeholder = 'Credentials already in URL';
+                        input.title = 'Username is already included in the proxy URL';
+                    }
+                }
+                if (passwordGroup) {
+                    passwordGroup.style.display = '';
+                    const input = document.getElementById('telegram-backup-proxy-password');
+                    if (input) {
+                        input.disabled = true;
+                        input.placeholder = 'Credentials already in URL';
+                        input.title = 'Password is already included in the proxy URL';
+                    }
+                }
+            } else {
+                // URL doesn't have credentials, enable username/password fields
+                if (usernameGroup) usernameGroup.style.display = '';
+                if (passwordGroup) passwordGroup.style.display = '';
+                const usernameInput = document.getElementById('telegram-backup-proxy-username');
+                const passwordInput = document.getElementById('telegram-backup-proxy-password');
+                if (usernameInput) {
+                    usernameInput.disabled = false;
+                    usernameInput.placeholder = 'Username (optional)';
+                    usernameInput.title = '';
+                }
+                if (passwordInput) {
+                    passwordInput.disabled = false;
+                    passwordInput.placeholder = 'Password (optional)';
+                    passwordInput.title = '';
+                }
+            }
+        }
+    }
+
+    async function saveTelegramBackupSettings() {
+        const enabled = document.getElementById('telegram-backup-enabled').checked;
+        const interval = parseInt(document.getElementById('telegram-backup-interval').value, 10);
+        const token = document.getElementById('telegram-backup-token').value.trim();
+        const chatId = document.getElementById('telegram-backup-chat-id').value.trim();
+        const useProxy = document.getElementById('telegram-backup-use-proxy').checked;
+        const proxyMode = document.getElementById('telegram-backup-proxy-mode').value;
+        const proxyUrl = document.getElementById('telegram-backup-proxy').value.trim();
+        const proxyHost = document.getElementById('telegram-backup-proxy-host').value.trim();
+        const proxyPort = parseInt(document.getElementById('telegram-backup-proxy-port').value, 10);
+        const proxyUser = document.getElementById('telegram-backup-proxy-username').value.trim();
+        const proxyPass = document.getElementById('telegram-backup-proxy-password').value.trim();
+
+        if (!interval || interval < 1) {
+            showToast('Interval must be at least 1 minute', 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/settings/telegram-backup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    enabled,
+                    interval_minutes: interval,
+                    bot_token: token,
+                    chat_id: chatId,
+                    use_proxy: useProxy,
+                    proxy_mode: proxyMode,
+                    proxy_url: proxyUrl,
+                    proxy_host: proxyHost,
+                    proxy_port: proxyPort,
+                    proxy_username: proxyUser,
+                    proxy_password: proxyPass
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Telegram backup settings saved');
+                loadTelegramBackupSettings();
+            } else {
+                showToast(data.error || 'Error saving settings', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function testTelegramBackupSettings() {
+        const btn = event.currentTarget;
+        const originalText = btn.innerHTML;
+        btn.innerHTML = 'Testing...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/api/settings/telegram-backup/test', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Telegram connection successful');
+            } else {
+                showToast(data.error || 'Telegram test failed', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    async function triggerTelegramBackupNow() {
+        const btn = event.currentTarget;
+        const originalText = btn.innerHTML;
+        btn.innerHTML = 'Running...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/api/telegram-backup/now', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                const done = data.success_count || 0;
+                const total = data.total || 0;
+                showToast(`Backup sent (${done}/${total})`);
+                loadTelegramBackupSettings();
+            } else {
+                showToast(data.error || 'Backup failed', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
         }
     }
 

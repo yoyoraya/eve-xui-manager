@@ -15,6 +15,7 @@ import string
 import shutil
 import glob
 import subprocess
+import tempfile
 import threading
 import time
 import concurrent.futures
@@ -72,7 +73,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from urllib.parse import urlparse, quote, urlencode
+from urllib.parse import urlparse, quote, urlencode, unquote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 
@@ -1188,6 +1189,10 @@ os.makedirs(RECEIPTS_DIR, exist_ok=True)
 BACKUP_DIR = os.path.join(app.instance_path, 'backups')
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
+TELEGRAM_BACKUP_TMP_DIR = os.path.join(app.instance_path, 'telegram_backup_tmp')
+os.makedirs(TELEGRAM_BACKUP_TMP_DIR, exist_ok=True)
+TELEGRAM_BACKUP_LOCK = threading.Lock()
+
 
 def _db_uri() -> str:
     return (app.config.get('SQLALCHEMY_DATABASE_URI') or '').strip()
@@ -1251,6 +1256,398 @@ def _create_database_backup_file(prefix: str) -> str:
         return filename
 
     raise RuntimeError('Unsupported database backend for backup')
+
+
+TELEGRAM_BACKUP_DEFAULT_INTERVAL_MINUTES = 60
+TELEGRAM_BACKUP_MAX_INTERVAL_MINUTES = 1440
+
+
+def _get_system_setting_value(key: str, default: str | None = None) -> str | None:
+    setting = db.session.get(SystemSetting, key)
+    return setting.value if setting else default
+
+
+def _set_system_setting_value(key: str, value: str | int | bool | None):
+    setting = db.session.get(SystemSetting, key)
+    if not setting:
+        setting = SystemSetting(key=key, value=str(value) if value is not None else '')
+        db.session.add(setting)
+    else:
+        setting.value = str(value) if value is not None else ''
+    return setting
+
+
+def _parse_int(value, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+    try:
+        val = int(value)
+    except Exception:
+        val = default
+    if min_value is not None and val < min_value:
+        val = min_value
+    if max_value is not None and val > max_value:
+        val = max_value
+    return val
+
+
+def _parse_iso_datetime(value: str | None):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def _normalize_proxy_url(raw: str | None) -> str:
+    val = (raw or '').strip()
+    if not val:
+        return ''
+    if '://' in val:
+        return val
+    return f"socks5h://{val}"
+
+
+def _get_telegram_backup_settings() -> dict:
+    enabled = _parse_bool(_get_system_setting_value('telegram_backup_enabled', 'false'))
+    interval = _parse_int(
+        _get_system_setting_value('telegram_backup_interval_minutes', str(TELEGRAM_BACKUP_DEFAULT_INTERVAL_MINUTES)),
+        TELEGRAM_BACKUP_DEFAULT_INTERVAL_MINUTES,
+        min_value=1,
+        max_value=TELEGRAM_BACKUP_MAX_INTERVAL_MINUTES
+    )
+    use_proxy = _parse_bool(_get_system_setting_value('telegram_backup_use_proxy', 'false'))
+    proxy_mode = (_get_system_setting_value('telegram_backup_proxy_mode', 'url') or 'url').strip().lower()
+    if proxy_mode not in ('url', 'hostport'):
+        proxy_mode = 'url'
+    proxy_url = _normalize_proxy_url(_get_system_setting_value('telegram_backup_proxy_url', '') or '')
+    proxy_host = (_get_system_setting_value('telegram_backup_proxy_host', '') or '').strip()
+    proxy_port = _parse_int(_get_system_setting_value('telegram_backup_proxy_port', ''), 0, min_value=0, max_value=65535)
+    proxy_username = (_get_system_setting_value('telegram_backup_proxy_username', '') or '').strip()
+    proxy_password = (_get_system_setting_value('telegram_backup_proxy_password', '') or '').strip()
+    last_run = _get_system_setting_value('telegram_backup_last_run', '') or ''
+    last_dt = _parse_iso_datetime(last_run)
+    return {
+        'enabled': enabled,
+        'interval_minutes': interval,
+        'bot_token': _get_system_setting_value('telegram_backup_bot_token', '') or '',
+        'chat_id': _get_system_setting_value('telegram_backup_chat_id', '') or '',
+        'use_proxy': use_proxy,
+        'proxy_mode': proxy_mode,
+        'proxy_url': proxy_url,
+        'proxy_host': proxy_host,
+        'proxy_port': proxy_port,
+        'proxy_username': proxy_username,
+        'proxy_password': proxy_password,
+        'last_run': last_run,
+        'last_run_jalali': format_jalali(last_dt) if last_dt else ''
+    }
+
+
+def _inject_proxy_credentials(proxy_url: str, username: str, password: str) -> str:
+    if not proxy_url:
+        return proxy_url
+    if not username and not password:
+        return proxy_url
+
+    try:
+        parsed = urlparse(proxy_url)
+    except Exception:
+        return proxy_url
+
+    if parsed.username or parsed.password:
+        return proxy_url
+
+    netloc = parsed.netloc or ''
+    if '@' in netloc:
+        return proxy_url
+
+    user_part = quote(username or '', safe='')
+    pass_part = quote(password or '', safe='')
+    if pass_part:
+        creds = f"{user_part}:{pass_part}"
+    else:
+        creds = user_part
+
+    updated = parsed._replace(netloc=f"{creds}@{netloc}")
+    return updated.geturl()
+
+
+def _build_telegram_proxies(use_proxy: bool, proxy_mode: str, proxy_url: str, proxy_host: str, proxy_port: int,
+                            proxy_username: str, proxy_password: str) -> dict | None:
+    if not use_proxy:
+        return None
+
+    mode = (proxy_mode or 'url').strip().lower()
+    if mode == 'hostport':
+        if not proxy_host or not proxy_port:
+            return None
+        normalized = _normalize_proxy_url(f"{proxy_host}:{proxy_port}")
+        # Always inject credentials in hostport mode
+        normalized = _inject_proxy_credentials(normalized, proxy_username, proxy_password)
+    else:
+        normalized = _normalize_proxy_url(proxy_url)
+        # Only inject credentials if URL doesn't already have them
+        if normalized and '@' not in normalized:
+            normalized = _inject_proxy_credentials(normalized, proxy_username, proxy_password)
+
+    if not normalized:
+        return None
+
+    return {'http': normalized, 'https': normalized}
+
+
+def _telegram_get_me(token: str, proxies: dict | None = None, timeout_sec: int = 10):
+    url = f"https://api.telegram.org/bot{token}/getMe"
+    return requests.get(url, proxies=proxies, timeout=timeout_sec)
+
+
+def _telegram_send_document(token: str, chat_id: str, file_path: str, caption: str | None, proxies: dict | None = None):
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    data = {'chat_id': chat_id}
+    if caption:
+        data['caption'] = caption
+    with open(file_path, 'rb') as handle:
+        files = {'document': (os.path.basename(file_path), handle)}
+        return requests.post(url, data=data, files=files, proxies=proxies, timeout=30)
+
+
+def _content_disposition_filename(header_value: str | None) -> str | None:
+    if not header_value:
+        return None
+    match = re.search(r"filename\*=UTF-8''([^;]+)", header_value)
+    if match:
+        try:
+            return unquote(match.group(1))
+        except Exception:
+            return match.group(1)
+    match = re.search(r'filename="?([^";]+)"?', header_value)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _guess_backup_extension(content_type: str, filename_hint: str | None = None) -> str:
+    if filename_hint:
+        _, ext = os.path.splitext(filename_hint)
+        if ext:
+            return ext
+    ct = (content_type or '').lower()
+    if 'zip' in ct:
+        return '.zip'
+    if 'gzip' in ct:
+        return '.gz'
+    if 'sqlite' in ct or 'x-sqlite3' in ct:
+        return '.db'
+    if 'octet-stream' in ct:
+        return '.db'
+    return '.db'
+
+
+def _try_base64_decode(value: str) -> bytes | None:
+    try:
+        return base64.b64decode(value, validate=True)
+    except Exception:
+        return None
+
+
+def _extract_backup_payload_from_json(data) -> tuple[bytes | None, str | None]:
+    if isinstance(data, dict):
+        for key in ('obj', 'data', 'result'):
+            if key in data:
+                return _extract_backup_payload_from_json(data.get(key))
+
+        filename_hint = data.get('filename') or data.get('name')
+        for key in ('file', 'content', 'backup', 'bytes'):
+            val = data.get(key)
+            if isinstance(val, str):
+                decoded = _try_base64_decode(val.strip())
+                if decoded:
+                    return decoded, filename_hint
+        return None, filename_hint
+
+    if isinstance(data, str):
+        decoded = _try_base64_decode(data.strip())
+        return decoded, None
+
+    return None, None
+
+
+def _extract_backup_bytes_from_response(resp: requests.Response) -> tuple[bytes | None, str | None, str | None]:
+    content_type = (resp.headers.get('Content-Type') or '').lower()
+    filename_hint = _content_disposition_filename(resp.headers.get('Content-Disposition'))
+
+    if 'application/json' in content_type or content_type.startswith('text/'):
+        data, err = _safe_response_json(resp)
+        if err:
+            return None, None, err
+        if isinstance(data, dict) and data.get('success') is False:
+            msg = data.get('msg') or data.get('message') or 'Backup failed'
+            return None, None, str(msg)
+        payload, json_filename = _extract_backup_payload_from_json(data)
+        if not payload:
+            return None, None, 'Backup payload missing'
+        ext = _guess_backup_extension(content_type, json_filename or filename_hint)
+        return payload, ext, None
+
+    if resp.status_code != 200:
+        return None, None, f"HTTP {resp.status_code}"
+
+    return resp.content, _guess_backup_extension(content_type, filename_hint), None
+
+
+def _collect_backup_endpoints(panel_type: str) -> list[tuple[str, str]]:
+    normalized = (panel_type or 'auto').strip().lower()
+    candidates: list[tuple[str, str]] = []
+
+    if normalized in ('sanaei', 'auto', ''):
+        candidates.extend([
+            ('POST', '/panel/api/backup'),
+            ('GET', '/panel/api/backup'),
+        ])
+    if normalized in ('alireza', 'alireza0', 'xui', 'x-ui', 'auto', ''):
+        candidates.extend([
+            ('POST', '/xui/API/backup'),
+            ('GET', '/xui/API/backup'),
+            ('POST', '/xui/api/backup'),
+            ('GET', '/xui/api/backup'),
+        ])
+
+    candidates.extend([
+        ('POST', '/panel/api/backup'),
+        ('GET', '/panel/api/backup'),
+        ('POST', '/xui/API/backup'),
+        ('GET', '/xui/API/backup'),
+        ('POST', '/xui/api/backup'),
+        ('GET', '/xui/api/backup'),
+    ])
+
+    seen = set()
+    deduped = []
+    for method, ep in candidates:
+        key = (method, ep)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((method, ep))
+    return deduped
+
+
+def _fetch_xui_backup(session_obj: requests.Session, server: 'Server') -> tuple[bytes | None, str | None, str | None]:
+    endpoints = _collect_backup_endpoints(getattr(server, 'panel_type', 'auto'))
+    errors = []
+    for method, template in endpoints:
+        full_url = build_panel_url(server.host, template, {})
+        if not full_url:
+            continue
+        try:
+            if method == 'POST':
+                resp = session_obj.post(full_url, verify=False, timeout=15)
+            else:
+                resp = session_obj.get(full_url, verify=False, timeout=15)
+        except Exception as exc:
+            errors.append(f"{method} {template}: {exc}")
+            continue
+
+        payload, ext, err = _extract_backup_bytes_from_response(resp)
+        if payload:
+            return payload, ext, None
+        errors.append(f"{method} {template}: {err or resp.status_code}")
+
+    return None, None, '; '.join(errors) or 'No backup endpoint succeeded'
+
+
+def _run_telegram_backup(trigger: str = 'scheduled') -> dict:
+    if not TELEGRAM_BACKUP_LOCK.acquire(blocking=False):
+        return {'success': False, 'error': 'Backup already running'}
+
+    tmp_dir = None
+    try:
+        settings = _get_telegram_backup_settings()
+        enabled = bool(settings.get('enabled'))
+        if trigger == 'scheduled' and not enabled:
+            return {'success': True, 'skipped': True, 'message': 'Telegram backup disabled'}
+
+        token = (settings.get('bot_token') or '').strip()
+        chat_id = (settings.get('chat_id') or '').strip()
+        if not token or not chat_id:
+            return {'success': False, 'error': 'Telegram bot token and chat ID are required'}
+
+        proxies = _build_telegram_proxies(
+            bool(settings.get('use_proxy')),
+            settings.get('proxy_mode') or 'url',
+            settings.get('proxy_url') or '',
+            settings.get('proxy_host') or '',
+            int(settings.get('proxy_port') or 0),
+            settings.get('proxy_username') or '',
+            settings.get('proxy_password') or ''
+        )
+
+        now = datetime.utcnow()
+        _set_system_setting_value('telegram_backup_last_run', now.isoformat())
+        db.session.commit()
+
+        servers = Server.query.filter_by(enabled=True).all()
+        if not servers:
+            return {'success': False, 'error': 'No enabled servers found'}
+
+        tmp_dir = tempfile.mkdtemp(prefix='telegram_backup_', dir=TELEGRAM_BACKUP_TMP_DIR)
+        results = []
+
+        for server in servers:
+            session_obj, error = get_xui_session(server)
+            if error:
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': error})
+                continue
+
+            payload, ext, err = _fetch_xui_backup(session_obj, server)
+            if err or not payload:
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': err or 'Backup failed'})
+                continue
+
+            safe_server_name = secure_filename(server.name) or f"server_{server.id}"
+            timestamp = now.strftime('%Y%m%d_%H%M%S')
+            ext = ext or '.db'
+            filename = f"{safe_server_name}_{timestamp}{ext}"
+            file_path = os.path.join(tmp_dir, filename)
+            with open(file_path, 'wb') as handle:
+                handle.write(payload)
+
+            caption = f"{server.name} - {format_jalali(now) or now.isoformat()}"
+            try:
+                resp = _telegram_send_document(token, chat_id, file_path, caption, proxies=proxies)
+            except Exception as exc:
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': str(exc)})
+                continue
+
+            resp_json, resp_err = _safe_response_json(resp)
+            if resp_err:
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': resp_err})
+                continue
+            if isinstance(resp_json, dict) and resp_json.get('ok'):
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': True})
+            else:
+                msg = None
+                if isinstance(resp_json, dict):
+                    msg = resp_json.get('description') or resp_json.get('error')
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': msg or 'Telegram send failed'})
+
+        success_count = sum(1 for r in results if r.get('success'))
+        return {
+            'success': success_count > 0,
+            'results': results,
+            'success_count': success_count,
+            'total': len(results)
+        }
+    finally:
+        if tmp_dir and os.path.exists(tmp_dir):
+            try:
+                shutil.rmtree(tmp_dir)
+            except Exception:
+                pass
+        try:
+            TELEGRAM_BACKUP_LOCK.release()
+        except Exception:
+            pass
 
 limiter = Limiter(
     app=app,
@@ -4032,24 +4429,56 @@ def get_client_direct_link(server_id, sub_id):
     """
     user = db.session.get(Admin, session['admin_id'])
     server = db.session.get(Server, server_id)
+
+    normalized_sub_id = str(sub_id).strip()
+
+    # Basic hardening: keep the identifier path-safe (the upstream URL embeds it in the path)
+    if any(c in normalized_sub_id for c in ('/', '\\', '?', '#', '@', ':')) or '..' in normalized_sub_id:
+        return jsonify({"success": False, "error": "Invalid subscription ID"}), 400
     
     if not server:
         return jsonify({"success": False, "error": "Server not found"}), 404
+
+    # Try to resolve sub_id -> client UUID/email from in-memory cache (important for resellers).
+    # We generate subscription URLs using `client.subId`, while ownership is stored by `client_uuid`.
+    resolved_client_uuid = None
+    resolved_client_email = None
+    try:
+        cached_inbounds = GLOBAL_SERVER_DATA.get('inbounds', []) or []
+        server_inbounds = [i for i in cached_inbounds if int(i.get('server_id', -1)) == int(server_id)]
+        for inbound in server_inbounds:
+            for client in inbound.get('clients', []):
+                c_sub_id = str(client.get('subId') or '').strip()
+                c_uuid = str(client.get('id') or '').strip()
+                if normalized_sub_id and (normalized_sub_id == c_sub_id or normalized_sub_id == c_uuid):
+                    resolved_client_uuid = c_uuid or None
+                    resolved_client_email = (client.get('email') or '').strip() or None
+                    break
+            if resolved_client_uuid or resolved_client_email:
+                break
+    except Exception:
+        resolved_client_uuid = None
+        resolved_client_email = None
     
     # Check permission
     if user.role == 'reseller':
-        ownership = ClientOwnership.query.filter_by(
-            reseller_id=user.id,
-            server_id=server_id,
-            client_uuid=sub_id
-        ).first()
-        if not ownership:
+        ownership = None
+
+        lookup_uuid = resolved_client_uuid or normalized_sub_id
+        if lookup_uuid:
+            ownership = ClientOwnership.query.filter_by(
+                reseller_id=user.id,
+                server_id=server_id,
+                client_uuid=lookup_uuid
+            ).first()
+
+        if not ownership and resolved_client_email:
             ownership = ClientOwnership.query.filter(
                 ClientOwnership.reseller_id == user.id,
-                ClientOwnership.server_id == server_id
-            ).filter(
-                func.lower(ClientOwnership.client_email).like(f"%{sub_id.lower()}%")
+                ClientOwnership.server_id == server_id,
+                func.lower(ClientOwnership.client_email) == resolved_client_email.lower()
             ).first()
+
         if not ownership:
             return jsonify({"success": False, "error": "Access denied"}), 403
     
@@ -4064,7 +4493,8 @@ def get_client_direct_link(server_id, sub_id):
     port_str = f":{final_port}" if final_port else ''
     sub_path = (server.sub_path or '/sub/').strip('/')
     base_sub = f"{scheme}://{hostname}{port_str}"
-    sub_url = f"{base_sub}/{sub_path}/{sub_id}" if sub_path else f"{base_sub}/{sub_id}"
+    safe_sub_id = quote(normalized_sub_id)
+    sub_url = f"{base_sub}/{sub_path}/{safe_sub_id}" if sub_path else f"{base_sub}/{safe_sub_id}"
     
     try:
         resp = requests.get(
@@ -9126,6 +9556,108 @@ def save_backup_settings():
     db.session.commit()
     return jsonify({'success': True, 'message': 'Settings saved'})
 
+
+@app.route('/api/settings/telegram-backup', methods=['GET'])
+@superadmin_required
+def get_telegram_backup_settings():
+    settings = _get_telegram_backup_settings()
+    return jsonify({'success': True, **settings})
+
+
+@app.route('/api/settings/telegram-backup', methods=['POST'])
+@superadmin_required
+def save_telegram_backup_settings():
+    try:
+        data = request.get_json() or {}
+    except Exception:
+        data = {}
+
+    enabled = bool(data.get('enabled'))
+    interval = _parse_int(
+        data.get('interval_minutes', TELEGRAM_BACKUP_DEFAULT_INTERVAL_MINUTES),
+        TELEGRAM_BACKUP_DEFAULT_INTERVAL_MINUTES,
+        min_value=1,
+        max_value=TELEGRAM_BACKUP_MAX_INTERVAL_MINUTES
+    )
+    bot_token = (data.get('bot_token') or '').strip()
+    chat_id = (data.get('chat_id') or '').strip()
+    use_proxy = bool(data.get('use_proxy'))
+    proxy_mode = (data.get('proxy_mode') or 'url').strip().lower()
+    if proxy_mode not in ('url', 'hostport'):
+        proxy_mode = 'url'
+    proxy_url = _normalize_proxy_url(data.get('proxy_url') or '')
+    proxy_host = (data.get('proxy_host') or '').strip()
+    proxy_port = _parse_int(data.get('proxy_port'), 0, min_value=0, max_value=65535)
+    proxy_username = (data.get('proxy_username') or '').strip()
+    proxy_password = (data.get('proxy_password') or '').strip()
+
+    if use_proxy:
+        if proxy_mode == 'hostport' and (not proxy_host or not proxy_port):
+            return jsonify({'success': False, 'error': 'Proxy host and port are required'}), 400
+        if proxy_mode == 'url' and not proxy_url:
+            return jsonify({'success': False, 'error': 'Proxy URL is required'}), 400
+
+    _set_system_setting_value('telegram_backup_enabled', 'true' if enabled else 'false')
+    _set_system_setting_value('telegram_backup_interval_minutes', str(interval))
+    _set_system_setting_value('telegram_backup_bot_token', bot_token)
+    _set_system_setting_value('telegram_backup_chat_id', chat_id)
+    _set_system_setting_value('telegram_backup_use_proxy', 'true' if use_proxy else 'false')
+    _set_system_setting_value('telegram_backup_proxy_mode', proxy_mode)
+    _set_system_setting_value('telegram_backup_proxy_url', proxy_url)
+    _set_system_setting_value('telegram_backup_proxy_host', proxy_host)
+    _set_system_setting_value('telegram_backup_proxy_port', str(proxy_port))
+    _set_system_setting_value('telegram_backup_proxy_username', proxy_username)
+    _set_system_setting_value('telegram_backup_proxy_password', proxy_password)
+    db.session.commit()
+
+    return jsonify({'success': True, 'message': 'Telegram backup settings saved'})
+
+
+@app.route('/api/settings/telegram-backup/test', methods=['POST'])
+@superadmin_required
+def test_telegram_backup_settings():
+    settings = _get_telegram_backup_settings()
+    token = (settings.get('bot_token') or '').strip()
+    if not token:
+        return jsonify({'success': False, 'error': 'Bot token is required'}), 400
+
+    proxies = _build_telegram_proxies(
+        bool(settings.get('use_proxy')),
+        settings.get('proxy_mode') or 'url',
+        settings.get('proxy_url') or '',
+        settings.get('proxy_host') or '',
+        int(settings.get('proxy_port') or 0),
+        settings.get('proxy_username') or '',
+        settings.get('proxy_password') or ''
+    )
+
+    try:
+        resp = _telegram_get_me(token, proxies=proxies, timeout_sec=10)
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    if resp.status_code != 200:
+        return jsonify({'success': False, 'error': f"HTTP {resp.status_code}"}), 400
+
+    data, err = _safe_response_json(resp)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    if isinstance(data, dict) and data.get('ok'):
+        return jsonify({'success': True, 'message': 'Telegram connection OK'})
+    msg = None
+    if isinstance(data, dict):
+        msg = data.get('description') or data.get('error')
+    return jsonify({'success': False, 'error': msg or 'Telegram connection failed'}), 400
+
+
+@app.route('/api/telegram-backup/now', methods=['POST'])
+@superadmin_required
+def telegram_backup_now():
+    result = _run_telegram_backup(trigger='manual')
+    if not result.get('success'):
+        return jsonify({'success': False, 'error': result.get('error') or 'Backup failed'}), 400
+    return jsonify({'success': True, **result})
+
 @app.route('/api/settings/ssl', methods=['GET'])
 @login_required
 def get_ssl_settings():
@@ -9630,11 +10162,34 @@ def run_scheduler():
                                 last_backup.value = now.isoformat()
                             db.session.commit()
                             print(f"Auto backup created: {filename}")
+
+                # Telegram backups
+                tg_enabled = _parse_bool(_get_system_setting_value('telegram_backup_enabled', 'false'))
+                if tg_enabled:
+                    tg_interval = _parse_int(
+                        _get_system_setting_value('telegram_backup_interval_minutes', str(TELEGRAM_BACKUP_DEFAULT_INTERVAL_MINUTES)),
+                        TELEGRAM_BACKUP_DEFAULT_INTERVAL_MINUTES,
+                        min_value=1,
+                        max_value=TELEGRAM_BACKUP_MAX_INTERVAL_MINUTES
+                    )
+                    last_run_value = _get_system_setting_value('telegram_backup_last_run', '')
+                    last_run_dt = _parse_iso_datetime(last_run_value)
+                    now_utc = datetime.utcnow()
+                    should_run = False
+                    if not last_run_dt:
+                        should_run = True
+                    elif (now_utc - last_run_dt) >= timedelta(minutes=tg_interval):
+                        should_run = True
+
+                    if should_run:
+                        result = _run_telegram_backup(trigger='scheduled')
+                        if not result.get('success'):
+                            app.logger.warning(f"Telegram backup failed: {result.get('error')}")
                             
             except Exception as e:
                 print(f"Scheduler error: {e}")
             
-            time.sleep(3600) # Check every hour
+            time.sleep(60) # Check every minute
 
 def update_session_lifetime():
     with app.app_context():
