@@ -199,7 +199,9 @@
                 statusMeta.appendChild(createBadge(`Core: ${xrayCore}`, 'badge info'));
             }
             if (statusErr) {
-                statusMeta.appendChild(createBadge(`Status error`, 'badge inactive'));
+                const errBadge = createBadge(`Status error`, 'badge inactive');
+                errBadge.title = statusErr;
+                statusMeta.appendChild(errBadge);
             }
 
             const actions = document.createElement('div');
