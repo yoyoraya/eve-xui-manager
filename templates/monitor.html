@@ -1,0 +1,539 @@
+{% extends "base.html" %}
+
+{% block title %}Monitor - Eve Manager{% endblock %}
+{% block page_title %}Renewal Monitor{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-secondary" onclick="refreshAlerts()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+    </svg>
+    <span class="btn-label">Reload</span>
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="monitor-page">
+    <section class="monitor-hero">
+        <div class="monitor-hero-content">
+            <div class="monitor-kicker">Client Renewal Desk</div>
+            <h2>Track expiring and low-volume clients</h2>
+            <p>Filter by risk, personalize the outreach text, and message users in seconds.</p>
+            <div class="monitor-hero-actions">
+                <button class="btn btn-primary" onclick="scanNetworks()">Scan Now</button>
+                <button class="btn btn-ghost" onclick="saveMonitorSettings()">Save Settings</button>
+            </div>
+        </div>
+        <div class="monitor-hero-stats">
+            <div class="monitor-stat">
+                <span class="label">Alerts</span>
+                <span class="value" id="monitor-alert-count">0</span>
+            </div>
+            <div class="monitor-stat">
+                <span class="label">Last Scan</span>
+                <span class="value" id="monitor-last-scan">-</span>
+            </div>
+        </div>
+    </section>
+
+    <div class="monitor-layout">
+        <aside class="monitor-panel">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h3>Filters</h3>
+                        <p class="text-secondary">Control how alerts are surfaced.</p>
+                    </div>
+                </div>
+                <div class="monitor-form">
+                    <div class="form-group">
+                        <label>Warning Days</label>
+                        <input type="number" id="monitor-warning-days" min="1" max="365" value="3">
+                    </div>
+                    <div class="form-group">
+                        <label>Warning GB</label>
+                        <input type="number" id="monitor-warning-gb" min="0.1" step="0.1" value="2">
+                    </div>
+                    <div class="form-group">
+                        <label>Hide Expired After (Days)</label>
+                        <input type="number" id="monitor-hide-days" min="0" max="365" value="7">
+                    </div>
+                    <label class="form-group form-toggle-item" style="cursor: pointer;">
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="monitor-debug">
+                            <span class="slider"></span>
+                        </div>
+                        <span>Debug Mode</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h3>Message Templates</h3>
+                        <p class="text-secondary">Variables: {user}, {rem}, {time}, {date}, {server}</p>
+                    </div>
+                </div>
+                <div class="monitor-accordion">
+                    <details open>
+                        <summary>Ended</summary>
+                        <textarea id="tpl-ended" rows="4"></textarea>
+                    </details>
+                    <details>
+                        <summary>Expired</summary>
+                        <textarea id="tpl-expired" rows="4"></textarea>
+                    </details>
+                    <details>
+                        <summary>Low Data</summary>
+                        <textarea id="tpl-low" rows="4"></textarea>
+                    </details>
+                    <details>
+                        <summary>Expiring Soon</summary>
+                        <textarea id="tpl-soon" rows="4"></textarea>
+                    </details>
+                </div>
+            </div>
+        </aside>
+
+        <section class="monitor-results">
+            <div class="monitor-toolbar">
+                <div class="monitor-filter">
+                    <label>Server</label>
+                    <select id="monitor-server-filter" class="form-select"></select>
+                </div>
+                <div class="monitor-filter">
+                    <label>Search</label>
+                    <div class="search-wrapper">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="search-icon">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="monitor-search" placeholder="Email or username" class="search-input">
+                        <button class="search-clear hidden" onclick="clearMonitorSearch()" id="monitor-search-clear">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="monitor-status-filters">
+                    <button class="chip active" data-status="ended" onclick="toggleStatusFilter(this)">Ended</button>
+                    <button class="chip active" data-status="expired" onclick="toggleStatusFilter(this)">Expired</button>
+                    <button class="chip active" data-status="low" onclick="toggleStatusFilter(this)">Low</button>
+                    <button class="chip active" data-status="soon" onclick="toggleStatusFilter(this)">Soon</button>
+                    <button class="chip" data-status="ok" onclick="toggleStatusFilter(this)">All</button>
+                </div>
+            </div>
+
+            <div class="monitor-list">
+                <div class="monitor-list-header">
+                    <span><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-inline-end:4px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>User</span>
+                    <span><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-inline-end:4px"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>Mobile</span>
+                    <span><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-inline-end:4px"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>Server</span>
+                    <span>Status</span>
+                    <span>Details</span>
+                    <span>Actions</span>
+                </div>
+                <div id="monitor-list"></div>
+            </div>
+        </section>
+    </div>
+
+    <div id="monitor-progress-overlay" class="monitor-progress-overlay hidden">
+        <div class="monitor-progress-box">
+            <div class="monitor-spinner"></div>
+            <div id="monitor-progress-text" class="monitor-progress-text">Scanning servers...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+    let monitorSettings = null;
+    let allAlerts = [];
+    const activeStatusFilters = new Set(['ended', 'expired', 'low', 'soon']);
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadMonitorSettings();
+        await refreshAlerts();
+        updateStatusChips();
+        document.getElementById('monitor-search').addEventListener('input', handleMonitorSearch);
+        document.getElementById('monitor-server-filter').addEventListener('change', renderAlerts);
+    });
+
+    async function loadMonitorSettings() {
+        try {
+            const resp = await fetch('/api/monitor/settings');
+            const data = await resp.json();
+            if (!data.success) {
+                showToast('Failed to load settings', 'error');
+                return;
+            }
+            monitorSettings = data.settings || {};
+            applySettingsToForm();
+        } catch (err) {
+            showToast('Failed to load settings', 'error');
+        }
+    }
+
+    function applySettingsToForm() {
+        const filters = (monitorSettings || {}).filters || {};
+        const templates = (monitorSettings || {}).templates || {};
+
+        document.getElementById('monitor-warning-days').value = filters.warning_days ?? 3;
+        document.getElementById('monitor-warning-gb').value = filters.warning_gb ?? 2;
+        document.getElementById('monitor-hide-days').value = filters.hide_days ?? 7;
+        document.getElementById('monitor-debug').checked = !!filters.debug;
+
+        document.getElementById('tpl-ended').value = templates.ended || '';
+        document.getElementById('tpl-expired').value = templates.expired || '';
+        document.getElementById('tpl-low').value = templates.low || '';
+        document.getElementById('tpl-soon').value = templates.soon || '';
+    }
+
+    async function saveMonitorSettings() {
+        const payload = {
+            filters: {
+                warning_days: parseInt(document.getElementById('monitor-warning-days').value || '3', 10),
+                warning_gb: parseFloat(document.getElementById('monitor-warning-gb').value || '2'),
+                hide_days: parseInt(document.getElementById('monitor-hide-days').value || '7', 10),
+                debug: document.getElementById('monitor-debug').checked
+            },
+            templates: {
+                ended: document.getElementById('tpl-ended').value || '',
+                expired: document.getElementById('tpl-expired').value || '',
+                low: document.getElementById('tpl-low').value || '',
+                soon: document.getElementById('tpl-soon').value || ''
+            }
+        };
+
+        try {
+            const resp = await fetch('/api/monitor/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                showToast(data.error || 'Failed to save settings', 'error');
+                return;
+            }
+            monitorSettings = data.settings || payload;
+            showToast('Settings saved', 'success');
+            renderAlerts();
+        } catch (err) {
+            showToast('Failed to save settings', 'error');
+        }
+    }
+
+    async function refreshAlerts() {
+        try {
+            const resp = await fetch('/api/monitor/alerts');
+            const data = await resp.json();
+            if (!data.success) {
+                showToast('Failed to fetch alerts', 'error');
+                return;
+            }
+            monitorSettings = data.settings || monitorSettings;
+            allAlerts = data.alerts || [];
+            updateStats(data);
+            updateServerFilterOptions();
+            renderAlerts();
+        } catch (err) {
+            showToast('Failed to fetch alerts', 'error');
+        }
+    }
+
+    function updateStats(data) {
+        document.getElementById('monitor-alert-count').textContent = String((data.alerts || []).length);
+        document.getElementById('monitor-last-scan').textContent = data.generated_at_jalali || '-';
+    }
+
+    function updateServerFilterOptions() {
+        const select = document.getElementById('monitor-server-filter');
+        const current = select.value || 'all';
+        const servers = new Map();
+        allAlerts.forEach((alert) => {
+            if (alert.server_id != null) {
+                servers.set(String(alert.server_id), alert.server_name || `Server ${alert.server_id}`);
+            }
+        });
+
+        select.textContent = '';
+        const allOption = document.createElement('option');
+        allOption.value = 'all';
+        allOption.textContent = 'All Servers';
+        select.appendChild(allOption);
+
+        Array.from(servers.entries())
+            .sort((a, b) => a[1].localeCompare(b[1]))
+            .forEach(([id, name]) => {
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = name;
+                select.appendChild(opt);
+            });
+
+        select.value = current && select.querySelector(`option[value="${current}"]`) ? current : 'all';
+    }
+
+    function toggleStatusFilter(button) {
+        const status = button.dataset.status;
+        if (status === 'ok') {
+            if (activeStatusFilters.size === 4) {
+                activeStatusFilters.clear();
+            } else {
+                activeStatusFilters.clear();
+                ['ended', 'expired', 'low', 'soon'].forEach((s) => activeStatusFilters.add(s));
+            }
+            updateStatusChips();
+            renderAlerts();
+            return;
+        }
+
+        if (activeStatusFilters.has(status)) {
+            activeStatusFilters.delete(status);
+        } else {
+            activeStatusFilters.add(status);
+        }
+
+        updateStatusChips();
+        renderAlerts();
+    }
+
+    function updateStatusChips() {
+        const statusChips = document.querySelectorAll('.monitor-status-filters .chip');
+        const allActive = ['ended', 'expired', 'low', 'soon'].every((s) => activeStatusFilters.has(s));
+
+        statusChips.forEach((chip) => {
+            if (chip.dataset.status === 'ok') {
+                chip.classList.toggle('active', allActive);
+            } else {
+                chip.classList.toggle('active', activeStatusFilters.has(chip.dataset.status));
+            }
+        });
+    }
+
+    function renderAlerts() {
+        const list = document.getElementById('monitor-list');
+        list.textContent = '';
+
+        const search = (document.getElementById('monitor-search').value || '').trim().toLowerCase();
+        const serverFilter = document.getElementById('monitor-server-filter').value || 'all';
+
+        const filtered = allAlerts.filter((alert) => {
+            if (serverFilter !== 'all' && String(alert.server_id) !== serverFilter) {
+                return false;
+            }
+            if (search) {
+                const emailMatch = (alert.email || '').toLowerCase().includes(search);
+                const phoneMatch = (extractPhone(alert.email || '') || '').toLowerCase().includes(search);
+                if (!emailMatch && !phoneMatch) {
+                    return false;
+                }
+            }
+            if (activeStatusFilters.size && !activeStatusFilters.has(alert.status)) {
+                return false;
+            }
+            return true;
+        });
+
+        if (!filtered.length) {
+            const empty = document.createElement('div');
+            empty.className = 'monitor-empty';
+            empty.textContent = 'No alerts match your filters.';
+            list.appendChild(empty);
+            return;
+        }
+
+        filtered.forEach((alert, index) => {
+            list.appendChild(buildAlertCard(alert, index));
+        });
+    }
+
+    function buildAlertCard(alert, index) {
+        const row = document.createElement('div');
+        row.className = `monitor-row status-${alert.status}`;
+        row.style.setProperty('--delay', `${index * 20}ms`);
+
+        const message = buildMessage(alert);
+        const phone = extractPhone(alert.email || '');
+        const smsLink = phone ? buildSmsLink(phone, message) : '#';
+        const waLink = phone ? buildWaLink(phone, message) : '#';
+
+        const st = alert.status;
+        const remCls = st === 'low' ? ' detail-highlight' : '';
+        const timeCls = st === 'soon' ? ' detail-highlight' : '';
+        const expCls = (st === 'expired' || st === 'ended') ? ' detail-highlight' : '';
+
+        row.innerHTML = `
+            <div class="monitor-cell monitor-user"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${escapeHtml(alert.email || '-')}</div>
+            <div class="monitor-cell monitor-phone"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>${escapeHtml(phone || '-')}</div>
+            <div class="monitor-cell"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>${escapeHtml(alert.server_name || '-')}</div>
+            <div class="monitor-cell"><span class="monitor-tag tag-${st}">${escapeHtml(alert.status_label || alert.status)}</span></div>
+            <div class="monitor-cell monitor-detail-stack">
+                <span class="detail-remaining${remCls}">${escapeHtml(alert.remaining || '-')}</span>
+                <span class="detail-time${timeCls}">${escapeHtml(alert.time_left || '-')}</span>
+                <span class="detail-expiry${expCls}">${escapeHtml(alert.expiry_date || '-')}</span>
+            </div>
+            <div class="monitor-cell monitor-actions">
+                <a class="btn btn-sms" href="${smsLink}" ${phone ? '' : 'aria-disabled="true"'}>
+                    <span class="icon">${getSmsIcon()}</span>
+                    SMS
+                </a>
+                <a class="btn btn-whatsapp" href="${waLink}" ${phone ? '' : 'aria-disabled="true"'}>
+                    <span class="icon">${getWhatsAppIcon()}</span>
+                    WhatsApp
+                </a>
+            </div>
+        `;
+        return row;
+    }
+
+    function buildMessage(alert) {
+        const templates = (monitorSettings || {}).templates || {};
+        const template = templates[alert.status] || '';
+        const vars = {
+            user: alert.email || '-',
+            rem: alert.remaining || '-',
+            time: alert.time_left || '-',
+            date: alert.expiry_date || '-',
+            server: alert.server_name || '-'
+        };
+        return (template || '').replace(/\{(user|rem|time|date|server)\}/g, (match, key) => vars[key] || '-');
+    }
+
+    function extractPhone(value) {
+        const digits = String(value || '').replace(/\D/g, '');
+        const match98 = digits.match(/98(9\d{9})/);
+        if (match98) {
+            return `+98${match98[1]}`;
+        }
+        const match09 = digits.match(/0(9\d{9})/);
+        if (match09) {
+            return `+98${match09[1]}`;
+        }
+        return null;
+    }
+
+    function buildSmsLink(phone, message) {
+        return `sms:${phone}?body=${encodeURIComponent(message)}`;
+    }
+
+    function buildWaLink(phone, message) {
+        const clean = phone.replace('+', '');
+        return `https://wa.me/${clean}?text=${encodeURIComponent(message)}`;
+    }
+
+    function handleMonitorSearch() {
+        const input = document.getElementById('monitor-search');
+        const clearBtn = document.getElementById('monitor-search-clear');
+        clearBtn.classList.toggle('hidden', !input.value);
+        renderAlerts();
+    }
+
+    function clearMonitorSearch() {
+        const input = document.getElementById('monitor-search');
+        input.value = '';
+        document.getElementById('monitor-search-clear').classList.add('hidden');
+        renderAlerts();
+    }
+
+    function copyMessage(encodedMessage) {
+        const message = decodeURIComponent(encodedMessage || '');
+        if (navigator.clipboard && message) {
+            navigator.clipboard.writeText(message).then(() => {
+                showToast('Message copied', 'success');
+            }).catch(() => {
+                showToast('Copy failed', 'error');
+            });
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+
+    function getWhatsAppIcon() {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.149-.197.297-.767.967-.94 1.164-.173.199-.347.224-.644.075-.297-.149-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.173.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884"/></svg>';
+    }
+
+    function getSmsIcon() {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 12H6l-2 2V4h16v10z"/></svg>';
+    }
+
+    async function scanNetworks() {
+        const overlay = document.getElementById('monitor-progress-overlay');
+        const text = document.getElementById('monitor-progress-text');
+
+        if (!overlay || !text) {
+            showToast('Progress UI is missing', 'error');
+            return;
+        }
+
+        overlay.classList.remove('hidden');
+        text.textContent = 'Initiating global scan...';
+
+        try {
+            const startResp = await fetch('/api/monitor/refresh', { method: 'POST' });
+            const startData = await startResp.json();
+
+            if (!startData.success) {
+                throw new Error(startData.error || 'Failed to start scan');
+            }
+
+            const jobId = startData.job_id;
+            const messages = [
+                'Connecting to servers...',
+                'Fetching client usage...',
+                'Calculating expirations...',
+                'Processing alerts...',
+                'Almost done...'
+            ];
+            let msgIdx = 0;
+
+            const pollInterval = setInterval(async () => {
+                try {
+                    const statusResp = await fetch(`/api/monitor/job/${jobId}`);
+                    const statusData = await statusResp.json();
+
+                    if (!statusData.success || !statusData.job) {
+                        return;
+                    }
+
+                    const job = statusData.job;
+                    if (job.state === 'done') {
+                        clearInterval(pollInterval);
+                        text.textContent = 'Scan complete. Updating view...';
+                        await refreshAlerts();
+                        setTimeout(() => {
+                            overlay.classList.add('hidden');
+                            showToast('Global scan completed successfully', 'success');
+                        }, 500);
+                        return;
+                    }
+
+                    if (job.state === 'error') {
+                        clearInterval(pollInterval);
+                        overlay.classList.add('hidden');
+                        showToast('Scan failed: ' + (job.error || 'Unknown error'), 'error');
+                        return;
+                    }
+
+                    msgIdx = (msgIdx + 1) % messages.length;
+                    text.textContent = messages[msgIdx];
+                } catch (e) {
+                    console.error('Poll error', e);
+                }
+            }, 1000);
+        } catch (err) {
+            console.error(err);
+            overlay.classList.add('hidden');
+            showToast(err.message || 'Error starting scan', 'error');
+        }
+    }
+</script>
+{% endblock %}

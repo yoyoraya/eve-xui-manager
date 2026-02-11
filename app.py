@@ -2194,6 +2194,22 @@ class SystemSetting(db.Model):
 RENEW_TEMPLATE_SETTING_KEY = 'renew_template'
 DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nتمدید شد"""
 
+MONITOR_SETTINGS_KEY = 'monitor_settings'
+DEFAULT_MONITOR_SETTINGS = {
+    "filters": {
+        "warning_days": 3,
+        "warning_gb": 2.0,
+        "hide_days": 7,
+        "debug": False
+    },
+    "templates": {
+        "ended": "مشترک گرامی {user}، حجم سرویس شما به پایان رسیده است.\nلطفا جهت تمدید اقدام فرمایید.",
+        "expired": "مشترک گرامی {user}، زمان سرویس شما به پایان رسیده است.\nلطفا جهت تمدید اقدام فرمایید.",
+        "low": "مشترک گرامی {user}، تنها {rem} از حجم سرویس شما باقی مانده است.\nتمدید میفرمایید؟",
+        "soon": "مشترک گرامی {user}، تنها {time} از زمان سرویس شما باقی مانده است.\nتمدید میفرمایید؟"
+    }
+}
+
 
 def _get_or_create_system_setting(key: str, default_value: str | None = None) -> str | None:
     """Fetch a SystemSetting value; optionally create with default if missing.
@@ -2229,6 +2245,53 @@ def _render_text_template(template: str | None, variables: dict) -> str:
             return DEFAULT_RENEW_TEMPLATE.format(**variables)
         except Exception:
             return DEFAULT_RENEW_TEMPLATE
+
+
+def _normalize_monitor_settings(payload: dict | None) -> dict:
+    data = payload if isinstance(payload, dict) else {}
+    defaults = copy.deepcopy(DEFAULT_MONITOR_SETTINGS)
+
+    filters = data.get('filters') if isinstance(data.get('filters'), dict) else {}
+    templates = data.get('templates') if isinstance(data.get('templates'), dict) else {}
+
+    defaults['filters']['warning_days'] = _parse_int(
+        filters.get('warning_days'),
+        defaults['filters']['warning_days'],
+        min_value=1,
+        max_value=365
+    )
+    try:
+        defaults['filters']['warning_gb'] = float(filters.get('warning_gb', defaults['filters']['warning_gb']))
+    except Exception:
+        defaults['filters']['warning_gb'] = DEFAULT_MONITOR_SETTINGS['filters']['warning_gb']
+    defaults['filters']['warning_gb'] = max(0.1, min(defaults['filters']['warning_gb'], 1024.0))
+
+    defaults['filters']['hide_days'] = _parse_int(
+        filters.get('hide_days'),
+        defaults['filters']['hide_days'],
+        min_value=0,
+        max_value=365
+    )
+    defaults['filters']['debug'] = bool(filters.get('debug', defaults['filters']['debug']))
+
+    for key in defaults['templates'].keys():
+        val = templates.get(key)
+        if isinstance(val, str) and val.strip():
+            defaults['templates'][key] = val.strip()
+
+    return defaults
+
+
+def _get_monitor_settings() -> dict:
+    raw = _get_or_create_system_setting(
+        MONITOR_SETTINGS_KEY,
+        json.dumps(DEFAULT_MONITOR_SETTINGS, ensure_ascii=False)
+    )
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except Exception:
+        parsed = {}
+    return _normalize_monitor_settings(parsed)
 
 class ManualReceipt(db.Model):
     __tablename__ = 'manual_receipts'
@@ -4310,6 +4373,224 @@ def servers_page():
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
                          role=session.get('role', 'admin'))
+
+
+@app.route('/monitor')
+@login_required
+def monitor_page():
+    return render_template('monitor.html',
+                         admin_username=session.get('admin_username'),
+                         is_superadmin=session.get('is_superadmin', False),
+                         role=session.get('role', 'admin'))
+
+
+@app.route('/api/monitor/settings', methods=['GET'])
+@login_required
+def get_monitor_settings():
+    return jsonify({'success': True, 'settings': _get_monitor_settings()})
+
+
+@app.route('/api/monitor/settings', methods=['POST'])
+@login_required
+def save_monitor_settings():
+    try:
+        payload = request.get_json() or {}
+    except Exception:
+        payload = {}
+    normalized = _normalize_monitor_settings(payload)
+    _set_system_setting_value(
+        MONITOR_SETTINGS_KEY,
+        json.dumps(normalized, ensure_ascii=False)
+    )
+    db.session.commit()
+    return jsonify({'success': True, 'settings': normalized})
+
+
+@app.route('/api/monitor/alerts', methods=['GET'])
+@login_required
+def get_monitor_alerts():
+    user = db.session.get(Admin, session['admin_id'])
+    settings = _get_monitor_settings()
+    filters = settings.get('filters', {})
+
+    now_utc = datetime.utcnow()
+
+    warning_days = int(filters.get('warning_days', 3) or 3)
+    warning_gb = float(filters.get('warning_gb', 2.0) or 2.0)
+    hide_days = int(filters.get('hide_days', 7) or 7)
+    debug = bool(filters.get('debug'))
+
+    inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+
+    allowed_map, assignments = ('*', {})
+    owned_emails_by_server = defaultdict(set)
+    if user and user.role == 'reseller':
+        allowed_map, assignments = get_reseller_access_maps(user)
+        ownerships = ClientOwnership.query.filter_by(reseller_id=user.id).all()
+        for own in ownerships:
+            try:
+                sid = int(own.server_id)
+            except Exception:
+                continue
+            email_l = (own.client_email or '').strip().lower()
+            if email_l:
+                owned_emails_by_server[sid].add(email_l)
+
+    status_labels = {
+        'ended': 'Ended',
+        'expired': 'Expired',
+        'low': 'Low data',
+        'soon': 'Expiring soon',
+        'ok': 'OK'
+    }
+    status_order = {
+        'ended': 0,
+        'expired': 1,
+        'low': 2,
+        'soon': 3,
+        'ok': 4
+    }
+
+    alerts = []
+
+    for inbound in inbounds:
+        sid = inbound.get('server_id')
+        inbound_id = inbound.get('id')
+
+        if sid is None:
+            continue
+
+        if user and user.role == 'reseller':
+            if not is_inbound_accessible(sid, inbound_id, allowed_map, assignments):
+                continue
+
+        for client in (inbound.get('clients') or []):
+            email = (client.get('email') or '').strip()
+            email_l = email.lower()
+
+            if user and user.role == 'reseller':
+                if not owned_emails_by_server:
+                    continue
+                try:
+                    sid_norm = int(sid)
+                except Exception:
+                    continue
+                if email_l not in owned_emails_by_server.get(sid_norm, set()):
+                    continue
+
+            enabled = bool(client.get('enable', True))
+            if not enabled and not debug:
+                continue
+
+            total_bytes = int(client.get('totalGB') or 0)
+            remaining_bytes = client.get('remaining_bytes')
+            if remaining_bytes is None or remaining_bytes == -1:
+                if total_bytes > 0:
+                    try:
+                        used_bytes = int(client.get('up') or 0) + int(client.get('down') or 0)
+                        remaining_bytes = max(total_bytes - used_bytes, 0)
+                    except Exception:
+                        remaining_bytes = None
+                else:
+                    remaining_bytes = None
+
+            remaining_gb = None
+            if remaining_bytes is not None:
+                try:
+                    remaining_gb = float(remaining_bytes) / (1024 ** 3)
+                except Exception:
+                    remaining_gb = None
+
+            expiry_ts = int(client.get('expiryTimestamp') or 0)
+            expiry_info = format_remaining_days(expiry_ts)
+
+            status = None
+            status_rank = -1
+
+            if total_bytes > 0 and remaining_bytes is not None:
+                if remaining_bytes <= 0:
+                    status = 'ended'
+                    status_rank = 4
+                elif remaining_gb is not None and remaining_gb < warning_gb:
+                    status = 'low'
+                    status_rank = 2
+
+            if expiry_ts and expiry_info.get('type') == 'expired':
+                if status_rank < 3:
+                    status = 'expired'
+                    status_rank = 3
+            elif expiry_ts and expiry_info.get('type') in ('today', 'soon'):
+                if int(expiry_info.get('days') or 0) <= warning_days and status_rank < 1:
+                    status = 'soon'
+                    status_rank = 1
+
+            if expiry_info.get('type') == 'expired' and not debug:
+                try:
+                    days_ago = abs(int(expiry_info.get('days') or 0))
+                except Exception:
+                    days_ago = 0
+                if hide_days and days_ago > hide_days:
+                    continue
+
+            if not status and not debug:
+                continue
+
+            if not status:
+                status = 'ok'
+
+            expiry_date = None
+            if expiry_ts and expiry_ts > 0:
+                try:
+                    expiry_dt = datetime.utcfromtimestamp(expiry_ts / 1000)
+                    expiry_date = format_jalali(expiry_dt)
+                except Exception:
+                    expiry_date = None
+
+            alerts.append({
+                'server_id': sid,
+                'server_name': inbound.get('server_name'),
+                'inbound_id': inbound_id,
+                'email': email,
+                'status': status,
+                'status_label': status_labels.get(status, status),
+                'remaining': client.get('remaining_formatted') or 'Unlimited',
+                'time_left': expiry_info.get('text'),
+                'expiry_date': expiry_date,
+                'enabled': enabled
+            })
+
+    alerts.sort(key=lambda row: (
+        status_order.get(row.get('status') or 'ok', 9),
+        str(row.get('server_name') or ''),
+        str(row.get('email') or '')
+    ))
+
+    return jsonify({
+        'success': True,
+        'settings': settings,
+        'generated_at': now_utc.isoformat(),
+        'generated_at_jalali': format_jalali(now_utc),
+        'alerts': alerts
+    })
+
+
+@app.route('/api/monitor/refresh', methods=['POST'])
+@login_required
+def trigger_monitor_refresh():
+    # Force refresh of all servers (global mode)
+    job = enqueue_refresh_job(mode='full', force=True)
+    return jsonify({'success': True, 'job_id': job['id']})
+
+
+@app.route('/api/monitor/job/<job_id>', methods=['GET'])
+@login_required
+def get_monitor_job_status(job_id):
+    with REFRESH_JOBS_LOCK:
+        job = REFRESH_JOBS.get(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': 'Job not found'})
+    return jsonify({'success': True, 'job': job})
+
 
 @app.route('/admins')
 @login_required
