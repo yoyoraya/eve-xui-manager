@@ -6420,7 +6420,32 @@ def get_servers():
         servers = get_accessible_servers(user)
     else:
         servers = Server.query.all()
-    return jsonify([s.to_dict() for s in servers])
+    status_map = {}
+    for st in (GLOBAL_SERVER_DATA.get('servers_status') or []):
+        try:
+            sid = int(st.get('server_id', -1))
+        except Exception:
+            continue
+        if sid > 0:
+            status_map[sid] = st
+
+    payload = []
+    for s in servers:
+        item = s.to_dict()
+        st = status_map.get(int(s.id)) or {}
+        item.update({
+            'online_count': st.get('online_count'),
+            'xui_version': st.get('xui_version'),
+            'xray_version': st.get('xray_version'),
+            'xray_core': st.get('xray_core'),
+            'panel_status_error': st.get('panel_status_error'),
+            'panel_status_checked_at': st.get('panel_status_checked_at'),
+            'reachable': st.get('reachable'),
+            'reachable_error': st.get('reachable_error')
+        })
+        payload.append(item)
+
+    return jsonify(payload)
 
 @app.route('/api/servers', methods=['POST'])
 @login_required

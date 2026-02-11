@@ -1879,12 +1879,6 @@
         const countEl = document.getElementById('inbounds-count');
         if (countEl) countEl.textContent = `${inbounds.length} inbounds`;
 
-        const statusMap = new Map();
-        (Array.isArray(serverStatuses) ? serverStatuses : []).forEach(st => {
-            const sid = parseInt(st?.server_id);
-            if (Number.isFinite(sid)) statusMap.set(sid, st);
-        });
-        
         let html = '';
 
         if (inbounds.length === 0 && (!pendingServers || pendingServers.length === 0)) {
@@ -1905,27 +1899,6 @@
             const inboundKey = `${inbound.server_id}:${inbound.id}`;
             const isExpanded = expandedInboundKeys.has(inboundKey);
             const toggleCount = inbound.clients.length;
-            const st = statusMap.get(parseInt(inbound.server_id)) || {};
-            const onlineCount = Number.isFinite(parseInt(st?.online_count))
-                ? parseInt(st.online_count)
-                : (Number.isFinite(parseInt(st?.stats?.online_clients)) ? parseInt(st.stats.online_clients) : null);
-            const xuiVersion = st?.xui_version || '';
-            const xrayVersion = st?.xray_version || '';
-            const xrayCore = st?.xray_core || '';
-
-            const statusTags = [];
-            if (onlineCount !== null) {
-                statusTags.push(`<span class="meta-tag"><span class="label">Online:</span> <span class="value">${onlineCount}</span></span>`);
-            }
-            if (xuiVersion) {
-                statusTags.push(`<span class="meta-tag"><span class="label">X-UI:</span> <span class="value">${escapeHtml(String(xuiVersion))}</span></span>`);
-            }
-            if (xrayVersion) {
-                statusTags.push(`<span class="meta-tag"><span class="label">Xray:</span> <span class="value">${escapeHtml(String(xrayVersion))}</span></span>`);
-            }
-            if (xrayCore) {
-                statusTags.push(`<span class="meta-tag"><span class="label">Core:</span> <span class="value">${escapeHtml(String(xrayCore))}</span></span>`);
-            }
             return `
             <div class="inbound-card ${!inbound.enable ? 'disabled' : ''}">
                 <div class="inbound-header">
@@ -1947,7 +1920,6 @@
                     <span class="meta-tag"><span class="label">Security:</span> <span class="value">${inbound.security}</span></span>
                     <span class="meta-tag"><span class="label">Clients:</span> <span class="value">${inbound.client_count}</span></span>
                     <span class="meta-tag traffic"><span class="label">Traffic:</span> <span class="up">↑${inbound.total_up}</span> <span class="down">↓${inbound.total_down}</span></span>
-                    ${statusTags.join('')}
                 </div>
 
                 ${inbound.clients.length > 0 ? `

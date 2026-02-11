@@ -177,6 +177,31 @@
             badges.appendChild(createBadge(server.enabled ? 'Enabled' : 'Disabled', `badge ${server.enabled ? 'active' : 'inactive'}`));
             badges.appendChild(createBadge(server.panel_type || 'Unknown', 'badge panel-type'));
 
+            const statusMeta = document.createElement('div');
+            statusMeta.className = 'server-meta';
+
+            const onlineCount = Number.isFinite(parseInt(server?.online_count)) ? parseInt(server.online_count) : null;
+            const xuiVersion = server?.xui_version || '';
+            const xrayVersion = server?.xray_version || '';
+            const xrayCore = server?.xray_core || '';
+            const statusErr = server?.panel_status_error || '';
+
+            if (onlineCount !== null) {
+                statusMeta.appendChild(createBadge(`Online: ${onlineCount}`, 'badge info'));
+            }
+            if (xuiVersion) {
+                statusMeta.appendChild(createBadge(`X-UI: ${xuiVersion}`, 'badge info'));
+            }
+            if (xrayVersion) {
+                statusMeta.appendChild(createBadge(`Xray: ${xrayVersion}`, 'badge info'));
+            }
+            if (xrayCore) {
+                statusMeta.appendChild(createBadge(`Core: ${xrayCore}`, 'badge info'));
+            }
+            if (statusErr) {
+                statusMeta.appendChild(createBadge(`Status error`, 'badge inactive'));
+            }
+
             const actions = document.createElement('div');
             actions.className = 'server-actions';
 
@@ -208,6 +233,9 @@
 
             card.appendChild(header);
             card.appendChild(badges);
+            if (statusMeta.childNodes.length > 0) {
+                card.appendChild(statusMeta);
+            }
             card.appendChild(actions);
             return card;
         }
