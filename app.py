@@ -1002,6 +1002,7 @@ def fetch_and_update_server_data(server_id: int):
         raise RuntimeError(fetch_error)
 
     online_index, _ = fetch_onlines(session_obj, server.host, server.panel_type)
+    status_payload, status_error, _status_type = fetch_server_status(session_obj, server.host, server.panel_type)
 
     if persist_detected_panel_type(server, detected_type):
         app.logger.info(f"Detected panel type for server {server.id} as {detected_type}")
@@ -1047,11 +1048,35 @@ def fetch_and_update_server_data(server_id: int):
     updated = False
     for st in statuses:
         if isinstance(st, dict) and int(st.get('server_id', -1)) == int(server.id):
-            st.update({"server_id": server.id, "success": True, "stats": stats, "panel_type": server.panel_type})
+            status_payload = status_payload or {}
+            st.update({
+                "server_id": server.id,
+                "success": True,
+                "stats": stats,
+                "panel_type": server.panel_type,
+                "xui_version": status_payload.get('xui_version'),
+                "xray_version": status_payload.get('xray_version'),
+                "xray_core": status_payload.get('xray_core'),
+                "online_count": status_payload.get('online_count'),
+                "panel_status_error": status_error,
+                "panel_status_checked_at": datetime.utcnow().isoformat()
+            })
             updated = True
             break
     if not updated:
-        statuses.append({"server_id": server.id, "success": True, "stats": stats, "panel_type": server.panel_type})
+        status_payload = status_payload or {}
+        statuses.append({
+            "server_id": server.id,
+            "success": True,
+            "stats": stats,
+            "panel_type": server.panel_type,
+            "xui_version": status_payload.get('xui_version'),
+            "xray_version": status_payload.get('xray_version'),
+            "xray_core": status_payload.get('xray_core'),
+            "online_count": status_payload.get('online_count'),
+            "panel_status_error": status_error,
+            "panel_status_checked_at": datetime.utcnow().isoformat()
+        })
     GLOBAL_SERVER_DATA['servers_status'] = statuses
 
     GLOBAL_SERVER_DATA['stats'] = _recompute_global_stats_from_server_statuses(statuses)
@@ -3642,6 +3667,124 @@ def fetch_onlines(session_obj, host, panel_type='auto'):
         return index, str(e)
 
 
+def _pick_first_value(payload: dict, keys: list[str]):
+    for key in keys:
+        if key in payload and payload.get(key) not in (None, ''):
+            return payload.get(key)
+    return None
+
+
+def _normalize_server_status_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+
+    xray_info = payload.get('xray') if isinstance(payload.get('xray'), dict) else {}
+
+    xui_version = _pick_first_value(payload, ['xui_version', 'xuiVersion', 'xui'])
+    if not xui_version and isinstance(payload.get('version'), str):
+        xui_version = payload.get('version')
+
+    xray_version = _pick_first_value(payload, ['xray_version', 'xrayVersion'])
+    if not xray_version and isinstance(xray_info, dict):
+        xray_version = _pick_first_value(xray_info, ['version', 'xray_version', 'xrayVersion'])
+
+    xray_core = _pick_first_value(payload, ['core', 'xray_core', 'xrayCore', 'arch', 'architecture'])
+    if not xray_core and isinstance(xray_info, dict):
+        xray_core = _pick_first_value(xray_info, ['core', 'arch', 'architecture'])
+
+    online = _pick_first_value(payload, ['online', 'onlineCount', 'online_count'])
+    try:
+        online_count = int(online) if online is not None else None
+    except Exception:
+        online_count = None
+
+    return {
+        'xui_version': xui_version,
+        'xray_version': xray_version,
+        'xray_core': xray_core,
+        'online_count': online_count
+    }
+
+
+def fetch_server_status(session_obj, host, panel_type='auto'):
+    base, webpath = extract_base_and_webpath(host)
+    timeout_sec = 2.5
+    normalized_type = (panel_type or 'auto').strip().lower()
+
+    endpoints = []
+    panel_api = get_panel_api(normalized_type)
+    if normalized_type != 'auto' and panel_api and panel_api.server_status:
+        endpoints.append((panel_api.server_status, normalized_type))
+    else:
+        try:
+            all_apis = PanelAPI.query.all()
+        except Exception:
+            all_apis = []
+
+        def _api_sort_key(api: 'PanelAPI'):
+            pt = (getattr(api, 'panel_type', '') or '').lower()
+            if pt == 'sanaei':
+                return (0, pt)
+            if pt == 'alireza':
+                return (1, pt)
+            return (2, pt)
+
+        for api in sorted(all_apis, key=_api_sort_key):
+            ep = getattr(api, 'server_status', None)
+            pt = (getattr(api, 'panel_type', None) or '').strip().lower()
+            if ep and pt:
+                endpoints.append((ep, pt))
+
+        endpoints.extend([
+            ('/panel/api/server/status', 'sanaei'),
+            ('/xui/API/server/status', 'alireza'),
+        ])
+
+    seen = set()
+    deduped = []
+    for ep, pt in endpoints:
+        if not ep:
+            continue
+        key = (ep, pt)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((ep, pt))
+
+    last_error = None
+    for ep, detected_type in deduped:
+        try:
+            url = ep if ep.startswith('http') else f"{base}{webpath}{ep}"
+            resp = session_obj.get(url, verify=False, timeout=timeout_sec)
+            if resp.status_code != 200:
+                last_error = f"HTTP {resp.status_code}"
+                continue
+
+            data, err = _safe_response_json(resp)
+            if err:
+                last_error = err
+                continue
+            if isinstance(data, dict) and data.get('success') is False:
+                last_error = data.get('msg') or data.get('message') or 'Status failed'
+                continue
+
+            payload = None
+            if isinstance(data, dict):
+                payload = data.get('obj') if data.get('obj') is not None else data.get('data')
+                if payload is None:
+                    payload = data
+            elif isinstance(data, dict):
+                payload = data
+
+            normalized = _normalize_server_status_payload(payload if isinstance(payload, dict) else {})
+            return normalized, None, detected_type
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    return None, last_error or 'Failed to fetch status', 'auto'
+
+
 def fetch_direct_link_from_subscription(sub_url: str, fallback_func=None, fallback_args=None) -> str:
     """
     Fetch the direct config link from the upstream X-UI subscription endpoint.
@@ -4136,11 +4279,12 @@ def fetch_worker(server_dict):
         server_obj = SimpleNamespace(**server_dict)
         session_obj, error = get_xui_session(server_obj)
         if error:
-            return server_dict['id'], None, None, error, 'auto'
+            return server_dict['id'], None, None, None, None, error, 'auto'
         
         inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
         online_index, _ = fetch_onlines(session_obj, server_obj.host, server_obj.panel_type)
-        return server_dict['id'], inbounds, online_index, fetch_error, detected_type
+        status_payload, status_error, _status_type = fetch_server_status(session_obj, server_obj.host, server_obj.panel_type)
+        return server_dict['id'], inbounds, online_index, status_payload, status_error, fetch_error, detected_type
 
 @app.route('/api/refresh')
 @login_required
@@ -10278,7 +10422,7 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 for future in concurrent.futures.as_completed(future_to_id):
                     results.append(future.result())
 
-        results_by_id = {r[0]: r for r in results if isinstance(r, tuple) and len(r) >= 5}
+        results_by_id = {r[0]: r for r in results if isinstance(r, tuple) and len(r) >= 7}
 
         existing_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
         existing_by_server = defaultdict(list)
@@ -10319,8 +10463,8 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 status_map[sid] = st
                 continue
 
-            res = results_by_id.get(sid) or (sid, None, None, "Timeout", 'auto')
-            _, inbounds, online_index, error, detected_type = res
+            res = results_by_id.get(sid) or (sid, None, None, None, None, "Timeout", 'auto')
+            _, inbounds, online_index, status_payload, status_error, error, detected_type = res
 
             if error:
                 _backoff_record_failure(sid, error)
@@ -10334,6 +10478,13 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 st['reachable'] = False
                 st['reachable_error'] = error
                 st['reachable_checked_at'] = now_iso
+                if status_payload:
+                    st['xui_version'] = status_payload.get('xui_version')
+                    st['xray_version'] = status_payload.get('xray_version')
+                    st['xray_core'] = status_payload.get('xray_core')
+                    st['online_count'] = status_payload.get('online_count')
+                    st['panel_status_error'] = status_error
+                    st['panel_status_checked_at'] = now_iso
                 status_map[sid] = st
                 # keep existing inbounds block (if any)
                 continue
@@ -10347,6 +10498,7 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
             new_by_server[sid] = list(processed or [])
 
             st = status_map.get(sid) or {"server_id": sid}
+            status_payload = status_payload or {}
             st.update({
                 "server_id": sid,
                 "success": True,
@@ -10355,7 +10507,13 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 "reachable": True,
                 "reachable_error": None,
                 "reachable_checked_at": now_iso,
-                "error": None
+                "error": None,
+                "xui_version": status_payload.get('xui_version'),
+                "xray_version": status_payload.get('xray_version'),
+                "xray_core": status_payload.get('xray_core'),
+                "online_count": status_payload.get('online_count'),
+                "panel_status_error": status_error,
+                "panel_status_checked_at": now_iso
             })
             status_map[sid] = st
 
