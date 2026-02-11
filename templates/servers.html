@@ -183,24 +183,30 @@
             const onlineCount = Number.isFinite(parseInt(server?.online_count)) ? parseInt(server.online_count) : null;
             const xuiVersion = server?.xui_version || '';
             const xrayVersion = server?.xray_version || '';
+            const xrayState = server?.xray_state || '';
             const xrayCore = server?.xray_core || '';
             const statusErr = server?.panel_status_error || '';
 
             if (onlineCount !== null) {
-                statusMeta.appendChild(createBadge(`Online: ${onlineCount}`, 'badge info'));
-            }
-            if (xuiVersion) {
-                statusMeta.appendChild(createBadge(`X-UI: ${xuiVersion}`, 'badge info'));
+                statusMeta.appendChild(createBadge(`👥 Online: ${onlineCount}`, 'badge info'));
             }
             if (xrayVersion) {
                 statusMeta.appendChild(createBadge(`Xray: ${xrayVersion}`, 'badge info'));
+            }
+            if (xrayState) {
+                const stateClass = xrayState === 'running' ? 'badge active' : 'badge inactive';
+                statusMeta.appendChild(createBadge(`Xray: ${xrayState}`, stateClass));
+            }
+            if (xuiVersion) {
+                statusMeta.appendChild(createBadge(`X-UI: ${xuiVersion}`, 'badge info'));
             }
             if (xrayCore) {
                 statusMeta.appendChild(createBadge(`Core: ${xrayCore}`, 'badge info'));
             }
             if (statusErr) {
-                const errBadge = createBadge(`Status error`, 'badge inactive');
+                const errBadge = createBadge(`⚠ Status`, 'badge inactive');
                 errBadge.title = statusErr;
+                errBadge.style.cursor = 'help';
                 statusMeta.appendChild(errBadge);
             }
 

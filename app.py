@@ -1004,6 +1004,14 @@ def fetch_and_update_server_data(server_id: int):
     online_index, _ = fetch_onlines(session_obj, server.host, server.panel_type)
     status_payload, status_error, _status_type = fetch_server_status(session_obj, server.host, server.panel_type)
 
+    # Enrich status_payload with online_count from onlines endpoint
+    if online_index:
+        online_count = len(online_index.get('pairs', set())) + len(online_index.get('emails', set()))
+        if status_payload is None:
+            status_payload = {}
+        if status_payload.get('online_count') is None and online_count > 0:
+            status_payload['online_count'] = online_count
+
     if persist_detected_panel_type(server, detected_type):
         app.logger.info(f"Detected panel type for server {server.id} as {detected_type}")
 
@@ -1056,9 +1064,10 @@ def fetch_and_update_server_data(server_id: int):
                 "panel_type": server.panel_type,
                 "xui_version": status_payload.get('xui_version'),
                 "xray_version": status_payload.get('xray_version'),
+                "xray_state": status_payload.get('xray_state'),
                 "xray_core": status_payload.get('xray_core'),
                 "online_count": status_payload.get('online_count'),
-                "panel_status_error": status_error,
+                "panel_status_error": status_error if status_error else None,
                 "panel_status_checked_at": datetime.utcnow().isoformat()
             })
             updated = True
@@ -1072,9 +1081,10 @@ def fetch_and_update_server_data(server_id: int):
             "panel_type": server.panel_type,
             "xui_version": status_payload.get('xui_version'),
             "xray_version": status_payload.get('xray_version'),
+            "xray_state": status_payload.get('xray_state'),
             "xray_core": status_payload.get('xray_core'),
             "online_count": status_payload.get('online_count'),
-            "panel_status_error": status_error,
+            "panel_status_error": status_error if status_error else None,
             "panel_status_checked_at": datetime.utcnow().isoformat()
         })
     GLOBAL_SERVER_DATA['servers_status'] = statuses
@@ -3675,6 +3685,11 @@ def _pick_first_value(payload: dict, keys: list[str]):
 
 
 def _normalize_server_status_payload(payload: dict) -> dict:
+    """Extract useful info from the panel /status API response.
+
+    Note: The /status endpoint returns system stats (CPU, mem, disk, xray info).
+    It does NOT return xui_version or online_count - those come from elsewhere.
+    """
     if not isinstance(payload, dict):
         return {}
 
@@ -3687,6 +3702,13 @@ def _normalize_server_status_payload(payload: dict) -> dict:
     xray_version = _pick_first_value(payload, ['xray_version', 'xrayVersion'])
     if not xray_version and isinstance(xray_info, dict):
         xray_version = _pick_first_value(xray_info, ['version', 'xray_version', 'xrayVersion'])
+
+    # Xray state: running / stop / error (Sanaei uses lowercase, Alireza uses capitalized)
+    xray_state = None
+    if isinstance(xray_info, dict):
+        raw_state = _pick_first_value(xray_info, ['state', 'State'])
+        if raw_state:
+            xray_state = str(raw_state).lower()  # normalize to lowercase
 
     xray_core = _pick_first_value(payload, ['core', 'xray_core', 'xrayCore', 'arch', 'architecture'])
     if not xray_core and isinstance(xray_info, dict):
@@ -3701,6 +3723,7 @@ def _normalize_server_status_payload(payload: dict) -> dict:
     return {
         'xui_version': xui_version,
         'xray_version': xray_version,
+        'xray_state': xray_state,
         'xray_core': xray_core,
         'online_count': online_count
     }
@@ -3708,7 +3731,7 @@ def _normalize_server_status_payload(payload: dict) -> dict:
 
 def fetch_server_status(session_obj, host, panel_type='auto'):
     base, webpath = extract_base_and_webpath(host)
-    timeout_sec = 2.5
+    timeout_sec = 5
     normalized_type = (panel_type or 'auto').strip().lower()
 
     endpoints = []
@@ -3740,6 +3763,10 @@ def fetch_server_status(session_obj, host, panel_type='auto'):
             ('/xui/API/server/status', 'alireza'),
         ])
 
+    # Add non-API fallback paths (some older panel versions only expose these)
+    if normalized_type in ('alireza', 'alireza0', 'xui', 'x-ui', 'auto', ''):
+        endpoints.append(('/server/status', 'alireza'))
+
     seen = set()
     deduped = []
     for ep, pt in endpoints:
@@ -3755,7 +3782,18 @@ def fetch_server_status(session_obj, host, panel_type='auto'):
     for ep, detected_type in deduped:
         try:
             url = ep if ep.startswith('http') else f"{base}{webpath}{ep}"
-            resp = session_obj.get(url, verify=False, timeout=timeout_sec)
+            resp = session_obj.get(url, verify=False, timeout=timeout_sec, allow_redirects=False)
+
+            # Redirect usually means session expired -> redirected to login page
+            if resp.status_code in (301, 302, 303, 307, 308):
+                last_error = f"Redirect {resp.status_code} (session may have expired)"
+                continue
+
+            if resp.status_code == 404:
+                # Sanaei returns 404 for unauthenticated API calls, or endpoint doesn't exist
+                last_error = f"HTTP 404 (endpoint may not exist in this panel version)"
+                continue
+
             if resp.status_code != 200:
                 last_error = f"HTTP {resp.status_code}"
                 continue
@@ -3770,16 +3808,26 @@ def fetch_server_status(session_obj, host, panel_type='auto'):
 
             payload = None
             if isinstance(data, dict):
-                payload = data.get('obj') if data.get('obj') is not None else data.get('data')
-                if payload is None:
-                    payload = data
-            elif isinstance(data, dict):
-                payload = data
+                obj_val = data.get('obj')
+                # Handle null/None obj (e.g. Alireza panel lazy-load: status not ready yet)
+                if obj_val is not None and isinstance(obj_val, dict):
+                    payload = obj_val
+                elif obj_val is None:
+                    # obj is null, status not ready yet - return empty but successful
+                    return {}, None, detected_type
+                else:
+                    payload = data.get('data') or data
 
             normalized = _normalize_server_status_payload(payload if isinstance(payload, dict) else {})
             return normalized, None, detected_type
+        except requests.exceptions.Timeout:
+            last_error = f"Connection timeout ({timeout_sec}s)"
+            continue
+        except requests.exceptions.ConnectionError as e:
+            last_error = f"Connection error: {str(e)[:100]}"
+            continue
         except Exception as e:
-            last_error = str(e)
+            last_error = str(e)[:150]
             continue
 
     return None, last_error or 'Failed to fetch status', 'auto'
@@ -4284,6 +4332,16 @@ def fetch_worker(server_dict):
         inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
         online_index, _ = fetch_onlines(session_obj, server_obj.host, server_obj.panel_type)
         status_payload, status_error, _status_type = fetch_server_status(session_obj, server_obj.host, server_obj.panel_type)
+
+        # Enrich status_payload with online_count from the onlines endpoint
+        # (the /status API does NOT return online_count; it comes from /onlines)
+        if online_index:
+            online_count = len(online_index.get('pairs', set())) + len(online_index.get('emails', set()))
+            if status_payload is None:
+                status_payload = {}
+            if status_payload.get('online_count') is None and online_count > 0:
+                status_payload['online_count'] = online_count
+
         return server_dict['id'], inbounds, online_index, status_payload, status_error, fetch_error, detected_type
 
 @app.route('/api/refresh')
@@ -6437,6 +6495,7 @@ def get_servers():
             'online_count': st.get('online_count'),
             'xui_version': st.get('xui_version'),
             'xray_version': st.get('xray_version'),
+            'xray_state': st.get('xray_state'),
             'xray_core': st.get('xray_core'),
             'panel_status_error': st.get('panel_status_error'),
             'panel_status_checked_at': st.get('panel_status_checked_at'),
@@ -10506,9 +10565,10 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 if status_payload:
                     st['xui_version'] = status_payload.get('xui_version')
                     st['xray_version'] = status_payload.get('xray_version')
+                    st['xray_state'] = status_payload.get('xray_state')
                     st['xray_core'] = status_payload.get('xray_core')
                     st['online_count'] = status_payload.get('online_count')
-                    st['panel_status_error'] = status_error
+                    st['panel_status_error'] = status_error if status_error else None
                     st['panel_status_checked_at'] = now_iso
                 status_map[sid] = st
                 # keep existing inbounds block (if any)
@@ -10535,9 +10595,10 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 "error": None,
                 "xui_version": status_payload.get('xui_version'),
                 "xray_version": status_payload.get('xray_version'),
+                "xray_state": status_payload.get('xray_state'),
                 "xray_core": status_payload.get('xray_core'),
                 "online_count": status_payload.get('online_count'),
-                "panel_status_error": status_error,
+                "panel_status_error": status_error if status_error else None,
                 "panel_status_checked_at": now_iso
             })
             status_map[sid] = st
