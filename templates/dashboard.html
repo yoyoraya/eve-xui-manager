@@ -809,6 +809,7 @@
             <input type="hidden" id="edit-client-server-id">
             <input type="hidden" id="edit-client-inbound-id">
             <input type="hidden" id="edit-client-old-email">
+            <input type="hidden" id="edit-client-raw-expiry-ms" value="0">
             
             <div class="form-group">
                 <label>Email</label>
@@ -826,6 +827,19 @@
                     <input type="text" id="edit-client-expiry" data-jdp class="form-input" placeholder="1403/09/15 14:30">
                 </div>
             </div>
+
+            <div class="form-group" style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <div style="flex: 1; min-width: 0;">
+                    <label style="margin-bottom: 4px;">Start after first use</label>
+                    <small class="text-secondary">If enabled, the expiry countdown starts on the client's first connection.</small>
+                </div>
+                <label class="toggle-switch" style="margin: 0;">
+                    <input type="checkbox" id="edit-client-start-after-first-use" onchange="updateEditClientStartAfterFirstUseUI()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div id="edit-client-start-after-first-use-info" class="text-secondary" style="font-size: 0.8rem; line-height: 1.4; margin: -6px 0 12px; display: none;"></div>
+
             <div style="background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 15px; font-size: 0.8rem; color: #fbbf24; line-height: 1.4;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                 Changes here are not recorded in the Finance system. If you are adding volume or time, make sure to manually adjust or record the transaction in the Finance section.
@@ -4574,35 +4588,112 @@
         }
         
         const expiryInput = document.getElementById('edit-client-expiry');
+        const rawExpiryInput = document.getElementById('edit-client-raw-expiry-ms');
+        const firstUseToggle = document.getElementById('edit-client-start-after-first-use');
         if (expiryInput) {
             let ts = Number(expiryTime) || 0;
-            if (ts > 0) {
-                // If timestamp is in seconds (10 digits), convert to ms
-                if (ts < 10000000000) ts *= 1000;
-                
-                try {
-                    if (typeof persianDate !== 'undefined') {
-                        const pDate = new persianDate(ts);
-                        expiryInput.value = toEnglishDigits(pDate.format('YYYY/MM/DD HH:mm'));
-                    } else {
-                        const date = new Date(ts);
-                        const year = date.getFullYear();
-                        const month = String(date.getMonth() + 1).padStart(2, '0');
-                        const day = String(date.getDate()).padStart(2, '0');
-                        const hours = String(date.getHours()).padStart(2, '0');
-                        const minutes = String(date.getMinutes()).padStart(2, '0');
-                        expiryInput.value = `${year}/${month}/${day} ${hours}:${minutes}`;
-                    }
-                } catch (e) {
-                    console.error('Error formatting date:', e);
-                    expiryInput.value = '';
-                }
-            } else {
+            // If timestamp is in seconds (10 digits), convert to ms (supports negative too)
+            if (ts !== 0 && Math.abs(ts) < 10000000000) ts *= 1000;
+
+            if (rawExpiryInput) rawExpiryInput.value = String(ts || 0);
+
+            try {
+                expiryInput.value = (ts > 0) ? formatEditClientExpiryTs(ts) : '';
+            } catch (e) {
+                console.error('Error formatting date:', e);
                 expiryInput.value = '';
             }
+
+            expiryInput.disabled = false;
+            delete expiryInput.dataset.prevValue;
+
+            if (firstUseToggle) {
+                firstUseToggle.checked = (ts < 0);
+            }
+
+            updateEditClientStartAfterFirstUseUI();
         }
 
         document.getElementById('edit-client-modal').classList.remove('hidden');
+    }
+
+    function formatEditClientExpiryTs(ts) {
+        if (!ts || ts <= 0) return '';
+
+        if (typeof persianDate !== 'undefined') {
+            const pDate = new persianDate(ts);
+            return toEnglishDigits(pDate.format('YYYY/MM/DD HH:mm'));
+        }
+
+        const date = new Date(ts);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}/${month}/${day} ${hours}:${minutes}`;
+    }
+
+    function parseEditClientExpiryTextToMs(text) {
+        const trimmed = String(text || '').trim();
+        if (!trimmed) return 0;
+
+        try {
+            const gregorian = shamsiToGregorian(trimmed);
+            if (gregorian) return new Date(gregorian).getTime();
+        } catch (e) {
+            // ignore and fall back
+        }
+
+        const ts = new Date(trimmed).getTime();
+        return Number.isFinite(ts) ? ts : 0;
+    }
+
+    function updateEditClientStartAfterFirstUseUI() {
+        const toggle = document.getElementById('edit-client-start-after-first-use');
+        const info = document.getElementById('edit-client-start-after-first-use-info');
+        const expiryInput = document.getElementById('edit-client-expiry');
+        const rawExpiry = Number(document.getElementById('edit-client-raw-expiry-ms')?.value || 0);
+
+        if (!toggle || !info || !expiryInput) return;
+
+        const now = Date.now();
+        const msPerDay = 86400000;
+
+        if (toggle.checked) {
+            expiryInput.dataset.prevValue = expiryInput.value || '';
+
+            let remainingMs = 0;
+            const baseTs = parseEditClientExpiryTextToMs(expiryInput.dataset.prevValue);
+            if (baseTs > 0) {
+                remainingMs = baseTs - now;
+            } else if (rawExpiry < 0) {
+                remainingMs = Math.abs(rawExpiry);
+            } else if (rawExpiry > 0) {
+                remainingMs = rawExpiry - now;
+            }
+
+            const remainingDays = Math.ceil(Math.max(0, remainingMs) / msPerDay);
+            info.style.display = '';
+            if (remainingDays > 0) {
+                info.textContent = `Remaining validity: ${remainingDays} day${remainingDays === 1 ? '' : 's'}. Expiry time will be recalculated after the client's first connection.`;
+            } else {
+                info.textContent = 'Set a future expiry date first to enable this option.';
+            }
+
+            expiryInput.value = '';
+            expiryInput.disabled = true;
+            return;
+        }
+
+        info.style.display = 'none';
+        expiryInput.disabled = false;
+
+        if ((!expiryInput.value || !expiryInput.value.trim()) && rawExpiry < 0) {
+            // Convert pending duration back into a concrete date to make editing easier.
+            const derivedTs = now + Math.abs(rawExpiry);
+            expiryInput.value = formatEditClientExpiryTs(derivedTs);
+        }
     }
 
     function closeEditClientModal() {
@@ -4628,15 +4719,41 @@
         }
         
         const expiryInput = document.getElementById('edit-client-expiry');
-        if (expiryInput && expiryInput.value) {
-            const gregorian = shamsiToGregorian(expiryInput.value);
-            if (gregorian) {
-                payload.expiryTime = new Date(gregorian).getTime();
+        const firstUseToggle = document.getElementById('edit-client-start-after-first-use');
+        const rawExpiry = Number(document.getElementById('edit-client-raw-expiry-ms')?.value || 0);
+        if (expiryInput) {
+            if (firstUseToggle && firstUseToggle.checked) {
+                const now = Date.now();
+                const msPerDay = 86400000;
+                const baseTs = parseEditClientExpiryTextToMs(expiryInput.dataset.prevValue);
+                let remainingMs = 0;
+
+                if (baseTs > 0) {
+                    remainingMs = baseTs - now;
+                } else if (rawExpiry < 0) {
+                    remainingMs = Math.abs(rawExpiry);
+                } else if (rawExpiry > 0) {
+                    remainingMs = rawExpiry - now;
+                }
+
+                const remainingDays = Math.ceil(Math.max(0, remainingMs) / msPerDay);
+                if (!remainingDays || remainingDays <= 0) {
+                    showToast('Set a future expiry date first', 'error');
+                    return;
+                }
+
+                // X-UI convention: negative expiryTime means "not started yet" with remaining duration.
+                payload.expiryTime = -remainingDays * msPerDay;
+            } else if (expiryInput.value) {
+                const gregorian = shamsiToGregorian(expiryInput.value);
+                if (gregorian) {
+                    payload.expiryTime = new Date(gregorian).getTime();
+                } else {
+                    payload.expiryTime = new Date(expiryInput.value).getTime();
+                }
             } else {
-                payload.expiryTime = new Date(expiryInput.value).getTime();
+                payload.expiryTime = 0;
             }
-        } else if (expiryInput) {
-            payload.expiryTime = 0;
         }
 
         try {

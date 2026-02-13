@@ -77,7 +77,7 @@ from urllib.parse import urlparse, quote, urlencode, unquote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 # Simple in-memory cache for update checks
