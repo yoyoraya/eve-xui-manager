@@ -209,6 +209,15 @@
                                 <span>days</span>
                             </label>
                         </div>
+                        <div class="filter-item">
+                            <label class="checkbox-label" style="width: 100%;">
+                                <input type="checkbox" id="expiry-filter-gt-days" onchange="toggleExpirySelection('gt_days', this.checked)">
+                                <span class="checkmark"></span>
+                                <span>More than</span>
+                                <input type="number" id="expiry-gt-days" class="form-input expiry-days-input" min="1" max="999" step="1" value="30" onchange="onExpiryGtDaysChanged()" onkeydown="onExpiryGtDaysKeyDown(event)" onclick="event.stopPropagation()">
+                                <span>days</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1052,9 +1061,10 @@
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
     const lastUserCacheByServer = new Map(); // serverId -> { inboundId: email|null }
 
-    const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days
+    const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days | gt_days
     const expandedInboundKeys = new Set(); // `${server_id}:${inbound_id}` -> expanded client list
     let expiryLessThanDays = 7;
+    let expiryGreaterThanDays = 30;
     let disabledOnlyClients = false;
 
     // Persist bulk selections across refresh/re-render
@@ -1926,6 +1936,9 @@
                         ${inbound.enable 
                             ? `<span class="status-pill active">Active</span>` 
                             : `<span class="status-pill inactive">Inactive</span>`}
+                        ${inbound.clients.length > 0
+                            ? `<button class="btn btn-secondary" style="padding: 6px 10px;" onclick="event.stopPropagation(); toggleSelectAllClients('${inboundKey}', true)">Select All</button>`
+                            : ''}
                     </div>
                 </div>
                 
@@ -3437,6 +3450,9 @@
             case 'lt_days':
                 labelEl.textContent = `< ${expiryLessThanDays} days`;
                 break;
+            case 'gt_days':
+                labelEl.textContent = `> ${expiryGreaterThanDays} days`;
+                break;
             default:
                 labelEl.textContent = 'Expiry';
         }
@@ -3452,7 +3468,7 @@
     }
 
     function toggleAllExpiryFilters() {
-        const allKeys = ['not_started', 'unlimited', 'expired', 'today', 'lt_days'];
+        const allKeys = ['not_started', 'unlimited', 'expired', 'today', 'lt_days', 'gt_days'];
         const allSelected = allKeys.every(k => selectedExpiryFilters.has(k));
 
         if (allSelected) {
@@ -3462,6 +3478,9 @@
             const daysInput = document.getElementById('expiry-lt-days');
             const parsed = parseInt(daysInput?.value || '', 10);
             expiryLessThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
+            const gtDaysInput = document.getElementById('expiry-gt-days');
+            const gtParsed = parseInt(gtDaysInput?.value || '', 10);
+            expiryGreaterThanDays = Number.isFinite(gtParsed) && gtParsed > 0 ? gtParsed : 30;
         }
 
         updateExpiryFilterLabel();
@@ -3476,7 +3495,8 @@
             unlimited: 'expiry-filter-unlimited',
             expired: 'expiry-filter-expired',
             today: 'expiry-filter-today',
-            lt_days: 'expiry-filter-lt-days'
+            lt_days: 'expiry-filter-lt-days',
+            gt_days: 'expiry-filter-gt-days'
         };
 
         Object.entries(map).forEach(([key, id]) => {
@@ -3486,6 +3506,8 @@
 
         const daysInput = document.getElementById('expiry-lt-days');
         if (daysInput) daysInput.value = String(expiryLessThanDays);
+        const gtDaysInput = document.getElementById('expiry-gt-days');
+        if (gtDaysInput) gtDaysInput.value = String(expiryGreaterThanDays);
     }
 
     function toggleExpirySelection(type, checked) {
@@ -3499,6 +3521,12 @@
             const daysInput = document.getElementById('expiry-lt-days');
             const parsed = parseInt(daysInput?.value || '', 10);
             expiryLessThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
+        }
+
+        if (key === 'gt_days' && checked) {
+            const daysInput = document.getElementById('expiry-gt-days');
+            const parsed = parseInt(daysInput?.value || '', 10);
+            expiryGreaterThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
         }
 
         updateExpiryFilterLabel();
@@ -3530,6 +3558,22 @@
         }
     }
 
+    function onExpiryGtDaysChanged() {
+        const daysInput = document.getElementById('expiry-gt-days');
+        const parsed = parseInt(daysInput?.value || '', 10);
+        expiryGreaterThanDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+        updateExpiryFilterLabel();
+        if (selectedExpiryFilters.has('gt_days')) applyFilters();
+    }
+
+    function onExpiryGtDaysKeyDown(event) {
+        if (!event) return;
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            onExpiryGtDaysChanged();
+        }
+    }
+
     function matchesExpiryFilter(client) {
         if (!client) return false;
         if (!selectedExpiryFilters || selectedExpiryFilters.size === 0) return true;
@@ -3548,6 +3592,13 @@
             if (expiryTs > now && type !== 'expired' && type !== 'start_after_use' && type !== 'unlimited' && type !== 'today') {
                 const daysLeft = Math.ceil((expiryTs - now) / 86400000);
                 if (daysLeft > 0 && daysLeft < expiryLessThanDays) return true;
+            }
+        }
+
+        if (selectedExpiryFilters.has('gt_days')) {
+            if (expiryTs > now && type !== 'expired' && type !== 'start_after_use' && type !== 'unlimited' && type !== 'today') {
+                const daysLeft = Math.ceil((expiryTs - now) / 86400000);
+                if (daysLeft > expiryGreaterThanDays) return true;
             }
         }
 
@@ -4001,6 +4052,14 @@
                         <h3>${inbound.remark}</h3>
                         <span class="port-badge">:${inbound.port}</span>
                         <span class="server-badge">${inbound.server_name}</span>
+                    </div>
+                    <div class="inbound-status">
+                        ${inbound.enable 
+                            ? `<span class="status-pill active">Active</span>` 
+                            : `<span class="status-pill inactive">Inactive</span>`}
+                        ${inbound.clients.length > 0
+                            ? `<button class="btn btn-secondary" style="padding: 6px 10px;" onclick="event.stopPropagation(); toggleSelectAllClients('${inbound.server_id}:${inbound.id}', true)">Select All</button>`
+                            : ''}
                     </div>
                 </div>
                 ${inbound.clients.length > 0 ? `
