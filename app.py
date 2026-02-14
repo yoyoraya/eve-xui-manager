@@ -77,7 +77,7 @@ from urllib.parse import urlparse, quote, urlencode, unquote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.8.1"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 
 # Simple in-memory cache for update checks
@@ -5829,6 +5829,8 @@ def bulk_client_action():
     except Exception:
         return jsonify({"success": False, "error": "Invalid JSON"}), 400
 
+    wait_for_completion = _parse_bool(request.args.get('wait')) or _parse_bool(payload.get('wait'))
+
     action = payload.get('action')
     clients = payload.get('clients')
     data = payload.get('data') or {}
@@ -5898,6 +5900,13 @@ def bulk_client_action():
     with BULK_JOBS_LOCK:
         BULK_JOBS[job_id] = job
         _prune_bulk_jobs_locked()
+
+    if wait_for_completion:
+        _run_bulk_job(job_id)
+        with BULK_JOBS_LOCK:
+            done_job = BULK_JOBS.get(job_id)
+            summary = _summarize_bulk_job(done_job) if done_job else None
+        return jsonify({'success': True, 'job_id': job_id, 'done': True, 'job': summary})
 
     t = threading.Thread(target=_run_bulk_job, args=(job_id,), daemon=True)
     t.start()

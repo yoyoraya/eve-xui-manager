@@ -1280,9 +1280,12 @@
     function isBulkCheckboxVisible(cb) {
         if (!cb) return false;
         const row = cb.closest('tr');
-        if (row && row.offsetParent === null) return false;
-        const list = cb.closest('.clients-list');
-        if (list && list.classList.contains('hidden')) return false;
+        if (!row) return false;
+
+        // Selectability follows active filters, not expanded/collapsed UI state.
+        const isDisabledRow = row.classList.contains('disabled-row');
+        if (disabledOnlyClients) return isDisabledRow;
+        if (hideDisabledClients) return !isDisabledRow;
         return true;
     }
 
@@ -4331,6 +4334,63 @@
         text.textContent = `${safeProcessed}/${safeTotal}`;
     }
 
+    function handleBulkActionCompleted(action, clients, data, progress) {
+        const safeProgress = progress || {};
+        const successCount = safeProgress.success || 0;
+        const failedCount = safeProgress.failed || 0;
+        const skippedCount = safeProgress.skipped || 0;
+        showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`);
+
+        let localChanged = false;
+
+        if (action === 'assign_owner' || action === 'unassign_owner') {
+            const newOwnerName = action === 'unassign_owner' ? null :
+                (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
+            const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
+            applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName, { render: false });
+            localChanged = true;
+        }
+
+        if (action === 'enable' || action === 'disable') {
+            const newEnable = action === 'enable';
+            clients.forEach(c => {
+                patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable }, { render: false });
+            });
+            localChanged = true;
+        }
+
+        if (action === 'add_days' && data.days_delta) {
+            const daysDelta = parseInt(data.days_delta) || 0;
+            if (daysDelta > 0) {
+                clients.forEach(c => {
+                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta }, { render: false });
+                });
+                localChanged = true;
+            }
+        }
+
+        if (action === 'add_volume' && data.volume_gb_delta) {
+            const volDelta = parseInt(data.volume_gb_delta) || 0;
+            if (volDelta > 0) {
+                clients.forEach(c => {
+                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta }, { render: false });
+                });
+                localChanged = true;
+            }
+        }
+
+        if (action === 'delete') {
+            clients.forEach(c => {
+                removeLocalClient(c.server_id, c.inbound_id, c.email, { render: false });
+            });
+            localChanged = true;
+        }
+
+        clearBulkSelection();
+        if (localChanged) applyFilters();
+        setTimeout(() => refreshData(true), 500);
+    }
+
     function onBulkActionChanged() {
         const action = document.getElementById('bulk-action-select')?.value;
         const resellerContainer = document.getElementById('bulk-reseller-container');
@@ -4428,7 +4488,7 @@
         try {
             setBulkProgress(true, 0, clients.length);
 
-            const response = await fetch('/api/client/bulk', {
+            const response = await fetch('/api/client/bulk?wait=1', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action, clients, data, conditions })
@@ -4445,6 +4505,14 @@
             if (!jobId) {
                 setBulkProgress(false);
                 showToast('Bulk action failed (missing job id)', 'error');
+                return;
+            }
+
+            // In multi-worker deployments, polling an in-memory job can hit another worker.
+            // `wait=1` executes in-request and returns a completed job when possible.
+            if (result.done && result.job && result.job.state === 'done') {
+                setBulkProgress(false);
+                handleBulkActionCompleted(action, clients, data, result.job.progress || {});
                 return;
             }
 
@@ -4474,66 +4542,7 @@
 
                     if (job.state === 'done') {
                         setBulkProgress(false);
-                        const successCount = progress.success || 0;
-                        const failedCount = progress.failed || 0;
-                        const skippedCount = progress.skipped || 0;
-                        showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`);
-
-                        let localChanged = false;
-                        
-                        // Optimistic UI update for assign/unassign - update local data instantly
-                        if (action === 'assign_owner' || action === 'unassign_owner') {
-                            const newOwnerName = action === 'unassign_owner' ? null : 
-                                (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
-                            const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
-                            applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName, { render: false });
-                            localChanged = true;
-                        }
-
-                        // Optimistic UI update for enable/disable
-                        if (action === 'enable' || action === 'disable') {
-                            const newEnable = action === 'enable';
-                            clients.forEach(c => {
-                                patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable }, { render: false });
-                            });
-                            localChanged = true;
-                        }
-
-                        // Optimistic UI update for add_days
-                        if (action === 'add_days' && data.days_delta) {
-                            const daysDelta = parseInt(data.days_delta) || 0;
-                            if (daysDelta > 0) {
-                                clients.forEach(c => {
-                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta }, { render: false });
-                                });
-                                localChanged = true;
-                            }
-                        }
-
-                        // Optimistic UI update for add_volume
-                        if (action === 'add_volume' && data.volume_gb_delta) {
-                            const volDelta = parseInt(data.volume_gb_delta) || 0;
-                            if (volDelta > 0) {
-                                clients.forEach(c => {
-                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta }, { render: false });
-                                });
-                                localChanged = true;
-                            }
-                        }
-
-                        // Optimistic UI update for delete - remove from local data instantly
-                        if (action === 'delete') {
-                            clients.forEach(c => {
-                                removeLocalClient(c.server_id, c.inbound_id, c.email, { render: false });
-                            });
-                            localChanged = true;
-                        }
-                        
-                        // Clear selection and re-render
-                        clearBulkSelection();
-                        if (localChanged) applyFilters();
-                        // Background sync (silent) - UI already updated optimistically
-                        setTimeout(() => refreshData(true), 500);
+                        handleBulkActionCompleted(action, clients, data, progress);
                         return;
                     }
                     if (job.state === 'error') {
