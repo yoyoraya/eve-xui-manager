@@ -234,6 +234,8 @@
                 <span class="toggle-track"></span>
                 <span class="toggle-text">Disabled only</span>
             </label>
+
+            <button class="btn btn-secondary" style="padding: 8px 12px;" onclick="selectAllVisibleClients()">Select All</button>
         </div>
     </div>
     
@@ -1275,16 +1277,46 @@
         return `${sid}:${iid}:${em}`;
     }
 
+    function isBulkCheckboxVisible(cb) {
+        if (!cb) return false;
+        const row = cb.closest('tr');
+        if (row && row.offsetParent === null) return false;
+        const list = cb.closest('.clients-list');
+        if (list && list.classList.contains('hidden')) return false;
+        return true;
+    }
+
+    function getVisibleBulkCheckboxes(inboundKey = null) {
+        const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
+        return boxes.filter(cb => {
+            if (inboundKey && cb.dataset.inboundKey !== inboundKey) return false;
+            return isBulkCheckboxVisible(cb);
+        });
+    }
+
+    function selectAllVisibleClients(checked = true) {
+        const boxes = getVisibleBulkCheckboxes();
+        boxes.forEach(cb => {
+            cb.checked = checked;
+            const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
+            if (checked) bulkSelectedClientKeys.add(key);
+            else bulkSelectedClientKeys.delete(key);
+        });
+        applyBulkSelectionToDOM();
+        updateBulkUI();
+    }
+
     function applyBulkSelectionToDOM() {
         const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
-        const byInbound = new Map();
+        const byInboundVisible = new Map();
 
         boxes.forEach(cb => {
             const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
             cb.checked = bulkSelectedClientKeys.has(key);
+            if (!isBulkCheckboxVisible(cb)) return;
             const inboundKey = cb.dataset.inboundKey;
-            if (!byInbound.has(inboundKey)) byInbound.set(inboundKey, []);
-            byInbound.get(inboundKey).push(cb);
+            if (!byInboundVisible.has(inboundKey)) byInboundVisible.set(inboundKey, []);
+            byInboundVisible.get(inboundKey).push(cb);
         });
 
         // Update each inbound's select-all checkbox based on children
@@ -1292,11 +1324,11 @@
             const onChangeAttr = sa.getAttribute('onchange') || '';
             const match = onChangeAttr.match(/toggleSelectAllClients\('([^']+)'/);
             const inboundKey = match ? match[1] : null;
-            if (!inboundKey || !byInbound.has(inboundKey)) {
+            if (!inboundKey || !byInboundVisible.has(inboundKey)) {
                 sa.checked = false;
                 return;
             }
-            const children = byInbound.get(inboundKey);
+            const children = byInboundVisible.get(inboundKey);
             sa.checked = children.length > 0 && children.every(cb => cb.checked);
         });
     }
@@ -4017,16 +4049,8 @@
     }
 
     function selectAllSearchResults() {
-        // In search mode, the inbounds list is rebuilt with only filtered results,
-        // so selecting all currently-rendered checkboxes corresponds to "select all search results".
-        const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
-        boxes.forEach(cb => {
-            cb.checked = true;
-            const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
-            bulkSelectedClientKeys.add(key);
-        });
-        applyBulkSelectionToDOM();
-        updateBulkUI();
+        // Select only currently visible rows in search-rendered list.
+        selectAllVisibleClients(true);
     }
 
     function updateInboundsFiltered(filteredResults) {
@@ -4237,9 +4261,8 @@
     }
 
     function toggleSelectAllClients(inboundKey, checked) {
-        const boxes = document.querySelectorAll('.client-bulk-checkbox');
+        const boxes = getVisibleBulkCheckboxes(inboundKey);
         boxes.forEach(cb => {
-            if (cb.dataset.inboundKey !== inboundKey) return;
             cb.checked = checked;
             const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
             if (checked) bulkSelectedClientKeys.add(key);
