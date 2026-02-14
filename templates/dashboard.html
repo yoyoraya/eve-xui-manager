@@ -3581,11 +3581,29 @@
         const type = String(client.expiryType || '').toLowerCase();
         const expiryTs = Number(client.expiryTimestamp || 0);
         const now = Date.now();
+        const isExpired = (type === 'expired') || (expiryTs > 0 && expiryTs < now);
+
+        const expiredSelected = selectedExpiryFilters.has('expired');
+        const ltSelected = selectedExpiryFilters.has('lt_days');
+        const gtSelected = selectedExpiryFilters.has('gt_days');
+        const hasOtherTypeFilters = selectedExpiryFilters.has('not_started') || selectedExpiryFilters.has('unlimited') || selectedExpiryFilters.has('today');
+
+        // Special case: Expired + (Less/More than X days)
+        // Treat numeric filter as "days since expiry" and require expired clients.
+        if (expiredSelected && (ltSelected || gtSelected) && !hasOtherTypeFilters) {
+            if (!isExpired) return false;
+            if (expiryTs <= 0) return false;
+
+            const daysSinceExpiry = Math.ceil((now - expiryTs) / 86400000);
+            if (ltSelected && !(daysSinceExpiry > 0 && daysSinceExpiry < expiryLessThanDays)) return false;
+            if (gtSelected && !(daysSinceExpiry > expiryGreaterThanDays)) return false;
+            return true;
+        }
 
         // OR across selected options
         if (selectedExpiryFilters.has('not_started') && type === 'start_after_use') return true;
         if (selectedExpiryFilters.has('unlimited') && type === 'unlimited') return true;
-        if (selectedExpiryFilters.has('expired') && (type === 'expired' || (expiryTs > 0 && expiryTs < now))) return true;
+        if (selectedExpiryFilters.has('expired') && isExpired) return true;
         if (selectedExpiryFilters.has('today') && type === 'today') return true;
 
         if (selectedExpiryFilters.has('lt_days')) {
