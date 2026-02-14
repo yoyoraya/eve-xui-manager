@@ -621,6 +621,11 @@ migrate_to_postgres() {
     sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${MIG_DB_PASS}';" || true
     sudo -u postgres psql -c "ALTER USER ${DB_USER} WITH PASSWORD '${MIG_DB_PASS}';" || true
     sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" || true
+    sudo -u postgres psql -c "ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER};" || true
+    sudo -u postgres psql -d "${DB_NAME}" -c "ALTER SCHEMA public OWNER TO ${DB_USER};" || true
+    sudo -u postgres psql -d "${DB_NAME}" -c "GRANT USAGE, CREATE ON SCHEMA public TO ${DB_USER};" || true
+    sudo -u postgres psql -d "${DB_NAME}" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};" || true
+    sudo -u postgres psql -d "${DB_NAME}" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};" || true
     
     # 4. Update .env
     print_warning "Updating .env file..."
@@ -720,6 +725,11 @@ remote_db_migration() {
     sudo -H -u postgres psql -c "CREATE USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
     sudo -H -u postgres psql -c "ALTER USER ${NEW_DB_USER} WITH PASSWORD '${NEW_DB_PASS}';" || true
     sudo -H -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${NEW_DB_NAME} TO ${NEW_DB_USER};" || true
+    sudo -H -u postgres psql -c "ALTER DATABASE ${NEW_DB_NAME} OWNER TO ${NEW_DB_USER};" || true
+    sudo -H -u postgres psql -d "${NEW_DB_NAME}" -c "ALTER SCHEMA public OWNER TO ${NEW_DB_USER};" || true
+    sudo -H -u postgres psql -d "${NEW_DB_NAME}" -c "GRANT USAGE, CREATE ON SCHEMA public TO ${NEW_DB_USER};" || true
+    sudo -H -u postgres psql -d "${NEW_DB_NAME}" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${NEW_DB_USER};" || true
+    sudo -H -u postgres psql -d "${NEW_DB_NAME}" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${NEW_DB_USER};" || true
 
     NEW_DB_URL="postgresql://${NEW_DB_USER}:${NEW_DB_PASS}@localhost/${NEW_DB_NAME}"
     if grep -q "DATABASE_URL" "$ENV_FILE"; then
@@ -767,7 +777,7 @@ remote_db_migration() {
         print_success "DB dump saved to $DUMP_FILE"
 
         print_warning "Restoring DB on new server..."
-        if ! gunzip -c "$DUMP_FILE" | psql "$NEW_DB_URL"; then
+        if ! gunzip -c "$DUMP_FILE" | psql "$NEW_DB_URL" -v ON_ERROR_STOP=1; then
             print_error "Restore failed. Check DB credentials or dump file."
             exit 1
         fi
