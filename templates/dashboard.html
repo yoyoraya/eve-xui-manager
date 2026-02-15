@@ -1286,16 +1286,19 @@
         return true;
     }
 
-    function getVisibleBulkCheckboxes(inboundKey = null) {
+    function getVisibleBulkCheckboxes(inboundKey = null, options = {}) {
+        const includeCollapsed = Boolean(options && options.includeCollapsed);
         const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
         return boxes.filter(cb => {
             if (inboundKey && cb.dataset.inboundKey !== inboundKey) return false;
+            if (includeCollapsed) return true;
             return isBulkCheckboxVisible(cb);
         });
     }
 
     function selectAllVisibleClients(checked = true) {
-        const boxes = getVisibleBulkCheckboxes();
+        // Global select-all should include filtered clients even when inbound rows are collapsed.
+        const boxes = getVisibleBulkCheckboxes(null, { includeCollapsed: true });
         boxes.forEach(cb => {
             cb.checked = checked;
             const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
@@ -4338,7 +4341,8 @@
     }
 
     function toggleSelectAllClients(inboundKey, checked) {
-        const boxes = getVisibleBulkCheckboxes(inboundKey);
+        // Inbound-level select-all should also work without expanding that inbound.
+        const boxes = getVisibleBulkCheckboxes(inboundKey, { includeCollapsed: true });
         boxes.forEach(cb => {
             cb.checked = checked;
             const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
@@ -4502,6 +4506,30 @@
             }
         }
 
+        const buildBulkErrorMessage = (errorLike, phase = 'request') => {
+            const raw = String(errorLike?.message || errorLike || '').trim();
+            const lower = raw.toLowerCase();
+
+            if (!navigator.onLine) {
+                return 'Network is offline. Please check your internet connection and try again.';
+            }
+
+            if (
+                lower.includes('failed to fetch') ||
+                lower.includes('networkerror') ||
+                lower.includes('connection reset') ||
+                lower.includes('err_connection_reset') ||
+                lower.includes('load failed')
+            ) {
+                return phase === 'poll'
+                    ? 'Bulk action started but status connection was reset. Please retry in a few seconds or refresh page to verify the result.'
+                    : 'Bulk request could not reach server (connection reset/timeout). Check server/proxy logs and retry.';
+            }
+
+            if (raw) return `Bulk action failed: ${raw}`;
+            return 'Bulk action failed due to an unknown error.';
+        };
+
         try {
             setBulkProgress(true, 0, clients.length);
 
@@ -4511,10 +4539,18 @@
                 body: JSON.stringify({ action, clients, data, conditions })
             });
 
-            const result = await response.json();
+            let result = null;
+            try {
+                result = await response.json();
+            } catch (e) {
+                result = { success: false, error: `Invalid server response (HTTP ${response.status})` };
+            }
             if (!response.ok || !result.success) {
                 setBulkProgress(false);
-                showToast(result.error || 'Bulk action failed', 'error');
+                const errMsg = result && result.error
+                    ? `Bulk action failed: ${result.error}`
+                    : `Bulk action failed (HTTP ${response.status})`;
+                showToast(errMsg, 'error');
                 return;
             }
 
@@ -4536,10 +4572,18 @@
                     }
 
                     const stResp = await fetch(`/api/client/bulk/job/${jobId}`);
-                    const st = await stResp.json();
+                    let st = null;
+                    try {
+                        st = await stResp.json();
+                    } catch (e) {
+                        st = { success: false, error: `Invalid job status response (HTTP ${stResp.status})` };
+                    }
                     if (!stResp.ok || !st.success) {
                         setBulkProgress(false);
-                        showToast(st.error || 'Bulk progress error', 'error');
+                        const errMsg = st && st.error
+                            ? `Bulk progress error: ${st.error}`
+                            : `Bulk progress error (HTTP ${stResp.status})`;
+                        showToast(errMsg, 'error');
                         return;
                     }
 
@@ -4623,7 +4667,7 @@
                 } catch (e) {
                     console.error('Bulk poll error:', e);
                     setBulkProgress(false);
-                    showToast('Bulk action failed', 'error');
+                    showToast(buildBulkErrorMessage(e, 'poll'), 'error');
                 }
             };
 
@@ -4631,7 +4675,7 @@
         } catch (error) {
             console.error('Bulk action error:', error);
             setBulkProgress(false);
-            showToast('Bulk action failed', 'error');
+            showToast(buildBulkErrorMessage(error, 'request'), 'error');
         }
     }
 
