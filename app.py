@@ -4468,7 +4468,11 @@ def monitor_page():
 @app.route('/api/monitor/settings', methods=['GET'])
 @login_required
 def get_monitor_settings():
-    return jsonify({'success': True, 'settings': _get_monitor_settings()})
+    return jsonify({
+        'success': True,
+        'settings': _get_monitor_settings(),
+        'timezone': _get_app_timezone_name(),
+    })
 
 
 @app.route('/api/monitor/settings', methods=['POST'])
@@ -4478,13 +4482,24 @@ def save_monitor_settings():
         payload = request.get_json() or {}
     except Exception:
         payload = {}
+
+    timezone_name = (payload.get('timezone') or '').strip()
+    if timezone_name:
+        if not _is_valid_timezone_name(timezone_name):
+            return jsonify({'success': False, 'error': 'Invalid timezone. Example: Asia/Tehran'}), 400
+        _set_system_setting_value(GENERAL_TIMEZONE_SETTING_KEY, timezone_name)
+
     normalized = _normalize_monitor_settings(payload)
     _set_system_setting_value(
         MONITOR_SETTINGS_KEY,
         json.dumps(normalized, ensure_ascii=False)
     )
     db.session.commit()
-    return jsonify({'success': True, 'settings': normalized})
+    return jsonify({
+        'success': True,
+        'settings': normalized,
+        'timezone': _get_app_timezone_name(),
+    })
 
 
 @app.route('/api/monitor/alerts', methods=['GET'])
@@ -4649,6 +4664,7 @@ def get_monitor_alerts():
     return jsonify({
         'success': True,
         'settings': settings,
+        'timezone': _get_app_timezone_name(),
         'generated_at': now_utc.isoformat(),
         'generated_at_jalali': format_jalali(now_utc),
         'alerts': alerts

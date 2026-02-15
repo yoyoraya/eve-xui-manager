@@ -59,6 +59,23 @@
                         <label>Hide Expired After (Days)</label>
                         <input type="number" id="monitor-hide-days" min="0" max="365" value="7">
                     </div>
+                    <div class="form-group">
+                        <label>TimeZone</label>
+                        <input type="text" id="monitor-timezone" list="monitor-timezone-options" class="form-input" placeholder="Asia/Tehran">
+                        <datalist id="monitor-timezone-options">
+                            <option value="Asia/Tehran"></option>
+                            <option value="UTC"></option>
+                            <option value="Asia/Dubai"></option>
+                            <option value="Europe/Istanbul"></option>
+                            <option value="Europe/Berlin"></option>
+                            <option value="Europe/London"></option>
+                            <option value="America/New_York"></option>
+                            <option value="America/Toronto"></option>
+                            <option value="Asia/Tokyo"></option>
+                            <option value="Asia/Shanghai"></option>
+                            <option value="Asia/Kolkata"></option>
+                        </datalist>
+                    </div>
                     <label class="form-group form-toggle-item" style="cursor: pointer;">
                         <div class="toggle-switch">
                             <input type="checkbox" id="monitor-debug">
@@ -151,6 +168,7 @@
 {% block scripts %}
 <script nonce="{{ csp_nonce }}">
     let monitorSettings = null;
+    let monitorTimezone = 'Asia/Tehran';
     let allAlerts = [];
     const activeStatusFilters = new Set(['ended', 'expired', 'low', 'soon']);
 
@@ -171,6 +189,7 @@
                 return;
             }
             monitorSettings = data.settings || {};
+            monitorTimezone = (data.timezone || 'Asia/Tehran');
             applySettingsToForm();
         } catch (err) {
             showToast('Failed to load settings', 'error');
@@ -185,6 +204,7 @@
         document.getElementById('monitor-warning-gb').value = filters.warning_gb ?? 2;
         document.getElementById('monitor-hide-days').value = filters.hide_days ?? 7;
         document.getElementById('monitor-debug').checked = !!filters.debug;
+        document.getElementById('monitor-timezone').value = monitorTimezone || 'Asia/Tehran';
 
         document.getElementById('tpl-ended').value = templates.ended || '';
         document.getElementById('tpl-expired').value = templates.expired || '';
@@ -200,6 +220,7 @@
                 hide_days: parseInt(document.getElementById('monitor-hide-days').value || '7', 10),
                 debug: document.getElementById('monitor-debug').checked
             },
+            timezone: (document.getElementById('monitor-timezone').value || 'Asia/Tehran').trim(),
             templates: {
                 ended: document.getElementById('tpl-ended').value || '',
                 expired: document.getElementById('tpl-expired').value || '',
@@ -220,6 +241,7 @@
                 return;
             }
             monitorSettings = data.settings || payload;
+            monitorTimezone = data.timezone || payload.timezone || 'Asia/Tehran';
             showToast('Settings saved', 'success');
             renderAlerts();
         } catch (err) {
@@ -236,6 +258,7 @@
                 return;
             }
             monitorSettings = data.settings || monitorSettings;
+            monitorTimezone = data.timezone || monitorTimezone || 'Asia/Tehran';
             allAlerts = data.alerts || [];
             updateStats(data);
             updateServerFilterOptions();
@@ -247,7 +270,8 @@
 
     function updateStats(data) {
         document.getElementById('monitor-alert-count').textContent = String((data.alerts || []).length);
-        document.getElementById('monitor-last-scan').textContent = data.generated_at_jalali || '-';
+        const base = data.generated_at_jalali || '-';
+        document.getElementById('monitor-last-scan').textContent = `${base} (${monitorTimezone || 'Asia/Tehran'})`;
     }
 
     function updateServerFilterOptions() {
