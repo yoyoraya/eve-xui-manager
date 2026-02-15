@@ -3008,12 +3008,20 @@ def log_transaction(user_id, amount, type, desc, server_id=None, card_id=None, s
 @app.context_processor
 def inject_wallet_credit():
     wallet_credit = 0
+    app_timezone = DEFAULT_APP_TIMEZONE
     admin_id = session.get('admin_id')
     if admin_id:
         user = db.session.get(Admin, admin_id)
         if user:
             wallet_credit = user.credit or 0
-    return {"wallet_credit": wallet_credit}
+    try:
+        app_timezone = _get_app_timezone_name()
+    except Exception:
+        app_timezone = DEFAULT_APP_TIMEZONE
+    return {
+        "wallet_credit": wallet_credit,
+        "app_timezone": app_timezone,
+    }
 
 def format_jalali(dt):
     if not dt:

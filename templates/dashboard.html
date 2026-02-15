@@ -1560,6 +1560,23 @@
         return changed;
     }
 
+    function getLocalClientRef(serverId, inboundId, email) {
+        const sid = parseInt(serverId);
+        const iid = String(inboundId);
+        const em = String(email || '').toLowerCase();
+        if (!Number.isFinite(sid) || !iid || !em) return null;
+
+        for (const inbound of (allInboundsData || [])) {
+            if (parseInt(inbound?.server_id) !== sid) continue;
+            if (String(inbound?.id) !== iid) continue;
+            const clients = Array.isArray(inbound.clients) ? inbound.clients : [];
+            const client = clients.find(c => String(c?.email || '').toLowerCase() === em);
+            if (client) return client;
+            break;
+        }
+        return null;
+    }
+
     // Rename a client locally (optimistic) to avoid waiting for refresh.
     function renameLocalClient(serverId, inboundId, oldEmail, newEmail, options = {}) {
         const sid = parseInt(serverId);
@@ -2464,10 +2481,11 @@
         }
 
         // Optimistic update: reset traffic immediately
-        const patch = { up: 0, down: 0 };
-        if (volume > 0) {
-            patch.totalGB = volume * 1024 * 1024 * 1024;
-        }
+        const patch = {
+            up: 0,
+            down: 0,
+            totalGB: Math.max(0, volume) * 1024 * 1024 * 1024
+        };
         patchLocalClient(serverId, inboundId, email, patch);
         closeResetModal();
 
@@ -2723,6 +2741,10 @@
         btn.disabled = true;
         btn.innerText = 'Processing...';
 
+        const previousClient = getLocalClientRef(serverId, inboundId, email);
+        const previousExpiryTs = Number(previousClient?.expiryTimestamp || 0);
+        const previousTotalBytes = Number(previousClient?.totalGB || 0);
+
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/${email}/renew`, {
                 method: 'POST',
@@ -2801,8 +2823,40 @@
                         : (expected ? expected.totalGB : null);
 
                     const patch = {};
-                    if (expTs !== null && expTs !== undefined) patch.expiryTimestamp = expTs;
-                    if (capBytes !== null && capBytes !== undefined) patch.totalGB = capBytes;
+
+                    const resolveFallbackRenewExpiry = () => {
+                        if (finalDays <= 0) return 0;
+                        if (startAfterFirstUse) return -1 * (finalDays * 86400000);
+                        if (previousExpiryTs < 0) return previousExpiryTs - (finalDays * 86400000);
+                        if (previousExpiryTs > 0) return previousExpiryTs + (finalDays * 86400000);
+                        return Date.now() + (finalDays * 86400000);
+                    };
+
+                    const resolveFallbackRenewTotal = () => {
+                        const requestedVolume = (finalVolume === null || finalVolume === undefined) ? null : Number(finalVolume);
+                        if (requestedVolume === null || !Number.isFinite(requestedVolume)) {
+                            return previousTotalBytes;
+                        }
+
+                        if (resetTraffic) {
+                            if (requestedVolume > 0) return requestedVolume * 1024 * 1024 * 1024;
+                            return 0;
+                        }
+
+                        if (requestedVolume === 0) return 0;
+                        if (previousTotalBytes === 0) return 0;
+                        return previousTotalBytes + (requestedVolume * 1024 * 1024 * 1024);
+                    };
+
+                    const resolvedExpiryTs = (expTs !== null && expTs !== undefined)
+                        ? Number(expTs)
+                        : resolveFallbackRenewExpiry();
+                    const resolvedCapBytes = (capBytes !== null && capBytes !== undefined)
+                        ? Number(capBytes)
+                        : resolveFallbackRenewTotal();
+
+                    if (Number.isFinite(resolvedExpiryTs)) patch.expiryTimestamp = resolvedExpiryTs;
+                    if (Number.isFinite(resolvedCapBytes)) patch.totalGB = resolvedCapBytes;
                     if (resetTraffic) {
                         patch.up = 0;
                         patch.down = 0;
@@ -4946,11 +5000,13 @@
         toggle.classList.toggle('active');
     }
 
+    const APP_TIMEZONE = {{ app_timezone|tojson }};
+
     function formatTehranTime(ts) {
         if (!ts || ts <= 0) return '';
         const d = new Date(Number(ts));
         if (Number.isNaN(d.getTime())) return '';
-        return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Tehran', hour12: false });
+        return d.toLocaleTimeString('en-GB', { timeZone: APP_TIMEZONE || 'Asia/Tehran', hour12: false });
     }
 
     function openDeleteClientModal(serverId, inboundId, email, uuid, enable, expiry, expiryTs, up, down, total, remaining) {
@@ -4968,7 +5024,7 @@
 
         const expiryTimeText = formatTehranTime(expiryTs);
         document.getElementById('delete-client-expiry').innerHTML = expiryTimeText
-            ? `${expiry}<div style="color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px;">${expiryTimeText} (Asia/Tehran)</div>`
+            ? `${expiry}<div style="color: var(--text-secondary); font-size: 0.9rem; margin-top: 4px;">${expiryTimeText} (${APP_TIMEZONE || 'Asia/Tehran'})</div>`
             : expiry;
         document.getElementById('delete-client-traffic').innerHTML = `<span class="up">↑${up}</span> <span class="down">↓${down}</span>`;
         document.getElementById('delete-client-volume').innerHTML = `<span class="remaining">${remaining}</span> <span class="total">/ ${total}</span>`;

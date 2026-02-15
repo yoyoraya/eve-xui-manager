@@ -69,7 +69,20 @@
 
                 <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
                     <label>TimeZone</label>
-                    <input type="text" id="general-timezone" class="form-input" placeholder="Asia/Tehran">
+                    <input type="text" id="general-timezone" class="form-input" placeholder="Asia/Tehran" list="general-timezone-options">
+                    <datalist id="general-timezone-options">
+                        <option value="Asia/Tehran"></option>
+                        <option value="UTC"></option>
+                        <option value="Asia/Dubai"></option>
+                        <option value="Europe/Istanbul"></option>
+                        <option value="Europe/Berlin"></option>
+                        <option value="Europe/London"></option>
+                        <option value="America/New_York"></option>
+                        <option value="America/Toronto"></option>
+                        <option value="Asia/Tokyo"></option>
+                        <option value="Asia/Shanghai"></option>
+                        <option value="Asia/Kolkata"></option>
+                    </datalist>
                     <small class="text-secondary">IANA timezone. Example: Asia/Tehran, Europe/Berlin, UTC</small>
                 </div>
 
