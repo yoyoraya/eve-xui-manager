@@ -1277,6 +1277,20 @@
         return `${sid}:${iid}:${em}`;
     }
 
+    function isBulkCheckboxEnabledClient(cb) {
+        if (!cb) return true;
+        const raw = String(cb.dataset.enabled || '').trim().toLowerCase();
+        if (raw === '0' || raw === 'false' || raw === 'disabled') return false;
+        return true;
+    }
+
+    function isBulkCheckboxAllowedByDisabledFilters(cb) {
+        const isEnabled = isBulkCheckboxEnabledClient(cb);
+        if (disabledOnlyClients) return !isEnabled;
+        if (hideDisabledClients) return isEnabled;
+        return true;
+    }
+
     function isBulkCheckboxVisible(cb) {
         if (!cb) return false;
         const row = cb.closest('tr');
@@ -1291,6 +1305,7 @@
         const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
         return boxes.filter(cb => {
             if (inboundKey && cb.dataset.inboundKey !== inboundKey) return false;
+            if (!isBulkCheckboxAllowedByDisabledFilters(cb)) return false;
             if (includeCollapsed) return true;
             return isBulkCheckboxVisible(cb);
         });
@@ -1316,6 +1331,11 @@
         boxes.forEach(cb => {
             const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
             cb.checked = bulkSelectedClientKeys.has(key);
+            if (!isBulkCheckboxAllowedByDisabledFilters(cb)) {
+                cb.checked = false;
+                bulkSelectedClientKeys.delete(key);
+                return;
+            }
             if (!isBulkCheckboxVisible(cb)) return;
             const inboundKey = cb.dataset.inboundKey;
             if (!byInboundVisible.has(inboundKey)) byInboundVisible.set(inboundKey, []);
@@ -2056,7 +2076,7 @@
                                     <tr class="${!client.enable ? 'disabled-row' : ''}">
                                         <td class="select-cell">
                                             <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
-                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inboundKey}" data-server-id="${client.server_id}" data-inbound-id="${client.inbound_id}" data-email="${client.email}" data-client-uuid="${client.id || ''}" onchange="onBulkClientCheckboxChanged(this)">
+                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inboundKey}" data-server-id="${client.server_id}" data-inbound-id="${client.inbound_id}" data-email="${client.email}" data-client-uuid="${client.id || ''}" data-enabled="${client.enable ? '1' : '0'}" onchange="onBulkClientCheckboxChanged(this)">
                                                 <span class="checkmark"></span>
                                             </label>
                                         </td>
@@ -3769,6 +3789,10 @@
             container.classList.toggle('filter-hide-disabled', hideDisabledClients);
             container.classList.toggle('filter-disabled-only', disabledOnlyClients);
         }
+
+        pruneBulkSelectionByDisabledFilters();
+        applyBulkSelectionToDOM();
+        updateBulkUI();
     }
 
     function applyFilters() {
@@ -4211,7 +4235,7 @@
                                     <tr class="${!client.enable ? 'disabled-row' : ''}">
                                         <td class="select-cell">
                                             <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
-                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inbound.server_id}:${inbound.id}" data-server-id="${inbound.server_id}" data-inbound-id="${inbound.id}" data-email="${client.email}" data-client-uuid="${client.id || ''}" onchange="onBulkClientCheckboxChanged(this)">
+                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inbound.server_id}:${inbound.id}" data-server-id="${inbound.server_id}" data-inbound-id="${inbound.id}" data-email="${client.email}" data-client-uuid="${client.id || ''}" data-enabled="${client.enable ? '1' : '0'}" onchange="onBulkClientCheckboxChanged(this)">
                                                 <span class="checkmark"></span>
                                             </label>
                                         </td>
@@ -4358,6 +4382,16 @@
         document.querySelectorAll('.select-all-clients').forEach(cb => cb.checked = false);
         bulkSelectedClientKeys.clear();
         updateBulkUI();
+    }
+
+    function pruneBulkSelectionByDisabledFilters() {
+        const boxes = Array.from(document.querySelectorAll('.client-bulk-checkbox'));
+        boxes.forEach(cb => {
+            if (isBulkCheckboxAllowedByDisabledFilters(cb)) return;
+            const key = makeBulkClientKey(cb.dataset.serverId, cb.dataset.inboundId, cb.dataset.email);
+            bulkSelectedClientKeys.delete(key);
+            cb.checked = false;
+        });
     }
 
     // Optimistic update: patch local data immediately after bulk assign/unassign
@@ -4533,7 +4567,7 @@
         try {
             setBulkProgress(true, 0, clients.length);
 
-            const response = await fetch('/api/client/bulk', {
+            const response = await fetch('/api/client/bulk?wait=1', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action, clients, data, conditions })
@@ -4551,6 +4585,66 @@
                     ? `Bulk action failed: ${result.error}`
                     : `Bulk action failed (HTTP ${response.status})`;
                 showToast(errMsg, 'error');
+                return;
+            }
+
+            if (result.done && result.job) {
+                const job = result.job || {};
+                const progress = job.progress || {};
+                const successCount = progress.success || 0;
+                const failedCount = progress.failed || 0;
+                const skippedCount = progress.skipped || 0;
+                setBulkProgress(false);
+                showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`);
+
+                let localChanged = false;
+
+                if (action === 'assign_owner' || action === 'unassign_owner') {
+                    const newOwnerName = action === 'unassign_owner' ? null :
+                        (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
+                    const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
+                    applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName, { render: false });
+                    localChanged = true;
+                }
+
+                if (action === 'enable' || action === 'disable') {
+                    const newEnable = action === 'enable';
+                    clients.forEach(c => {
+                        patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable }, { render: false });
+                    });
+                    localChanged = true;
+                }
+
+                if (action === 'add_days' && data.days_delta) {
+                    const daysDelta = parseInt(data.days_delta) || 0;
+                    if (daysDelta > 0) {
+                        clients.forEach(c => {
+                            patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta }, { render: false });
+                        });
+                        localChanged = true;
+                    }
+                }
+
+                if (action === 'add_volume' && data.volume_gb_delta) {
+                    const volDelta = parseInt(data.volume_gb_delta) || 0;
+                    if (volDelta > 0) {
+                        clients.forEach(c => {
+                            patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta }, { render: false });
+                        });
+                        localChanged = true;
+                    }
+                }
+
+                if (action === 'delete') {
+                    clients.forEach(c => {
+                        removeLocalClient(c.server_id, c.inbound_id, c.email, { render: false });
+                    });
+                    localChanged = true;
+                }
+
+                clearBulkSelection();
+                if (localChanged) applyFilters();
+                setTimeout(() => refreshData(true), 500);
                 return;
             }
 
