@@ -1707,9 +1707,21 @@
             const data = await resp.json();
 
             if (data && data.success) {
-                mergeServerInboundsIntoCache(sid, data.inbounds || []);
+                const jobId = data.refresh_job && data.refresh_job.id;
+                const jobState = data.refresh_job && data.refresh_job.state;
+                const isAsyncJobPending = Boolean(jobId && (jobState === 'queued' || jobState === 'running'));
+                const shouldApplySnapshotNow = !isAsyncJobPending;
 
-                refreshAddClientInboundOptions(sid);
+                if (shouldApplySnapshotNow) {
+                    mergeServerInboundsIntoCache(sid, data.inbounds || []);
+                    refreshAddClientInboundOptions(sid);
+                    updateStats(data.stats || {}, data.server_count || (allServers ? allServers.length : 0));
+                    applyFilters();
+                }
+
+                if (isAsyncJobPending && !options.isSilent) {
+                    showToast('Refresh started');
+                }
 
                 // Keep per-server status/errors in sync for empty/error rendering.
                 if (data.server_status && typeof data.server_status === 'object') {
@@ -1727,11 +1739,6 @@
                     }
                 }
 
-                updateStats(data.stats || {}, data.server_count || (allServers ? allServers.length : 0));
-                applyFilters();
-
-                const jobId = data.refresh_job && data.refresh_job.id;
-                const jobState = data.refresh_job && data.refresh_job.state;
                 if (jobId && poll) {
                     refreshJobContext.set(jobId, { serverId: sid });
                     startRefreshJobPolling(jobId, { showErrors: false, serverId: sid });
@@ -1851,18 +1858,23 @@
             const data = await response.json();
             
             if (data.success) {
-                allInboundsData = data.inbounds;
-                inboundsData = data.inbounds;
-                serverStatuses = data.servers || [];
-                
-                // Clear pending servers since we have full data
-                pendingServers = [];
-
-                updateStats(data.stats, data.servers ? data.servers.length : 0);
-                applyFilters();
-
                 const jobId = data.refresh_job && data.refresh_job.id;
                 const jobState = data.refresh_job && data.refresh_job.state;
+                const isAsyncJobPending = Boolean(jobId && (jobState === 'queued' || jobState === 'running'));
+                const shouldApplySnapshotNow = !isAsyncJobPending;
+
+                if (shouldApplySnapshotNow) {
+                    allInboundsData = data.inbounds;
+                    inboundsData = data.inbounds;
+                    serverStatuses = data.servers || [];
+
+                    // Clear pending servers since we have full data
+                    pendingServers = [];
+
+                    updateStats(data.stats, data.servers ? data.servers.length : 0);
+                    applyFilters();
+                }
+
                 if (jobId && poll) {
                     startRefreshJobPolling(jobId, { showErrors: !isSilent });
                 }
