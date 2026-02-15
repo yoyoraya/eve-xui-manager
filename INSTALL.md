@@ -146,6 +146,7 @@ sudo nano /etc/systemd/system/eve-xui-manager.service
 [Unit]
 Description=Eve - Xui Manager VPN Panel
 After=network.target postgresql.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify
@@ -153,11 +154,12 @@ User=root
 WorkingDirectory=/opt/eve-xui-manager
 Environment="PATH=/opt/eve-xui-manager/venv/bin"
 EnvironmentFile=/opt/eve-xui-manager/.env
-ExecStart=/opt/eve-xui-manager/venv/bin/gunicorn --workers 1 --threads 4 --worker-class gthread --bind 0.0.0.0:5000 app:app
+ExecStart=/opt/eve-xui-manager/venv/bin/gunicorn --workers 2 --threads 4 --worker-class gthread --bind 0.0.0.0:5000 --timeout 120 --graceful-timeout 30 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100 app:app
 
 # Restart on failure
 Restart=always
-RestartSec=10
+RestartSec=3
+TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
 
@@ -183,6 +185,9 @@ sudo systemctl start eve-xui-manager
 
 # Check status
 sudo systemctl status eve-xui-manager
+
+# Health check (should return success:true)
+curl -s http://127.0.0.1:5000/healthz
 ```
 
 ✅ اگر `active (running)` دیدید، همه چیز OK است!

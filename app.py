@@ -84,6 +84,7 @@ from sqlalchemy.orm import joinedload
 
 APP_VERSION = "1.8.1"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
+APP_START_TS = time.time()
 
 # Simple in-memory cache for update checks
 UPDATE_CACHE = {
@@ -4464,6 +4465,18 @@ def monitor_page():
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
                          role=session.get('role', 'admin'))
+
+
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    """Lightweight health endpoint for reverse-proxy / uptime checks."""
+    return jsonify({
+        'success': True,
+        'status': 'ok',
+        'version': APP_VERSION,
+        'uptime_seconds': int(max(0, time.time() - APP_START_TS)),
+        'timestamp_utc': datetime.utcnow().isoformat() + 'Z',
+    })
 
 
 @app.route('/api/monitor/settings', methods=['GET'])
