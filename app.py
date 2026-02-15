@@ -67,6 +67,10 @@ except ModuleNotFoundError:
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 import copy
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
@@ -2195,6 +2199,8 @@ RENEW_TEMPLATE_SETTING_KEY = 'renew_template'
 DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nتمدید شد"""
 
 MONITOR_SETTINGS_KEY = 'monitor_settings'
+GENERAL_TIMEZONE_SETTING_KEY = 'general_timezone'
+DEFAULT_APP_TIMEZONE = 'Asia/Tehran'
 DEFAULT_MONITOR_SETTINGS = {
     "filters": {
         "warning_days": 3,
@@ -2292,6 +2298,51 @@ def _get_monitor_settings() -> dict:
     except Exception:
         parsed = {}
     return _normalize_monitor_settings(parsed)
+
+
+def _is_valid_timezone_name(value: str | None) -> bool:
+    tz_name = (value or '').strip()
+    if not tz_name:
+        return False
+    if ZoneInfo is None:
+        return tz_name == DEFAULT_APP_TIMEZONE
+    try:
+        ZoneInfo(tz_name)
+        return True
+    except Exception:
+        return False
+
+
+def _get_app_timezone_name() -> str:
+    stored = _get_or_create_system_setting(GENERAL_TIMEZONE_SETTING_KEY, DEFAULT_APP_TIMEZONE)
+    if _is_valid_timezone_name(stored):
+        return str(stored).strip()
+    return DEFAULT_APP_TIMEZONE
+
+
+def _get_app_tzinfo():
+    tz_name = _get_app_timezone_name()
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo(tz_name)
+        except Exception:
+            pass
+    # Fallback when zoneinfo database is unavailable
+    return timezone(timedelta(hours=3, minutes=30))
+
+
+def _to_app_timezone(dt: datetime | None):
+    if not dt:
+        return None
+    app_tz = _get_app_tzinfo()
+    try:
+        if dt.tzinfo is None:
+            dt_utc = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt_utc = dt.astimezone(timezone.utc)
+        return dt_utc.astimezone(app_tz)
+    except Exception:
+        return dt
 
 class ManualReceipt(db.Model):
     __tablename__ = 'manual_receipts'
@@ -2968,9 +3019,10 @@ def format_jalali(dt):
     if not dt:
         return None
     try:
-        # Convert UTC to Tehran (+3:30)
-        dt_tehran = dt + timedelta(hours=3, minutes=30)
-        jalali_date = jdatetime_class.fromgregorian(datetime=dt_tehran)
+        dt_local = _to_app_timezone(dt)
+        if not dt_local:
+            return None
+        jalali_date = jdatetime_class.fromgregorian(datetime=dt_local.replace(tzinfo=None))
         return jalali_date.strftime('%Y/%m/%d %H:%M')
     except Exception:
         return dt.isoformat() if dt else None
@@ -3399,22 +3451,43 @@ def format_remaining_days(timestamp):
         days = abs(timestamp) // 86400000
         return {"text": f"Not started ({days} days)", "days": days, "type": "start_after_use"}
     try:
-        expiry_date = datetime.fromtimestamp(timestamp/1000)
-        now = datetime.now()
-        
-        if expiry_date < now:
-            days_ago = (now - expiry_date).days
-            return {"text": f"Expired ({days_ago}d ago)", "days": -days_ago, "type": "expired"}
-        
-        days = (expiry_date - now).days
-        if days == 0: 
-            # Calculate Tehran time (UTC+3:30)
-            expiry_utc = datetime.utcfromtimestamp(timestamp/1000)
-            expiry_tehran = expiry_utc + timedelta(hours=3, minutes=30)
-            time_str = expiry_tehran.strftime('%H:%M')
-            return {"text": f"Today {time_str}", "days": 0, "type": "today"}
-        elif days < 7: return {"text": f"{days} days left", "days": days, "type": "soon"}
-        else: return {"text": f"{days} days left", "days": days, "type": "normal"}
+        now_ms = int(time.time() * 1000)
+        delta_ms = int(timestamp) - now_ms
+
+        if delta_ms <= 0:
+            past_ms = abs(delta_ms)
+            days_ago = past_ms // 86400000
+            hours_ago = (past_ms % 86400000) // 3600000
+            if days_ago > 0 and hours_ago > 0:
+                ago_label = f"{days_ago}d {hours_ago}h ago"
+            elif days_ago > 0:
+                ago_label = f"{days_ago}d ago"
+            elif hours_ago > 0:
+                ago_label = f"{hours_ago}h ago"
+            else:
+                ago_label = "just now"
+            return {"text": f"Expired ({ago_label})", "days": -int(days_ago), "type": "expired"}
+
+        days = delta_ms // 86400000
+        hours = (delta_ms % 86400000) // 3600000
+        minutes = (delta_ms % 3600000) // 60000
+
+        if days > 0 and hours > 0:
+            text = f"{days}d {hours}h left"
+        elif days > 0:
+            text = f"{days}d left"
+        elif hours > 0:
+            text = f"{hours}h left"
+        elif minutes > 0:
+            text = f"{minutes}m left"
+        else:
+            text = "Today"
+
+        if days == 0:
+            return {"text": text, "days": 0, "type": "today"}
+        if days < 7:
+            return {"text": text, "days": int(days), "type": "soon"}
+        return {"text": text, "days": int(days), "type": "normal"}
     except:
         return {"text": "Invalid Date", "days": 0, "type": "error"}
 
@@ -5127,6 +5200,42 @@ def save_subscription_page_settings():
 
     db.session.commit()
     return jsonify({'success': True, 'message': 'Subscription page settings saved', 'lang': lang})
+
+
+@app.route('/api/settings/general', methods=['GET'])
+@superadmin_required
+def get_general_settings():
+    return jsonify({
+        'success': True,
+        'timezone': _get_app_timezone_name()
+    })
+
+
+@app.route('/api/settings/general', methods=['POST'])
+@superadmin_required
+def save_general_settings():
+    try:
+        data = request.get_json() or {}
+    except Exception:
+        data = {}
+
+    tz_name = (data.get('timezone') or '').strip()
+    if not tz_name:
+        tz_name = DEFAULT_APP_TIMEZONE
+
+    if not _is_valid_timezone_name(tz_name):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid timezone. Example: Asia/Tehran'
+        }), 400
+
+    _set_system_setting_value(GENERAL_TIMEZONE_SETTING_KEY, tz_name)
+    db.session.commit()
+    return jsonify({
+        'success': True,
+        'message': 'General settings saved',
+        'timezone': tz_name
+    })
 
 
 @app.route('/api/client/direct-link/<int:server_id>/<sub_id>')

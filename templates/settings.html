@@ -66,6 +66,16 @@
                     </select>
                     <small class="text-secondary">Controls the public subscription page language shown to clients.</small>
                 </div>
+
+                <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
+                    <label>TimeZone</label>
+                    <input type="text" id="general-timezone" class="form-input" placeholder="Asia/Tehran">
+                    <small class="text-secondary">IANA timezone. Example: Asia/Tehran, Europe/Berlin, UTC</small>
+                </div>
+
+                <div class="form-group" style="margin-top: 16px; margin-bottom: 0;">
+                    <button class="btn btn-primary" onclick="saveGeneralSettings()">Save</button>
+                </div>
             </div>
         </div>
 
@@ -1066,7 +1076,43 @@
 
     function loadGeneralSettings() {
         syncThemeToggleUI();
+        loadAppGeneralSettings();
         loadSubscriptionPageSettings();
+    }
+
+    async function loadAppGeneralSettings() {
+        try {
+            const res = await fetch('/api/settings/general');
+            const data = await res.json();
+            if (data && data.success) {
+                const input = document.getElementById('general-timezone');
+                if (input) input.value = data.timezone || 'Asia/Tehran';
+            }
+        } catch (e) {
+            console.error('Error loading general settings', e);
+        }
+    }
+
+    async function saveGeneralSettings() {
+        const input = document.getElementById('general-timezone');
+        const timezone = (input ? input.value : '').trim() || 'Asia/Tehran';
+
+        try {
+            const res = await fetch('/api/settings/general', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ timezone })
+            });
+            const data = await res.json();
+            if (data && data.success) {
+                if (input) input.value = data.timezone || timezone;
+                showToast('Settings saved');
+            } else {
+                showToast((data && data.error) ? data.error : 'Error saving settings', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
     }
 
     async function loadSubscriptionPageSettings() {

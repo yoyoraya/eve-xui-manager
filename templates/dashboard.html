@@ -1280,12 +1280,9 @@
     function isBulkCheckboxVisible(cb) {
         if (!cb) return false;
         const row = cb.closest('tr');
-        if (!row) return false;
-
-        // Selectability follows active filters, not expanded/collapsed UI state.
-        const isDisabledRow = row.classList.contains('disabled-row');
-        if (disabledOnlyClients) return isDisabledRow;
-        if (hideDisabledClients) return !isDisabledRow;
+        if (row && row.offsetParent === null) return false;
+        const list = cb.closest('.clients-list');
+        if (list && list.classList.contains('hidden')) return false;
         return true;
     }
 
@@ -1598,12 +1595,23 @@
         }
         const now = Date.now();
         if (ts < now) {
-            const daysAgo = Math.floor((now - ts) / 86400000);
-            return `Expired (${daysAgo}d ago)`;
+            const delta = now - ts;
+            const daysAgo = Math.floor(delta / 86400000);
+            const hoursAgo = Math.floor((delta % 86400000) / 3600000);
+            if (daysAgo > 0 && hoursAgo > 0) return `Expired (${daysAgo}d ${hoursAgo}h ago)`;
+            if (daysAgo > 0) return `Expired (${daysAgo}d ago)`;
+            if (hoursAgo > 0) return `Expired (${hoursAgo}h ago)`;
+            return 'Expired (just now)';
         }
-        const daysLeft = Math.ceil((ts - now) / 86400000);
-        if (daysLeft === 0) return 'Today';
-        return `${daysLeft} days left`;
+        const delta = ts - now;
+        const daysLeft = Math.floor(delta / 86400000);
+        const hoursLeft = Math.floor((delta % 86400000) / 3600000);
+        const minutesLeft = Math.floor((delta % 3600000) / 60000);
+        if (daysLeft > 0 && hoursLeft > 0) return `${daysLeft}d ${hoursLeft}h left`;
+        if (daysLeft > 0) return `${daysLeft}d left`;
+        if (hoursLeft > 0) return `${hoursLeft}h left`;
+        if (minutesLeft > 0) return `${minutesLeft}m left`;
+        return 'Today';
     }
 
     // Helper: get expiry type from timestamp
@@ -4334,63 +4342,6 @@
         text.textContent = `${safeProcessed}/${safeTotal}`;
     }
 
-    function handleBulkActionCompleted(action, clients, data, progress) {
-        const safeProgress = progress || {};
-        const successCount = safeProgress.success || 0;
-        const failedCount = safeProgress.failed || 0;
-        const skippedCount = safeProgress.skipped || 0;
-        showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`);
-
-        let localChanged = false;
-
-        if (action === 'assign_owner' || action === 'unassign_owner') {
-            const newOwnerName = action === 'unassign_owner' ? null :
-                (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
-            const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
-            applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName, { render: false });
-            localChanged = true;
-        }
-
-        if (action === 'enable' || action === 'disable') {
-            const newEnable = action === 'enable';
-            clients.forEach(c => {
-                patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable }, { render: false });
-            });
-            localChanged = true;
-        }
-
-        if (action === 'add_days' && data.days_delta) {
-            const daysDelta = parseInt(data.days_delta) || 0;
-            if (daysDelta > 0) {
-                clients.forEach(c => {
-                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta }, { render: false });
-                });
-                localChanged = true;
-            }
-        }
-
-        if (action === 'add_volume' && data.volume_gb_delta) {
-            const volDelta = parseInt(data.volume_gb_delta) || 0;
-            if (volDelta > 0) {
-                clients.forEach(c => {
-                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta }, { render: false });
-                });
-                localChanged = true;
-            }
-        }
-
-        if (action === 'delete') {
-            clients.forEach(c => {
-                removeLocalClient(c.server_id, c.inbound_id, c.email, { render: false });
-            });
-            localChanged = true;
-        }
-
-        clearBulkSelection();
-        if (localChanged) applyFilters();
-        setTimeout(() => refreshData(true), 500);
-    }
-
     function onBulkActionChanged() {
         const action = document.getElementById('bulk-action-select')?.value;
         const resellerContainer = document.getElementById('bulk-reseller-container');
@@ -4488,7 +4439,7 @@
         try {
             setBulkProgress(true, 0, clients.length);
 
-            const response = await fetch('/api/client/bulk?wait=1', {
+            const response = await fetch('/api/client/bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action, clients, data, conditions })
@@ -4505,14 +4456,6 @@
             if (!jobId) {
                 setBulkProgress(false);
                 showToast('Bulk action failed (missing job id)', 'error');
-                return;
-            }
-
-            // In multi-worker deployments, polling an in-memory job can hit another worker.
-            // `wait=1` executes in-request and returns a completed job when possible.
-            if (result.done && result.job && result.job.state === 'done') {
-                setBulkProgress(false);
-                handleBulkActionCompleted(action, clients, data, result.job.progress || {});
                 return;
             }
 
@@ -4542,7 +4485,66 @@
 
                     if (job.state === 'done') {
                         setBulkProgress(false);
-                        handleBulkActionCompleted(action, clients, data, progress);
+                        const successCount = progress.success || 0;
+                        const failedCount = progress.failed || 0;
+                        const skippedCount = progress.skipped || 0;
+                        showToast(`Bulk action done. Success: ${successCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`);
+
+                        let localChanged = false;
+                        
+                        // Optimistic UI update for assign/unassign - update local data instantly
+                        if (action === 'assign_owner' || action === 'unassign_owner') {
+                            const newOwnerName = action === 'unassign_owner' ? null : 
+                                (document.getElementById('bulk-reseller-select')?.selectedOptions[0]?.text || null);
+                            const newOwnerId = action === 'unassign_owner' ? null : (data.reseller_id || null);
+                            applyOwnerUpdateToLocal(clients, newOwnerId, newOwnerName, { render: false });
+                            localChanged = true;
+                        }
+
+                        // Optimistic UI update for enable/disable
+                        if (action === 'enable' || action === 'disable') {
+                            const newEnable = action === 'enable';
+                            clients.forEach(c => {
+                                patchLocalClient(c.server_id, c.inbound_id, c.email, { enable: newEnable }, { render: false });
+                            });
+                            localChanged = true;
+                        }
+
+                        // Optimistic UI update for add_days
+                        if (action === 'add_days' && data.days_delta) {
+                            const daysDelta = parseInt(data.days_delta) || 0;
+                            if (daysDelta > 0) {
+                                clients.forEach(c => {
+                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addDays: daysDelta }, { render: false });
+                                });
+                                localChanged = true;
+                            }
+                        }
+
+                        // Optimistic UI update for add_volume
+                        if (action === 'add_volume' && data.volume_gb_delta) {
+                            const volDelta = parseInt(data.volume_gb_delta) || 0;
+                            if (volDelta > 0) {
+                                clients.forEach(c => {
+                                    patchLocalClient(c.server_id, c.inbound_id, c.email, { addVolumeGB: volDelta }, { render: false });
+                                });
+                                localChanged = true;
+                            }
+                        }
+
+                        // Optimistic UI update for delete - remove from local data instantly
+                        if (action === 'delete') {
+                            clients.forEach(c => {
+                                removeLocalClient(c.server_id, c.inbound_id, c.email, { render: false });
+                            });
+                            localChanged = true;
+                        }
+                        
+                        // Clear selection and re-render
+                        clearBulkSelection();
+                        if (localChanged) applyFilters();
+                        // Background sync (silent) - UI already updated optimistically
+                        setTimeout(() => refreshData(true), 500);
                         return;
                     }
                     if (job.state === 'error') {
@@ -4700,9 +4702,7 @@
         const rawExpiryInput = document.getElementById('edit-client-raw-expiry-ms');
         const firstUseToggle = document.getElementById('edit-client-start-after-first-use');
         if (expiryInput) {
-            let ts = Number(expiryTime) || 0;
-            // If timestamp is in seconds (10 digits), convert to ms (supports negative too)
-            if (ts !== 0 && Math.abs(ts) < 10000000000) ts *= 1000;
+            const ts = normalizeEditExpiryTs(expiryTime);
 
             if (rawExpiryInput) rawExpiryInput.value = String(ts || 0);
 
@@ -4758,6 +4758,29 @@
         return Number.isFinite(ts) ? ts : 0;
     }
 
+    function normalizeEditExpiryTs(rawValue) {
+        let ts = Number(rawValue) || 0;
+        if (!ts) return 0;
+
+        const absTs = Math.abs(ts);
+        // Convert only positive epoch-seconds to milliseconds.
+        // Negative values are pending-duration markers and must remain unchanged.
+        if (ts > 0 && absTs >= 946684800 && absTs < 4102444800) {
+            ts *= 1000;
+        }
+        return ts;
+    }
+
+    function normalizePendingDurationMs(rawValue) {
+        const abs = Math.abs(Number(rawValue) || 0);
+        if (!abs) return 0;
+
+        // Some panels may return pending duration in seconds. Normalize to ms.
+        const tenYearsInSec = 10 * 365 * 24 * 60 * 60;
+        if (abs <= tenYearsInSec) return abs * 1000;
+        return abs;
+    }
+
     function updateEditClientStartAfterFirstUseUI() {
         const toggle = document.getElementById('edit-client-start-after-first-use');
         const info = document.getElementById('edit-client-start-after-first-use-info');
@@ -4777,7 +4800,7 @@
             if (baseTs > 0) {
                 remainingMs = baseTs - now;
             } else if (rawExpiry < 0) {
-                remainingMs = Math.abs(rawExpiry);
+                remainingMs = normalizePendingDurationMs(rawExpiry);
             } else if (rawExpiry > 0) {
                 remainingMs = rawExpiry - now;
             }
@@ -4800,7 +4823,7 @@
 
         if ((!expiryInput.value || !expiryInput.value.trim()) && rawExpiry < 0) {
             // Convert pending duration back into a concrete date to make editing easier.
-            const derivedTs = now + Math.abs(rawExpiry);
+            const derivedTs = now + normalizePendingDurationMs(rawExpiry);
             expiryInput.value = formatEditClientExpiryTs(derivedTs);
         }
     }
@@ -4840,7 +4863,7 @@
                 if (baseTs > 0) {
                     remainingMs = baseTs - now;
                 } else if (rawExpiry < 0) {
-                    remainingMs = Math.abs(rawExpiry);
+                    remainingMs = normalizePendingDurationMs(rawExpiry);
                 } else if (rawExpiry > 0) {
                     remainingMs = rawExpiry - now;
                 }
