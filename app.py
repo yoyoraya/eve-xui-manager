@@ -80,6 +80,7 @@ from werkzeug.utils import secure_filename
 from urllib.parse import urlparse, quote, urlencode, unquote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
+from sqlalchemy.orm import joinedload
 
 APP_VERSION = "1.8.1"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
@@ -7862,9 +7863,7 @@ def get_payments():
         end_dt = parse_jalali_date(request.args.get('end_date'), end_of_day=True)
         if end_dt:
             payment_query = payment_query.filter(Payment.payment_date <= end_dt)
-        payments_list = []
-        if direction_filter != 'expense' and (not type_filter or type_filter == 'payment'):
-            payments_list = payment_query.order_by(Payment.payment_date.desc()).all()
+        include_payments = (direction_filter != 'expense' and (not type_filter or type_filter == 'payment'))
 
         # ...existing code...
         # (rest of the function remains unchanged)
@@ -7908,7 +7907,7 @@ def get_payments():
         tx_query = tx_query.filter(Transaction.created_at >= start_dt)
     if end_dt:
         tx_query = tx_query.filter(Transaction.created_at <= end_dt)
-    transactions_list = tx_query.order_by(Transaction.created_at.desc()).all()
+    include_transactions = True
 
     # ManualReceipts
     receipt_query = ManualReceipt.query
@@ -7930,9 +7929,45 @@ def get_payments():
         receipt_query = receipt_query.filter(ManualReceipt.deposit_at >= start_dt)
     if end_dt:
         receipt_query = receipt_query.filter(ManualReceipt.deposit_at <= end_dt)
+    include_receipts = (direction_filter != 'expense' and (not type_filter or type_filter == 'receipt'))
+
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('limit', 20, type=int)
+    page = max(1, int(page or 1))
+    per_page = max(1, min(int(per_page or 20), 100))
+
+    payment_count = payment_query.order_by(None).count() if include_payments else 0
+    tx_count = tx_query.order_by(None).count() if include_transactions else 0
+    receipt_count = receipt_query.order_by(None).count() if include_receipts else 0
+
+    total = int(payment_count) + int(tx_count) + int(receipt_count)
+    pages = (total + per_page - 1) // per_page if total > 0 else 1
+
+    start = (page - 1) * per_page
+    end = start + per_page
+    fetch_limit = max(end, per_page)
+
+    payments_list = []
+    if include_payments and payment_count > 0:
+        payments_list = payment_query.options(
+            joinedload(Payment.admin),
+            joinedload(Payment.card),
+        ).order_by(Payment.payment_date.desc()).limit(fetch_limit).all()
+
+    transactions_list = []
+    if include_transactions and tx_count > 0:
+        transactions_list = tx_query.options(
+            joinedload(Transaction.admin),
+            joinedload(Transaction.card),
+            joinedload(Transaction.server),
+        ).order_by(Transaction.created_at.desc()).limit(fetch_limit).all()
+
     receipts_list = []
-    if direction_filter != 'expense' and (not type_filter or type_filter == 'receipt'):
-        receipts_list = receipt_query.order_by(ManualReceipt.deposit_at.desc()).all()
+    if include_receipts and receipt_count > 0:
+        receipts_list = receipt_query.options(
+            joinedload(ManualReceipt.admin),
+            joinedload(ManualReceipt.card),
+        ).order_by(ManualReceipt.deposit_at.desc()).limit(fetch_limit).all()
 
     # Map payments
     mapped_payments = []
@@ -7944,9 +7979,9 @@ def get_payments():
     # Map transactions
     mapped_transactions = []
     for t in transactions_list:
-        admin = db.session.get(Admin, t.admin_id)
-        card = db.session.get(BankCard, t.card_id) if t.card_id else None
-        server = db.session.get(Server, t.server_id) if getattr(t, 'server_id', None) else None
+        admin = getattr(t, 'admin', None)
+        card = getattr(t, 'card', None)
+        server = getattr(t, 'server', None)
         jalali_date = format_jalali(t.created_at) or ''
         mapped_transactions.append({
             'id': f"tx-{t.id}",
@@ -8007,13 +8042,6 @@ def get_payments():
             except:
                 return datetime.min
     combined.sort(key=lambda x: get_date(x), reverse=True)
-    total = len(combined)
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('limit', 20, type=int)
-    per_page = max(1, min(per_page, 100))
-    pages = (total + per_page - 1) // per_page
-    start = (page - 1) * per_page
-    end = start + per_page
     page_items = combined[start:end]
     return jsonify({
         'payments': page_items,
