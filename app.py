@@ -7868,7 +7868,7 @@ def get_payments():
                 Payment.description.ilike(pattern),
                 Payment.sender_card.ilike(pattern),
                 Payment.sender_name.ilike(pattern),
-                func.lower(Payment.client_email).ilike(pattern)
+                Payment.client_email.ilike(pattern)
             ))
         start_dt = parse_jalali_date(request.args.get('start_date'), end_of_day=False)
         if start_dt:
@@ -7901,6 +7901,8 @@ def get_payments():
         tx_query = tx_query.filter(or_(
             Transaction.description.ilike(pattern),
             Transaction.sender_card.ilike(pattern),
+            Transaction.sender_name.ilike(pattern),
+            Transaction.client_email.ilike(pattern),
             Transaction.type.ilike(pattern)
         ))
 
