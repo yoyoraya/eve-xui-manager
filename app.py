@@ -168,6 +168,12 @@ REFRESH_MAX_BACKOFF_SEC = 300
 XUI_SESSION_CACHE = {}  # server_id -> {'session': requests.Session, 'expiry': float}
 XUI_SESSION_TTL = 600  # 10 minutes cache
 
+WHATSAPP_SEND_TRACKER = {
+    'per_recipient': {},
+    'daily': {'date': '', 'count': 0}
+}
+WHATSAPP_SEND_TRACKER_LOCK = threading.Lock()
+
 
 def _utc_iso_now():
     return datetime.utcnow().isoformat()
@@ -2203,6 +2209,49 @@ DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nت�
 MONITOR_SETTINGS_KEY = 'monitor_settings'
 GENERAL_TIMEZONE_SETTING_KEY = 'general_timezone'
 DEFAULT_APP_TIMEZONE = 'Asia/Tehran'
+WHATSAPP_DEPLOYMENT_REGION_KEY = 'whatsapp_deployment_region'
+WHATSAPP_ENABLED_KEY = 'whatsapp_enabled'
+WHATSAPP_PROVIDER_KEY = 'whatsapp_provider'
+WHATSAPP_TRIGGER_RENEW_KEY = 'whatsapp_trigger_renew_success'
+WHATSAPP_TRIGGER_WELCOME_KEY = 'whatsapp_trigger_welcome'
+WHATSAPP_TRIGGER_PRE_EXPIRY_KEY = 'whatsapp_trigger_pre_expiry'
+WHATSAPP_MIN_INTERVAL_SECONDS_KEY = 'whatsapp_min_interval_seconds'
+WHATSAPP_DAILY_LIMIT_KEY = 'whatsapp_daily_limit'
+WHATSAPP_PRE_EXPIRY_HOURS_KEY = 'whatsapp_pre_expiry_hours'
+WHATSAPP_RETRY_COUNT_KEY = 'whatsapp_retry_count'
+WHATSAPP_BACKOFF_SECONDS_KEY = 'whatsapp_backoff_seconds'
+WHATSAPP_CIRCUIT_BREAKER_KEY = 'whatsapp_circuit_breaker'
+WHATSAPP_TEMPLATE_RENEW_KEY = 'whatsapp_template_renew'
+WHATSAPP_TEMPLATE_WELCOME_KEY = 'whatsapp_template_welcome'
+WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY = 'whatsapp_template_pre_expiry'
+WHATSAPP_GATEWAY_URL_KEY = 'whatsapp_gateway_url'
+WHATSAPP_GATEWAY_API_KEY = 'whatsapp_gateway_api_key'
+WHATSAPP_GATEWAY_TIMEOUT_KEY = 'whatsapp_gateway_timeout_seconds'
+
+DEFAULT_WHATSAPP_TEMPLATE_RENEW = "سلام {user}، تمدید شما با موفقیت انجام شد."
+DEFAULT_WHATSAPP_TEMPLATE_WELCOME = "سلام {user}، اشتراک شما فعال شد."
+DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY = "سلام {user}، اشتراک شما تا {time_left} دیگر منقضی می‌شود."
+
+WHATSAPP_CONFIG_KEYS = {
+    WHATSAPP_DEPLOYMENT_REGION_KEY,
+    WHATSAPP_ENABLED_KEY,
+    WHATSAPP_PROVIDER_KEY,
+    WHATSAPP_TRIGGER_RENEW_KEY,
+    WHATSAPP_TRIGGER_WELCOME_KEY,
+    WHATSAPP_TRIGGER_PRE_EXPIRY_KEY,
+    WHATSAPP_MIN_INTERVAL_SECONDS_KEY,
+    WHATSAPP_DAILY_LIMIT_KEY,
+    WHATSAPP_PRE_EXPIRY_HOURS_KEY,
+    WHATSAPP_RETRY_COUNT_KEY,
+    WHATSAPP_BACKOFF_SECONDS_KEY,
+    WHATSAPP_CIRCUIT_BREAKER_KEY,
+    WHATSAPP_TEMPLATE_RENEW_KEY,
+    WHATSAPP_TEMPLATE_WELCOME_KEY,
+    WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY,
+    WHATSAPP_GATEWAY_URL_KEY,
+    WHATSAPP_GATEWAY_API_KEY,
+    WHATSAPP_GATEWAY_TIMEOUT_KEY,
+}
 DEFAULT_MONITOR_SETTINGS = {
     "filters": {
         "warning_days": 3,
@@ -2320,6 +2369,193 @@ def _get_app_timezone_name() -> str:
     if _is_valid_timezone_name(stored):
         return str(stored).strip()
     return DEFAULT_APP_TIMEZONE
+
+
+def _normalize_whatsapp_region(value: str | None) -> str:
+    raw = (value or '').strip().lower()
+    if raw in ('iran', 'ir', 'inside', 'inside_iran', 'local', 'domestic'):
+        return 'iran'
+    return 'outside'
+
+
+def _normalize_whatsapp_provider(value: str | None) -> str:
+    raw = (value or '').strip().lower()
+    if raw in ('cloud', 'meta', 'official'):
+        return 'cloud'
+    return 'baileys'
+
+
+def _normalize_whatsapp_gateway_url(value: str | None) -> str:
+    raw = (value or '').strip()
+    if not raw:
+        return ''
+    if not raw.startswith('http://') and not raw.startswith('https://'):
+        raw = f"https://{raw}"
+    return raw.rstrip('/')
+
+
+def _get_system_config_text(key: str, default: str = '') -> str:
+    conf = db.session.get(SystemConfig, key)
+    if not conf or conf.value is None:
+        return default
+    return str(conf.value)
+
+
+def _get_system_config_int(key: str, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+    return _parse_int(_get_system_config_text(key, str(default)), default, min_value=min_value, max_value=max_value)
+
+
+def _get_system_config_bool(key: str, default: bool = False) -> bool:
+    return _parse_bool(_get_system_config_text(key, 'true' if default else 'false'))
+
+
+def _get_whatsapp_runtime_settings() -> dict:
+    region = _normalize_whatsapp_region(_get_system_config_text(WHATSAPP_DEPLOYMENT_REGION_KEY, 'outside'))
+    provider = _normalize_whatsapp_provider(_get_system_config_text(WHATSAPP_PROVIDER_KEY, 'baileys'))
+
+    enabled_requested = _get_system_config_bool(WHATSAPP_ENABLED_KEY, False)
+    enabled = bool(enabled_requested and region != 'iran')
+
+    config = {
+        'deployment_region': region,
+        'provider': provider,
+        'enabled_requested': enabled_requested,
+        'enabled': enabled,
+        'trigger_renew_success': _get_system_config_bool(WHATSAPP_TRIGGER_RENEW_KEY, True),
+        'trigger_welcome': _get_system_config_bool(WHATSAPP_TRIGGER_WELCOME_KEY, False),
+        'trigger_pre_expiry': _get_system_config_bool(WHATSAPP_TRIGGER_PRE_EXPIRY_KEY, False),
+        'min_interval_seconds': _get_system_config_int(WHATSAPP_MIN_INTERVAL_SECONDS_KEY, 45, min_value=45, max_value=3600),
+        'daily_limit': _get_system_config_int(WHATSAPP_DAILY_LIMIT_KEY, 100, min_value=1, max_value=50000),
+        'pre_expiry_hours': _get_system_config_int(WHATSAPP_PRE_EXPIRY_HOURS_KEY, 24, min_value=1, max_value=720),
+        'retry_count': _get_system_config_int(WHATSAPP_RETRY_COUNT_KEY, 3, min_value=0, max_value=10),
+        'backoff_seconds': _get_system_config_int(WHATSAPP_BACKOFF_SECONDS_KEY, 30, min_value=5, max_value=3600),
+        'circuit_breaker': _get_system_config_bool(WHATSAPP_CIRCUIT_BREAKER_KEY, True),
+        'template_renew': _get_system_config_text(WHATSAPP_TEMPLATE_RENEW_KEY, DEFAULT_WHATSAPP_TEMPLATE_RENEW).strip() or DEFAULT_WHATSAPP_TEMPLATE_RENEW,
+        'template_welcome': _get_system_config_text(WHATSAPP_TEMPLATE_WELCOME_KEY, DEFAULT_WHATSAPP_TEMPLATE_WELCOME).strip() or DEFAULT_WHATSAPP_TEMPLATE_WELCOME,
+        'template_pre_expiry': _get_system_config_text(WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY, DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY).strip() or DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY,
+        'gateway_url': _normalize_whatsapp_gateway_url(_get_system_config_text(WHATSAPP_GATEWAY_URL_KEY, '')),
+        'gateway_api_key': _get_system_config_text(WHATSAPP_GATEWAY_API_KEY, '').strip(),
+        'gateway_timeout_seconds': _get_system_config_int(WHATSAPP_GATEWAY_TIMEOUT_KEY, 10, min_value=3, max_value=60),
+    }
+
+    if region == 'iran':
+        config['blocked_reason'] = 'deployment_in_iran'
+    return config
+
+
+def _normalize_ascii_digits(value: str | None) -> str:
+    val = str(value or '')
+    table = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
+    return val.translate(table)
+
+
+def _extract_iran_mobile_from_text(value: str | None) -> str:
+    text_value = _normalize_ascii_digits(value)
+    if not text_value:
+        return ''
+    match = re.search(r'(?:^|[^0-9])(?:\+?98|0098|0)?(9\d{9})(?=$|[^0-9])', text_value)
+    if not match:
+        return ''
+    return f"+98{match.group(1)}"
+
+
+def _take_whatsapp_send_slot(recipient: str, runtime_cfg: dict) -> tuple[bool, str | None]:
+    now_ts = time.time()
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    min_interval = int(runtime_cfg.get('min_interval_seconds') or 45)
+    daily_limit = int(runtime_cfg.get('daily_limit') or 100)
+
+    with WHATSAPP_SEND_TRACKER_LOCK:
+        daily = WHATSAPP_SEND_TRACKER.get('daily') or {}
+        if daily.get('date') != today:
+            WHATSAPP_SEND_TRACKER['daily'] = {'date': today, 'count': 0}
+
+        current_count = int((WHATSAPP_SEND_TRACKER.get('daily') or {}).get('count') or 0)
+        if current_count >= daily_limit:
+            return False, 'daily_limit_reached'
+
+        per_recipient = WHATSAPP_SEND_TRACKER.get('per_recipient') or {}
+        last_sent = float(per_recipient.get(recipient) or 0.0)
+        if last_sent > 0 and (now_ts - last_sent) < float(min_interval):
+            return False, 'recipient_rate_limited'
+
+        per_recipient[recipient] = now_ts
+        WHATSAPP_SEND_TRACKER['per_recipient'] = per_recipient
+        WHATSAPP_SEND_TRACKER['daily'] = {'date': today, 'count': current_count + 1}
+
+    return True, None
+
+
+def _send_whatsapp_message(event_name: str, recipient_source: str, message_text: str) -> dict:
+    runtime_cfg = _get_whatsapp_runtime_settings()
+    result = {
+        'attempted': False,
+        'sent': False,
+        'event': event_name,
+        'recipient': None,
+        'reason': None,
+        'status_code': None,
+    }
+
+    if runtime_cfg.get('deployment_region') == 'iran':
+        result['reason'] = 'deployment_in_iran'
+        return result
+    if not runtime_cfg.get('enabled'):
+        result['reason'] = 'feature_disabled'
+        return result
+
+    trigger_key = f"trigger_{event_name}"
+    if trigger_key in runtime_cfg and not runtime_cfg.get(trigger_key):
+        result['reason'] = 'trigger_disabled'
+        return result
+
+    recipient = _extract_iran_mobile_from_text(recipient_source)
+    if not recipient:
+        result['reason'] = 'recipient_not_found'
+        return result
+
+    gateway_url = (runtime_cfg.get('gateway_url') or '').strip()
+    if not gateway_url:
+        result['reason'] = 'gateway_not_configured'
+        return result
+
+    slot_ok, slot_reason = _take_whatsapp_send_slot(recipient, runtime_cfg)
+    if not slot_ok:
+        result['reason'] = slot_reason
+        result['recipient'] = recipient
+        return result
+
+    headers = {'Content-Type': 'application/json'}
+    api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+    if api_key:
+        headers['Authorization'] = f"Bearer {api_key}"
+
+    payload = {
+        'to': recipient,
+        'message': (message_text or '').strip(),
+        'event': event_name,
+    }
+    result['attempted'] = True
+    result['recipient'] = recipient
+
+    try:
+        response = requests.post(
+            f"{gateway_url}/send",
+            json=payload,
+            headers=headers,
+            timeout=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
+            verify=False,
+        )
+        result['status_code'] = int(response.status_code)
+        if 200 <= response.status_code < 300:
+            result['sent'] = True
+            return result
+
+        result['reason'] = f"gateway_http_{response.status_code}"
+        return result
+    except Exception as exc:
+        result['reason'] = f"gateway_error: {exc}"
+        return result
 
 
 def _get_app_tzinfo():
@@ -5200,12 +5436,31 @@ def settings_page():
     user = db.session.get(Admin, session['admin_id'])
     if not user.is_superadmin:
         return redirect(url_for('dashboard'))
+    whatsapp_cfg = _get_whatsapp_runtime_settings()
     return render_template('settings.html', 
                          current_user=user, 
                          is_superadmin=user.is_superadmin, 
                          app_version=APP_VERSION,
                          admin_username=user.username,
-                         role=user.role)
+                         role=user.role,
+                         whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
+                         whatsapp_enabled=whatsapp_cfg.get('enabled_requested', False),
+                         whatsapp_provider=whatsapp_cfg.get('provider', 'baileys'),
+                         whatsapp_trigger_renew_success=whatsapp_cfg.get('trigger_renew_success', True),
+                         whatsapp_trigger_welcome=whatsapp_cfg.get('trigger_welcome', False),
+                         whatsapp_trigger_pre_expiry=whatsapp_cfg.get('trigger_pre_expiry', False),
+                         whatsapp_min_interval_seconds=whatsapp_cfg.get('min_interval_seconds', 45),
+                         whatsapp_daily_limit=whatsapp_cfg.get('daily_limit', 100),
+                         whatsapp_pre_expiry_hours=whatsapp_cfg.get('pre_expiry_hours', 24),
+                         whatsapp_retry_count=whatsapp_cfg.get('retry_count', 3),
+                         whatsapp_backoff_seconds=whatsapp_cfg.get('backoff_seconds', 30),
+                         whatsapp_circuit_breaker=whatsapp_cfg.get('circuit_breaker', True),
+                         whatsapp_gateway_url=whatsapp_cfg.get('gateway_url', ''),
+                         whatsapp_gateway_api_key=whatsapp_cfg.get('gateway_api_key', ''),
+                         whatsapp_gateway_timeout_seconds=whatsapp_cfg.get('gateway_timeout_seconds', 10),
+                         whatsapp_template_renew=whatsapp_cfg.get('template_renew', DEFAULT_WHATSAPP_TEMPLATE_RENEW),
+                         whatsapp_template_welcome=whatsapp_cfg.get('template_welcome', DEFAULT_WHATSAPP_TEMPLATE_WELCOME),
+                         whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY))
 
 
 @app.route('/api/settings/subscription-page', methods=['GET'])
@@ -6618,7 +6873,18 @@ def renew_client(server_id, inbound_id, email):
                     'dashboard_link': dashboard_link,
                 })
 
-                return _finish({"success": True, "copy_text": copy_text, "verify": verify})
+                whatsapp_runtime = _get_whatsapp_runtime_settings()
+                whatsapp_delivery = _send_whatsapp_message('renew_success', email, copy_text)
+                whatsapp_meta = {
+                    'enabled': whatsapp_runtime.get('enabled', False),
+                    'deployment_region': whatsapp_runtime.get('deployment_region', 'outside'),
+                    'provider': whatsapp_runtime.get('provider', 'baileys'),
+                    'trigger_renew_success': whatsapp_runtime.get('trigger_renew_success', False),
+                    'blocked_reason': whatsapp_runtime.get('blocked_reason') if not whatsapp_runtime.get('enabled', False) else None,
+                    'delivery': whatsapp_delivery,
+                }
+
+                return _finish({"success": True, "copy_text": copy_text, "verify": verify, "whatsapp": whatsapp_meta})
 
             errors.append(f"{template}: {resp.status_code}")
             timing["update_endpoint"] = template
@@ -9506,6 +9772,7 @@ def sub_manager_page():
     support_whatsapp = db.session.get(SystemConfig, 'support_whatsapp')
     channel_telegram = db.session.get(SystemConfig, 'channel_telegram')
     channel_whatsapp = db.session.get(SystemConfig, 'channel_whatsapp')
+    whatsapp_cfg = _get_whatsapp_runtime_settings()
     
     return render_template('sub_manager.html',
                          admin_username=session.get('admin_username'),
@@ -9514,7 +9781,25 @@ def sub_manager_page():
                          support_telegram=support_telegram.value if support_telegram else '',
                          support_whatsapp=support_whatsapp.value if support_whatsapp else '',
                          channel_telegram=channel_telegram.value if channel_telegram else '',
-                         channel_whatsapp=channel_whatsapp.value if channel_whatsapp else '')
+                         channel_whatsapp=channel_whatsapp.value if channel_whatsapp else '',
+                         whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
+                         whatsapp_enabled=whatsapp_cfg.get('enabled_requested', False),
+                         whatsapp_provider=whatsapp_cfg.get('provider', 'baileys'),
+                         whatsapp_trigger_renew_success=whatsapp_cfg.get('trigger_renew_success', True),
+                         whatsapp_trigger_welcome=whatsapp_cfg.get('trigger_welcome', False),
+                         whatsapp_trigger_pre_expiry=whatsapp_cfg.get('trigger_pre_expiry', False),
+                         whatsapp_min_interval_seconds=whatsapp_cfg.get('min_interval_seconds', 45),
+                         whatsapp_daily_limit=whatsapp_cfg.get('daily_limit', 100),
+                         whatsapp_pre_expiry_hours=whatsapp_cfg.get('pre_expiry_hours', 24),
+                         whatsapp_retry_count=whatsapp_cfg.get('retry_count', 3),
+                         whatsapp_backoff_seconds=whatsapp_cfg.get('backoff_seconds', 30),
+                         whatsapp_circuit_breaker=whatsapp_cfg.get('circuit_breaker', True),
+                         whatsapp_gateway_url=whatsapp_cfg.get('gateway_url', ''),
+                         whatsapp_gateway_api_key=whatsapp_cfg.get('gateway_api_key', ''),
+                         whatsapp_gateway_timeout_seconds=whatsapp_cfg.get('gateway_timeout_seconds', 10),
+                         whatsapp_template_renew=whatsapp_cfg.get('template_renew', DEFAULT_WHATSAPP_TEMPLATE_RENEW),
+                         whatsapp_template_welcome=whatsapp_cfg.get('template_welcome', DEFAULT_WHATSAPP_TEMPLATE_WELCOME),
+                         whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY))
 
 @app.route('/api/sub-apps', methods=['GET'])
 def get_sub_apps():
@@ -9971,20 +10256,107 @@ def update_system_config():
         return jsonify({'success': False, 'error': 'No data provided'}), 400
         
     try:
+        normalized_region = None
+        if WHATSAPP_DEPLOYMENT_REGION_KEY in data:
+            normalized_region = _normalize_whatsapp_region(data.get(WHATSAPP_DEPLOYMENT_REGION_KEY))
+
         for key, value in data.items():
             config = db.session.get(SystemConfig, key)
-            sanitized_value = sanitize_html(str(value))
+
+            if key == WHATSAPP_DEPLOYMENT_REGION_KEY:
+                sanitized_value = _normalize_whatsapp_region(value)
+            elif key == WHATSAPP_PROVIDER_KEY:
+                sanitized_value = _normalize_whatsapp_provider(value)
+            elif key in {
+                WHATSAPP_ENABLED_KEY,
+                WHATSAPP_TRIGGER_RENEW_KEY,
+                WHATSAPP_TRIGGER_WELCOME_KEY,
+                WHATSAPP_TRIGGER_PRE_EXPIRY_KEY,
+                WHATSAPP_CIRCUIT_BREAKER_KEY,
+            }:
+                sanitized_value = 'true' if _parse_bool(value) else 'false'
+            elif key == WHATSAPP_MIN_INTERVAL_SECONDS_KEY:
+                sanitized_value = str(_parse_int(value, 45, min_value=45, max_value=3600))
+            elif key == WHATSAPP_DAILY_LIMIT_KEY:
+                sanitized_value = str(_parse_int(value, 100, min_value=1, max_value=50000))
+            elif key == WHATSAPP_PRE_EXPIRY_HOURS_KEY:
+                sanitized_value = str(_parse_int(value, 24, min_value=1, max_value=720))
+            elif key == WHATSAPP_RETRY_COUNT_KEY:
+                sanitized_value = str(_parse_int(value, 3, min_value=0, max_value=10))
+            elif key == WHATSAPP_BACKOFF_SECONDS_KEY:
+                sanitized_value = str(_parse_int(value, 30, min_value=5, max_value=3600))
+            elif key == WHATSAPP_GATEWAY_URL_KEY:
+                sanitized_value = _normalize_whatsapp_gateway_url(value)
+            elif key == WHATSAPP_GATEWAY_API_KEY:
+                sanitized_value = sanitize_html(str(value))[:512]
+            elif key == WHATSAPP_GATEWAY_TIMEOUT_KEY:
+                sanitized_value = str(_parse_int(value, 10, min_value=3, max_value=60))
+            elif key in {WHATSAPP_TEMPLATE_RENEW_KEY, WHATSAPP_TEMPLATE_WELCOME_KEY, WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY}:
+                sanitized_value = sanitize_html(str(value))[:2000]
+            else:
+                sanitized_value = sanitize_html(str(value))
+
             if config:
                 config.value = sanitized_value
             else:
                 config = SystemConfig(key=key, value=sanitized_value)
                 db.session.add(config)
+
+        effective_region = normalized_region
+        if effective_region is None:
+            effective_region = _normalize_whatsapp_region(_get_system_config_text(WHATSAPP_DEPLOYMENT_REGION_KEY, 'outside'))
+
+        warning = None
+        if effective_region == 'iran':
+            enabled_conf = db.session.get(SystemConfig, WHATSAPP_ENABLED_KEY)
+            if enabled_conf:
+                enabled_conf.value = 'false'
+            else:
+                db.session.add(SystemConfig(key=WHATSAPP_ENABLED_KEY, value='false'))
+            warning = 'WhatsApp automation is not available when the panel is deployed in Iran.'
         
         db.session.commit()
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'warning': warning})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/whatsapp/test-connection', methods=['POST'])
+@superadmin_required
+def test_whatsapp_connection():
+    runtime_cfg = _get_whatsapp_runtime_settings()
+    if runtime_cfg.get('deployment_region') == 'iran':
+        return jsonify({
+            'success': False,
+            'error': 'WhatsApp automation is not available when the panel is deployed in Iran.',
+            'blocked_reason': 'deployment_in_iran'
+        }), 400
+
+    gateway_url = (runtime_cfg.get('gateway_url') or '').strip()
+    if not gateway_url:
+        return jsonify({'success': False, 'error': 'WhatsApp gateway URL is not configured.'}), 400
+
+    headers = {}
+    api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+    if api_key:
+        headers['Authorization'] = f"Bearer {api_key}"
+
+    try:
+        response = requests.get(
+            f"{gateway_url}/health",
+            headers=headers,
+            timeout=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
+            verify=False,
+        )
+        ok = 200 <= response.status_code < 300
+        return jsonify({
+            'success': ok,
+            'status_code': int(response.status_code),
+            'message': 'Gateway reachable' if ok else 'Gateway returned non-success status'
+        }), 200 if ok else 400
+    except Exception as exc:
+        return jsonify({'success': False, 'error': f'Gateway connection failed: {exc}'}), 400
 
 @app.route('/packages')
 @superadmin_required

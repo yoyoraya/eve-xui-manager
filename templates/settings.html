@@ -26,6 +26,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"></path><path d="M22 2L15 22l-4-9-9-4 20-7z"></path></svg>
             Telegram Backup
         </button>
+        <button class="settings-tab" onclick="switchTab('whatsapp')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.38 7.55L3 21l1.98-5.44A8.5 8.5 0 1 1 21 11.5z"></path></svg>
+            WhatsApp
+        </button>
         <button class="settings-tab" onclick="switchTab('ssl')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
             SSL Settings
@@ -306,6 +310,145 @@
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                         Save Settings
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-whatsapp" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>WhatsApp Automation</h2>
+                        <p class="text-secondary">Configure gateway, authentication flow, triggers, and safety limits.</p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button id="wa-test-connection" class="btn btn-secondary" onclick="testWhatsAppConnectionSettings()">
+                            Test Connection
+                        </button>
+                        <button id="wa-open-auth" class="btn btn-primary" onclick="openWhatsAppAuthWizard()">
+                            Open Auth Wizard
+                        </button>
+                    </div>
+                </div>
+
+                <div id="wa-region-warning" class="form-group" style="display:none; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px;">
+                    <strong>Unavailable on Iran deployment:</strong>
+                    <div style="margin-top: 4px;">If the panel is deployed in Iran, WhatsApp automation cannot be used.</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Deployment Region</label>
+                    <select id="wa-deployment-region" class="form-select" onchange="applyWhatsAppRegionStateSettings()">
+                        <option value="outside" {% if whatsapp_deployment_region != 'iran' %}selected{% endif %}>Outside Iran</option>
+                        <option value="iran" {% if whatsapp_deployment_region == 'iran' %}selected{% endif %}>Iran</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Provider</label>
+                    <select id="wa-provider" class="form-select">
+                        <option value="baileys" {% if whatsapp_provider == 'baileys' %}selected{% endif %}>Baileys</option>
+                        <option value="cloud" {% if whatsapp_provider == 'cloud' %}selected{% endif %}>WhatsApp Cloud API</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Gateway URL</label>
+                    <input type="text" id="wa-gateway-url" class="form-control" value="{{ whatsapp_gateway_url }}" placeholder="https://wa-gateway.example.com">
+                    <small class="text-secondary">Gateway must expose <code>/health</code>, <code>/send</code>, and for auth wizard ideally <code>/auth</code>.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Gateway API Key (optional)</label>
+                    <input type="text" id="wa-gateway-api-key" class="form-control" value="{{ whatsapp_gateway_api_key }}" placeholder="Bearer token">
+                </div>
+
+                <div class="form-group">
+                    <label>Gateway Timeout (seconds)</label>
+                    <input type="number" id="wa-gateway-timeout" class="form-control" min="3" max="60" value="{{ whatsapp_gateway_timeout_seconds }}">
+                </div>
+
+                <div class="form-group">
+                    <label>Enable WhatsApp Automation</label>
+                    <div class="refresh-toggle" style="gap: 10px;">
+                        <label class="toggle-switch" style="margin: 0;">
+                            <input type="checkbox" id="wa-enabled" {% if whatsapp_enabled %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">Enabled</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Triggers</label>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="wa-trigger-renew" {% if whatsapp_trigger_renew_success %}checked{% endif %}>
+                            <span class="checkmark"></span>
+                            <span>After successful renewal</span>
+                        </label>
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="wa-trigger-welcome" {% if whatsapp_trigger_welcome %}checked{% endif %}>
+                            <span class="checkmark"></span>
+                            <span>Welcome message</span>
+                        </label>
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="wa-trigger-pre-expiry" {% if whatsapp_trigger_pre_expiry %}checked{% endif %}>
+                            <span class="checkmark"></span>
+                            <span>Pre-expiry reminder</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                    <div class="form-group">
+                        <label>Min Interval (seconds)</label>
+                        <input type="number" id="wa-min-interval" class="form-control" min="45" max="3600" value="{{ whatsapp_min_interval_seconds }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Daily Limit</label>
+                        <input type="number" id="wa-daily-limit" class="form-control" min="1" max="50000" value="{{ whatsapp_daily_limit }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Pre-expiry (hours)</label>
+                        <input type="number" id="wa-pre-expiry-hours" class="form-control" min="1" max="720" value="{{ whatsapp_pre_expiry_hours }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Retry Count</label>
+                        <input type="number" id="wa-retry-count" class="form-control" min="0" max="10" value="{{ whatsapp_retry_count }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Backoff (seconds)</label>
+                        <input type="number" id="wa-backoff-seconds" class="form-control" min="5" max="3600" value="{{ whatsapp_backoff_seconds }}">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Circuit Breaker</label>
+                    <div class="refresh-toggle" style="gap: 10px;">
+                        <label class="toggle-switch" style="margin: 0;">
+                            <input type="checkbox" id="wa-circuit-breaker" {% if whatsapp_circuit_breaker %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">Enabled</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Renew Template</label>
+                    <textarea id="wa-template-renew" class="form-input" rows="2">{{ whatsapp_template_renew }}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Welcome Template</label>
+                    <textarea id="wa-template-welcome" class="form-input" rows="2">{{ whatsapp_template_welcome }}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Pre-expiry Template</label>
+                    <textarea id="wa-template-pre-expiry" class="form-input" rows="2">{{ whatsapp_template_pre_expiry }}</textarea>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                    <button class="btn btn-primary" onclick="saveWhatsAppSettings()">Save WhatsApp Settings</button>
                 </div>
             </div>
         </div>
@@ -1025,6 +1168,7 @@
             else if (onclick.includes("'renew_template'")) loadRenewTemplates();
             else if (onclick.includes("'backups'")) { loadBackups(); loadBackupSettings(); }
             else if (onclick.includes("'telegram_backup'")) loadTelegramBackupSettings();
+            else if (onclick.includes("'whatsapp'")) loadWhatsAppSettings();
             else if (onclick.includes("'ssl'")) loadSSLSettings();
             else if (onclick.includes("'session'")) loadSessionSettings();
         }
@@ -1076,6 +1220,8 @@
             loadBackupSettings();
         } else if (tabName === 'telegram_backup') {
             loadTelegramBackupSettings();
+        } else if (tabName === 'whatsapp') {
+            loadWhatsAppSettings();
         } else if (tabName === 'ssl') {
             loadSSLSettings();
         } else if (tabName === 'session') {
@@ -1085,6 +1231,134 @@
         } else if (tabName === 'templates') {
             loadTemplates();
         }
+    }
+
+    function loadWhatsAppSettings() {
+        applyWhatsAppRegionStateSettings();
+    }
+
+    function applyWhatsAppRegionStateSettings() {
+        const regionSelect = document.getElementById('wa-deployment-region');
+        const warningBox = document.getElementById('wa-region-warning');
+        if (!regionSelect || !warningBox) return;
+
+        const isIran = regionSelect.value === 'iran';
+        warningBox.style.display = isIran ? '' : 'none';
+
+        const guardedIds = [
+            'wa-provider',
+            'wa-gateway-url',
+            'wa-gateway-api-key',
+            'wa-gateway-timeout',
+            'wa-enabled',
+            'wa-trigger-renew',
+            'wa-trigger-welcome',
+            'wa-trigger-pre-expiry',
+            'wa-min-interval',
+            'wa-daily-limit',
+            'wa-pre-expiry-hours',
+            'wa-retry-count',
+            'wa-backoff-seconds',
+            'wa-circuit-breaker',
+            'wa-template-renew',
+            'wa-template-welcome',
+            'wa-template-pre-expiry',
+            'wa-test-connection',
+            'wa-open-auth'
+        ];
+
+        guardedIds.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.disabled = isIran;
+        });
+
+        if (isIran) {
+            const enabled = document.getElementById('wa-enabled');
+            if (enabled) enabled.checked = false;
+        }
+    }
+
+    async function saveWhatsAppSettings() {
+        const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
+        const isIran = region === 'iran';
+
+        const payload = {
+            whatsapp_deployment_region: region,
+            whatsapp_provider: (document.getElementById('wa-provider') || {}).value || 'baileys',
+            whatsapp_gateway_url: (document.getElementById('wa-gateway-url') || {}).value || '',
+            whatsapp_gateway_api_key: (document.getElementById('wa-gateway-api-key') || {}).value || '',
+            whatsapp_gateway_timeout_seconds: Number((document.getElementById('wa-gateway-timeout') || {}).value || 10),
+            whatsapp_enabled: isIran ? false : !!(document.getElementById('wa-enabled') || {}).checked,
+            whatsapp_trigger_renew_success: !!(document.getElementById('wa-trigger-renew') || {}).checked,
+            whatsapp_trigger_welcome: !!(document.getElementById('wa-trigger-welcome') || {}).checked,
+            whatsapp_trigger_pre_expiry: !!(document.getElementById('wa-trigger-pre-expiry') || {}).checked,
+            whatsapp_min_interval_seconds: Number((document.getElementById('wa-min-interval') || {}).value || 45),
+            whatsapp_daily_limit: Number((document.getElementById('wa-daily-limit') || {}).value || 100),
+            whatsapp_pre_expiry_hours: Number((document.getElementById('wa-pre-expiry-hours') || {}).value || 24),
+            whatsapp_retry_count: Number((document.getElementById('wa-retry-count') || {}).value || 3),
+            whatsapp_backoff_seconds: Number((document.getElementById('wa-backoff-seconds') || {}).value || 30),
+            whatsapp_circuit_breaker: !!(document.getElementById('wa-circuit-breaker') || {}).checked,
+            whatsapp_template_renew: (document.getElementById('wa-template-renew') || {}).value || '',
+            whatsapp_template_welcome: (document.getElementById('wa-template-welcome') || {}).value || '',
+            whatsapp_template_pre_expiry: (document.getElementById('wa-template-pre-expiry') || {}).value || '',
+        };
+
+        try {
+            const res = await fetch('/api/system-config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data && data.success) {
+                if (data.warning) showToast(data.warning, 'warning');
+                else showToast('WhatsApp settings saved');
+                applyWhatsAppRegionStateSettings();
+            } else {
+                showToast((data && data.error) ? data.error : 'Error saving settings', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    async function testWhatsAppConnectionSettings() {
+        const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
+        if (region === 'iran') {
+            showToast('Server region is Iran. WhatsApp automation is unavailable.', 'warning');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/whatsapp/test-connection', { method: 'POST' });
+            const data = await res.json();
+            if (data && data.success) {
+                showToast('WhatsApp gateway is reachable');
+            } else {
+                showToast((data && (data.error || data.message)) ? (data.error || data.message) : 'Gateway test failed', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    function openWhatsAppAuthWizard() {
+        const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
+        if (region === 'iran') {
+            showToast('Server region is Iran. WhatsApp automation is unavailable.', 'warning');
+            return;
+        }
+
+        const raw = ((document.getElementById('wa-gateway-url') || {}).value || '').trim();
+        if (!raw) {
+            showToast('Gateway URL is required first', 'error');
+            return;
+        }
+
+        const base = raw.endsWith('/') ? raw.slice(0, -1) : raw;
+        const authUrl = `${base}/auth`;
+        window.open(authUrl, '_blank', 'noopener,noreferrer');
+        showToast('Auth wizard opened in a new tab');
     }
 
     function loadGeneralSettings() {

@@ -194,6 +194,53 @@ curl -s http://127.0.0.1:5000/healthz
 
 ---
 
+## WhatsApp Gateway Setup (Baileys)
+
+برای ارسال خودکار واتساپ، پنل مستقیماً به یک Gateway وصل می‌شود.
+
+### 1) پیش‌نیاز شبکه
+
+- اگر `Deployment Region = Iran` باشد، قابلیت واتساپ در پنل غیرفعال می‌شود.
+- برای استفاده، پنل یا Gateway باید خارج از ایران قابل دسترس باشد.
+
+### 2) کانترکت API لازم برای Gateway
+
+Gateway باید این دو endpoint را داشته باشد:
+
+- `GET /health`
+    - پاسخ موفق: HTTP 200
+- `POST /send`
+    - Body JSON:
+        - `to`: شماره در قالب E.164 (مثل `+98912...`)
+        - `message`: متن پیام
+        - `event`: نام رویداد (مثلاً `renew_success`)
+    - پاسخ موفق: HTTP 2xx
+
+اگر API Key تعریف شود، پنل آن را با هدر زیر ارسال می‌کند:
+
+- `Authorization: Bearer <token>`
+
+### 3) تنظیم از داخل پنل (Wizard ساده)
+
+از مسیر `Sub Manager -> Contact Info -> WhatsApp Automation`:
+
+1. `Deployment Region` را روی `Outside Iran` بگذارید.
+2. `Provider` را روی `Baileys` بگذارید.
+3. `Gateway URL` را وارد کنید (مثلاً `https://wa-gateway.example.com`).
+4. در صورت نیاز `Gateway API Key` و `Gateway Timeout` را تنظیم کنید.
+5. `Enable WhatsApp Automation` را روشن کنید.
+6. Trigger موردنظر را فعال کنید (مثلاً `After successful renewal`).
+7. روی `Save Contact & WhatsApp Settings` بزنید.
+8. روی `Test WhatsApp Connection` بزنید.
+
+### 4) تست end-to-end
+
+1. یک کاربر را تمدید کنید.
+2. اگر شماره موبایل معتبر ایران داخل identifier کاربر (username/email) باشد، پیام ارسال می‌شود.
+3. خروجی renew شامل متادیتای واتساپ است (`delivery.sent`, `delivery.reason`).
+
+---
+
 ## Step 9: Setup Reverse Proxy (Nginx)
 
 ```bash
