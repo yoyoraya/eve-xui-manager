@@ -115,10 +115,18 @@
                                 امروز
                             {% elif client.expiry_type == 'unlimited' %}
                                 نامحدود
+                            {% elif client.expiry_type == 'start_after_use' %}
+                                {% if client.expiry_days and client.expiry_days > 0 %}
+                                    {{ client.expiry_days }} روز بعد از اولین اتصال
+                                {% else %}
+                                    بعد از اولین اتصال
+                                {% endif %}
+                            {% elif client.expiry_type == 'soon' %}
+                                {{ client.expiry }}
                             {% elif client.expiry_type == 'normal' %}
                                 {{ client.expiry_days }} روز مانده
                             {% else %}
-                                نامشخص
+                                {{ client.expiry if client.expiry else 'نامشخص' }}
                             {% endif %}
                         {% else %}
                             {{ client.expiry }}
