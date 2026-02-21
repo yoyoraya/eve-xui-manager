@@ -90,6 +90,27 @@
                     <small class="text-secondary">IANA timezone. Example: Asia/Tehran, Europe/Berlin, UTC</small>
                 </div>
 
+                <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
+                    <label>Near Expiry Threshold</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <input type="number" id="general-near-expiry-days" class="form-input" min="0" max="365" value="3" placeholder="Days">
+                            <small class="text-secondary">Days</small>
+                        </div>
+                        <div>
+                            <input type="number" id="general-near-expiry-hours" class="form-input" min="0" max="23" value="0" placeholder="Hours">
+                            <small class="text-secondary">Hours</small>
+                        </div>
+                    </div>
+                    <small class="text-secondary">Clients with remaining time less than this are marked as: انقضا نزدیکه</small>
+                </div>
+
+                <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
+                    <label>Low Volume Threshold (GB)</label>
+                    <input type="number" id="general-low-volume-gb" class="form-input" min="0.1" max="1024" step="0.1" value="1">
+                    <small class="text-secondary">Clients with remaining volume less than this are marked as: حجم رو به اتمامه</small>
+                </div>
+
                 <div class="form-group" style="margin-top: 16px; margin-bottom: 0;">
                     <button class="btn btn-primary" onclick="saveGeneralSettings()">Save</button>
                 </div>
@@ -1374,6 +1395,15 @@
             if (data && data.success) {
                 const input = document.getElementById('general-timezone');
                 if (input) input.value = data.timezone || 'Asia/Tehran';
+
+                const nearDaysInput = document.getElementById('general-near-expiry-days');
+                if (nearDaysInput) nearDaysInput.value = Number(data.near_expiry_days ?? 3);
+
+                const nearHoursInput = document.getElementById('general-near-expiry-hours');
+                if (nearHoursInput) nearHoursInput.value = Number(data.near_expiry_hours ?? 0);
+
+                const lowVolumeInput = document.getElementById('general-low-volume-gb');
+                if (lowVolumeInput) lowVolumeInput.value = Number(data.low_volume_gb ?? 1);
             }
         } catch (e) {
             console.error('Error loading general settings', e);
@@ -1383,16 +1413,32 @@
     async function saveGeneralSettings() {
         const input = document.getElementById('general-timezone');
         const timezone = (input ? input.value : '').trim() || 'Asia/Tehran';
+        const nearDays = parseInt((document.getElementById('general-near-expiry-days') || {}).value || '3', 10);
+        const nearHours = parseInt((document.getElementById('general-near-expiry-hours') || {}).value || '0', 10);
+        const lowVolumeGb = parseFloat((document.getElementById('general-low-volume-gb') || {}).value || '1');
 
         try {
             const res = await fetch('/api/settings/general', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ timezone })
+                body: JSON.stringify({
+                    timezone,
+                    near_expiry_days: Number.isFinite(nearDays) ? nearDays : 3,
+                    near_expiry_hours: Number.isFinite(nearHours) ? nearHours : 0,
+                    low_volume_gb: Number.isFinite(lowVolumeGb) ? lowVolumeGb : 1,
+                })
             });
             const data = await res.json();
             if (data && data.success) {
                 if (input) input.value = data.timezone || timezone;
+                const nearDaysInput = document.getElementById('general-near-expiry-days');
+                if (nearDaysInput) nearDaysInput.value = Number(data.near_expiry_days ?? 3);
+
+                const nearHoursInput = document.getElementById('general-near-expiry-hours');
+                if (nearHoursInput) nearHoursInput.value = Number(data.near_expiry_hours ?? 0);
+
+                const lowVolumeInput = document.getElementById('general-low-volume-gb');
+                if (lowVolumeInput) lowVolumeInput.value = Number(data.low_volume_gb ?? 1);
                 showToast('Settings saved');
             } else {
                 showToast((data && data.error) ? data.error : 'Error saving settings', 'error');

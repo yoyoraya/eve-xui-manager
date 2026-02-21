@@ -1993,6 +1993,21 @@
         }
     }
 
+    function renderClientServiceState(client) {
+        const stateLabel = String(client?.service_state_label || '').trim();
+        const stateEmoji = String(client?.service_state_emoji || '').trim();
+        const stateTag = String(client?.service_state_tag || '').trim();
+
+        if (stateLabel) {
+            const safeTag = ['ok', 'inactive', 'expired', 'low', 'soon', 'ended'].includes(stateTag) ? stateTag : 'ok';
+            return `<span class="monitor-tag tag-${safeTag}">${stateEmoji ? `${stateEmoji} ` : ''}${stateLabel}</span>`;
+        }
+
+        return client.enable
+            ? `<span class="client-status active">Enabled</span>`
+            : `<span class="client-status inactive">Disabled</span>`;
+    }
+
     function updateInbounds(inbounds) {
         const container = document.getElementById('inbounds-container');
         const countEl = document.getElementById('inbounds-count');
@@ -2082,11 +2097,7 @@
                                         </td>
                                         <td class="email-cell"><span class="email-with-online">${client.is_online ? '<span class="online-pulse" title="Online"></span>' : ''}<span class="email-text">${client.email}</span></span></td>
                                         <td class="owner-cell">${renderOwnerCell(client)}</td>
-                                        <td>
-                                            ${client.enable 
-                                                ? `<span class="client-status active">Enabled</span>` 
-                                                : `<span class="client-status inactive">Disabled</span>`}
-                                        </td>
+                                        <td>${renderClientServiceState(client)}</td>
                                         <td>
                                             <span class="expiry-badge ${getExpiryClass(client.expiryType)}">
                                                 <span class="expiry-time">${client.expiryTime}</span>
@@ -4241,11 +4252,7 @@
                                         </td>
                                         <td class="email-cell"><span class="email-with-online">${client.is_online ? '<span class="online-pulse" title="Online"></span>' : ''}<span class="email-text">${client.email}</span></span></td>
                                         <td class="owner-cell">${renderOwnerCell(client)}</td>
-                                        <td>
-                                            ${client.enable 
-                                                ? `<span class="client-status active">Enabled</span>` 
-                                                : `<span class="client-status inactive">Disabled</span>`}
-                                        </td>
+                                        <td>${renderClientServiceState(client)}</td>
                                         <td>
                                             <span class="expiry-badge ${getExpiryClass(client.expiryType)}">
                                                 <span class="expiry-time">${client.expiryTime}</span>

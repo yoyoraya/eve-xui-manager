@@ -597,6 +597,12 @@ body {
     color: #22c55e !important;
 }
 
+.monitor-tag.tag-inactive {
+    background: rgba(148, 163, 184, 0.25) !important;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    color: #cbd5e1 !important;
+}
+
 .btn-whatsapp {
     background: #1f9d55;
     border: 1px solid #157a42;

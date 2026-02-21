@@ -2208,6 +2208,9 @@ DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nت�
 
 MONITOR_SETTINGS_KEY = 'monitor_settings'
 GENERAL_TIMEZONE_SETTING_KEY = 'general_timezone'
+GENERAL_EXPIRY_WARNING_DAYS_KEY = 'general_expiry_warning_days'
+GENERAL_EXPIRY_WARNING_HOURS_KEY = 'general_expiry_warning_hours'
+GENERAL_LOW_VOLUME_WARNING_GB_KEY = 'general_low_volume_warning_gb'
 DEFAULT_APP_TIMEZONE = 'Asia/Tehran'
 WHATSAPP_DEPLOYMENT_REGION_KEY = 'whatsapp_deployment_region'
 WHATSAPP_ENABLED_KEY = 'whatsapp_enabled'
@@ -2369,6 +2372,56 @@ def _get_app_timezone_name() -> str:
     if _is_valid_timezone_name(stored):
         return str(stored).strip()
     return DEFAULT_APP_TIMEZONE
+
+
+def _get_dashboard_status_thresholds() -> dict:
+    raw_days = _get_or_create_system_setting(GENERAL_EXPIRY_WARNING_DAYS_KEY, '3')
+    raw_hours = _get_or_create_system_setting(GENERAL_EXPIRY_WARNING_HOURS_KEY, '0')
+    raw_gb = _get_or_create_system_setting(GENERAL_LOW_VOLUME_WARNING_GB_KEY, '1')
+
+    near_expiry_days = _parse_int(raw_days, 3, min_value=0, max_value=365)
+    near_expiry_hours = _parse_int(raw_hours, 0, min_value=0, max_value=23)
+
+    try:
+        low_volume_gb = float(raw_gb if raw_gb is not None else 1.0)
+    except Exception:
+        low_volume_gb = 1.0
+    low_volume_gb = max(0.1, min(low_volume_gb, 1024.0))
+
+    return {
+        'near_expiry_days': near_expiry_days,
+        'near_expiry_hours': near_expiry_hours,
+        'low_volume_gb': low_volume_gb,
+    }
+
+
+def _compute_client_service_state(*, enabled: bool, total_bytes: int, remaining_bytes: int | None, expiry_ts: int, expiry_info: dict, thresholds: dict) -> dict:
+    if not enabled:
+        return {'key': 'inactive', 'label': 'غیرفعال', 'emoji': '⏸️', 'tag': 'inactive'}
+
+    low_volume_threshold_gb = float((thresholds or {}).get('low_volume_gb') or 1.0)
+    near_expiry_days = int((thresholds or {}).get('near_expiry_days') or 0)
+    near_expiry_hours = int((thresholds or {}).get('near_expiry_hours') or 0)
+    near_expiry_ms = ((near_expiry_days * 24) + near_expiry_hours) * 3600 * 1000
+
+    if total_bytes > 0 and remaining_bytes is not None and remaining_bytes <= 0:
+        return {'key': 'volume_ended', 'label': 'حجم تمام کردی', 'emoji': '🚫', 'tag': 'ended'}
+
+    if str((expiry_info or {}).get('type') or '').lower() == 'expired':
+        return {'key': 'expired', 'label': 'منقضی شده', 'emoji': '⛔', 'tag': 'expired'}
+
+    if total_bytes > 0 and remaining_bytes is not None:
+        remaining_gb = float(remaining_bytes) / (1024 ** 3)
+        if remaining_gb <= low_volume_threshold_gb:
+            return {'key': 'volume_low', 'label': 'حجم رو به اتمامه', 'emoji': '⚠️', 'tag': 'low'}
+
+    if expiry_ts and expiry_ts > 0 and str((expiry_info or {}).get('type') or '').lower() not in ('unlimited', 'start_after_use'):
+        now_ms = int(time.time() * 1000)
+        remaining_ms = expiry_ts - now_ms
+        if remaining_ms > 0 and near_expiry_ms > 0 and remaining_ms <= near_expiry_ms:
+            return {'key': 'expiring_soon', 'label': 'انقضا نزدیکه', 'emoji': '⏳', 'tag': 'soon'}
+
+    return {'key': 'active', 'label': 'فعاله', 'emoji': '✅', 'tag': 'ok'}
 
 
 def _normalize_whatsapp_region(value: str | None) -> str:
@@ -4437,6 +4490,7 @@ def find_client(inbounds, inbound_id, email):
 def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, app_base_url=None, online_index=None):
     processed = []
     stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "upload_raw": 0, "download_raw": 0}
+    dashboard_thresholds = _get_dashboard_status_thresholds()
     
     assignments = assignments or {}
     online_index = online_index or {"pairs": set(), "emails": set()}
@@ -4524,7 +4578,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                     if remaining_bytes <= 0:
                         remaining_formatted = "Suspended"
                         volume_status = "suspended"
-                    elif remaining_bytes < 1073741824: # 1 GB
+                    elif remaining_bytes < int(float(dashboard_thresholds.get('low_volume_gb', 1.0)) * (1024 ** 3)):
                         remaining_formatted = f"{remaining_formatted} Low"
                         volume_status = "low"
                 else:
@@ -4534,6 +4588,14 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
 
                 expiry_raw = client.get('expiryTime', 0)
                 expiry_info = format_remaining_days(expiry_raw)
+                account_state = _compute_client_service_state(
+                    enabled=bool(client.get('enable', True)),
+                    total_bytes=int(total_bytes or 0),
+                    remaining_bytes=(None if remaining_bytes is None else int(remaining_bytes)),
+                    expiry_ts=int(expiry_raw or 0),
+                    expiry_info=expiry_info,
+                    thresholds=dashboard_thresholds
+                )
 
                 if expiry_info.get('type') == 'start_after_use':
                     stats["not_started_clients"] += 1
@@ -4565,6 +4627,10 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                     "remaining_bytes": remaining_bytes if remaining_bytes is not None else -1,
                     "remaining_formatted": remaining_formatted,
                     "volume_status": volume_status,
+                    "service_state": account_state.get('key', 'active'),
+                    "service_state_label": account_state.get('label', 'فعاله'),
+                    "service_state_emoji": account_state.get('emoji', '✅'),
+                    "service_state_tag": account_state.get('tag', 'ok'),
                     "expiryTime": expiry_info['text'],
                     "expiryTimestamp": expiry_raw,
                     "expiryType": expiry_info['type'],
@@ -5498,9 +5564,13 @@ def save_subscription_page_settings():
 @app.route('/api/settings/general', methods=['GET'])
 @superadmin_required
 def get_general_settings():
+    thresholds = _get_dashboard_status_thresholds()
     return jsonify({
         'success': True,
-        'timezone': _get_app_timezone_name()
+        'timezone': _get_app_timezone_name(),
+        'near_expiry_days': thresholds.get('near_expiry_days', 3),
+        'near_expiry_hours': thresholds.get('near_expiry_hours', 0),
+        'low_volume_gb': thresholds.get('low_volume_gb', 1.0),
     })
 
 
@@ -5522,12 +5592,27 @@ def save_general_settings():
             'error': 'Invalid timezone. Example: Asia/Tehran'
         }), 400
 
+    near_expiry_days = _parse_int(data.get('near_expiry_days'), 3, min_value=0, max_value=365)
+    near_expiry_hours = _parse_int(data.get('near_expiry_hours'), 0, min_value=0, max_value=23)
+
+    try:
+        low_volume_gb = float(data.get('low_volume_gb', 1.0) or 1.0)
+    except Exception:
+        low_volume_gb = 1.0
+    low_volume_gb = max(0.1, min(low_volume_gb, 1024.0))
+
     _set_system_setting_value(GENERAL_TIMEZONE_SETTING_KEY, tz_name)
+    _set_system_setting_value(GENERAL_EXPIRY_WARNING_DAYS_KEY, str(near_expiry_days))
+    _set_system_setting_value(GENERAL_EXPIRY_WARNING_HOURS_KEY, str(near_expiry_hours))
+    _set_system_setting_value(GENERAL_LOW_VOLUME_WARNING_GB_KEY, str(low_volume_gb))
     db.session.commit()
     return jsonify({
         'success': True,
         'message': 'General settings saved',
-        'timezone': tz_name
+        'timezone': tz_name,
+        'near_expiry_days': near_expiry_days,
+        'near_expiry_hours': near_expiry_hours,
+        'low_volume_gb': low_volume_gb,
     })
 
 
