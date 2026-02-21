@@ -6992,7 +6992,7 @@ def renew_client(server_id, inbound_id, email):
                         verify["ok"] = False
                         verify["error"] = v_err or "verify_fetch_failed"
                     else:
-                        v_client, _ = find_client(v_inbounds, inbound_id, email)
+                        v_client, v_inbound = find_client(v_inbounds, inbound_id, email)
                         if not v_client:
                             verify["ok"] = False
                             verify["error"] = "client_not_found_after_update"
@@ -7005,6 +7005,39 @@ def renew_client(server_id, inbound_id, email):
                                 verify["observed"]["totalGB"] = int(v_client.get('totalGB') or 0)
                             except Exception:
                                 verify["observed"]["totalGB"] = None
+
+                            # Compute service state for immediate UI update
+                            try:
+                                v_up = 0
+                                v_down = 0
+                                for st in (v_inbound.get('clientStats', []) if v_inbound else []):
+                                    if st.get('email') == email:
+                                        v_up = st.get('up', 0)
+                                        v_down = st.get('down', 0)
+                                        break
+                                
+                                v_total = verify["observed"]["totalGB"] or 0
+                                v_remaining = max(v_total - (v_up + v_down), 0) if v_total > 0 else None
+                                v_expiry = verify["observed"]["expiryTime"] or 0
+                                v_expiry_info = format_remaining_days(v_expiry, lang=_get_panel_ui_lang())
+                                
+                                v_state = _compute_client_service_state(
+                                    enabled=bool(v_client.get('enable', True)),
+                                    total_bytes=v_total,
+                                    remaining_bytes=v_remaining,
+                                    expiry_ts=v_expiry,
+                                    expiry_info=v_expiry_info,
+                                    thresholds=_get_dashboard_status_thresholds(),
+                                    lang=_get_panel_ui_lang()
+                                )
+                                verify["observed"]["service_state_label"] = v_state.get('label')
+                                verify["observed"]["service_state_emoji"] = v_state.get('emoji')
+                                verify["observed"]["service_state_tag"] = v_state.get('tag')
+                                verify["observed"]["up"] = v_up
+                                verify["observed"]["down"] = v_down
+                                verify["observed"]["enable"] = bool(v_client.get('enable', True))
+                            except Exception as e:
+                                app.logger.error(f"Error computing service state in renew verify: {e}")
 
                             ok_exp = (verify["observed"]["expiryTime"] == int(new_expiry or 0))
                             ok_vol = (verify["observed"]["totalGB"] == int(new_volume or 0))
