@@ -63,6 +63,15 @@
                 </div>
 
                 <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
+                    <label>Panel Language</label>
+                    <select id="general-panel-lang" class="form-select">
+                        <option value="en">English</option>
+                        <option value="fa">فارسی (Persian)</option>
+                    </select>
+                    <small class="text-secondary">Controls dashboard status language in the admin panel.</small>
+                </div>
+
+                <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
                     <label>Subscription Page Language</label>
                     <select id="subscription-page-lang" class="form-select" onchange="saveSubscriptionPageSettings()">
                         <option value="en">English</option>
@@ -1396,6 +1405,9 @@
                 const input = document.getElementById('general-timezone');
                 if (input) input.value = data.timezone || 'Asia/Tehran';
 
+                const panelLangSel = document.getElementById('general-panel-lang');
+                if (panelLangSel) panelLangSel.value = (data.panel_lang === 'fa') ? 'fa' : 'en';
+
                 const nearDaysInput = document.getElementById('general-near-expiry-days');
                 if (nearDaysInput) nearDaysInput.value = Number(data.near_expiry_days ?? 3);
 
@@ -1413,6 +1425,7 @@
     async function saveGeneralSettings() {
         const input = document.getElementById('general-timezone');
         const timezone = (input ? input.value : '').trim() || 'Asia/Tehran';
+        const panelLang = (document.getElementById('general-panel-lang') || {}).value || 'en';
         const nearDays = parseInt((document.getElementById('general-near-expiry-days') || {}).value || '3', 10);
         const nearHours = parseInt((document.getElementById('general-near-expiry-hours') || {}).value || '0', 10);
         const lowVolumeGb = parseFloat((document.getElementById('general-low-volume-gb') || {}).value || '1');
@@ -1423,6 +1436,7 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     timezone,
+                    panel_lang: (panelLang === 'fa') ? 'fa' : 'en',
                     near_expiry_days: Number.isFinite(nearDays) ? nearDays : 3,
                     near_expiry_hours: Number.isFinite(nearHours) ? nearHours : 0,
                     low_volume_gb: Number.isFinite(lowVolumeGb) ? lowVolumeGb : 1,
@@ -1431,6 +1445,8 @@
             const data = await res.json();
             if (data && data.success) {
                 if (input) input.value = data.timezone || timezone;
+                const panelLangSel = document.getElementById('general-panel-lang');
+                if (panelLangSel) panelLangSel.value = (data.panel_lang === 'fa') ? 'fa' : 'en';
                 const nearDaysInput = document.getElementById('general-near-expiry-days');
                 if (nearDaysInput) nearDaysInput.value = Number(data.near_expiry_days ?? 3);
 

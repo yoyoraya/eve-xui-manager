@@ -2208,6 +2208,7 @@ DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nت�
 
 MONITOR_SETTINGS_KEY = 'monitor_settings'
 GENERAL_TIMEZONE_SETTING_KEY = 'general_timezone'
+PANEL_UI_LANG_SETTING_KEY = 'panel_ui_lang'
 GENERAL_EXPIRY_WARNING_DAYS_KEY = 'general_expiry_warning_days'
 GENERAL_EXPIRY_WARNING_HOURS_KEY = 'general_expiry_warning_hours'
 GENERAL_LOW_VOLUME_WARNING_GB_KEY = 'general_low_volume_warning_gb'
@@ -2374,6 +2375,18 @@ def _get_app_timezone_name() -> str:
     return DEFAULT_APP_TIMEZONE
 
 
+def _normalize_ui_lang(value: str | None, default: str = 'en') -> str:
+    raw = (value or '').strip().lower()
+    if raw in ('fa', 'en'):
+        return raw
+    return default
+
+
+def _get_panel_ui_lang() -> str:
+    stored = _get_or_create_system_setting(PANEL_UI_LANG_SETTING_KEY, 'en')
+    return _normalize_ui_lang(stored, default='en')
+
+
 def _get_dashboard_status_thresholds() -> dict:
     raw_days = _get_or_create_system_setting(GENERAL_EXPIRY_WARNING_DAYS_KEY, '3')
     raw_hours = _get_or_create_system_setting(GENERAL_EXPIRY_WARNING_HOURS_KEY, '0')
@@ -2395,9 +2408,20 @@ def _get_dashboard_status_thresholds() -> dict:
     }
 
 
-def _compute_client_service_state(*, enabled: bool, total_bytes: int, remaining_bytes: int | None, expiry_ts: int, expiry_info: dict, thresholds: dict) -> dict:
+def _compute_client_service_state(*, enabled: bool, total_bytes: int, remaining_bytes: int | None, expiry_ts: int, expiry_info: dict, thresholds: dict, lang: str = 'en') -> dict:
+    is_fa = _normalize_ui_lang(lang, default='en') == 'fa'
+
+    labels = {
+        'active': 'فعاله' if is_fa else 'Active',
+        'inactive': 'غیرفعال' if is_fa else 'Inactive',
+        'expired': 'منقضی شده' if is_fa else 'Expired',
+        'volume_low': 'حجم رو به اتمامه' if is_fa else 'Low Volume',
+        'expiring_soon': 'انقضا نزدیکه' if is_fa else 'Expiring Soon',
+        'volume_ended': 'حجم تمام کردی' if is_fa else 'Volume Ended',
+    }
+
     if not enabled:
-        return {'key': 'inactive', 'label': 'غیرفعال', 'emoji': '⏸️', 'tag': 'inactive'}
+        return {'key': 'inactive', 'label': labels['inactive'], 'emoji': '⏸️', 'tag': 'inactive'}
 
     low_volume_threshold_gb = float((thresholds or {}).get('low_volume_gb') or 1.0)
     near_expiry_days = int((thresholds or {}).get('near_expiry_days') or 0)
@@ -2405,23 +2429,23 @@ def _compute_client_service_state(*, enabled: bool, total_bytes: int, remaining_
     near_expiry_ms = ((near_expiry_days * 24) + near_expiry_hours) * 3600 * 1000
 
     if total_bytes > 0 and remaining_bytes is not None and remaining_bytes <= 0:
-        return {'key': 'volume_ended', 'label': 'حجم تمام کردی', 'emoji': '🚫', 'tag': 'ended'}
+        return {'key': 'volume_ended', 'label': labels['volume_ended'], 'emoji': '🚫', 'tag': 'ended'}
 
     if str((expiry_info or {}).get('type') or '').lower() == 'expired':
-        return {'key': 'expired', 'label': 'منقضی شده', 'emoji': '⛔', 'tag': 'expired'}
+        return {'key': 'expired', 'label': labels['expired'], 'emoji': '⛔', 'tag': 'expired'}
 
     if total_bytes > 0 and remaining_bytes is not None:
         remaining_gb = float(remaining_bytes) / (1024 ** 3)
         if remaining_gb <= low_volume_threshold_gb:
-            return {'key': 'volume_low', 'label': 'حجم رو به اتمامه', 'emoji': '⚠️', 'tag': 'low'}
+            return {'key': 'volume_low', 'label': labels['volume_low'], 'emoji': '⚠️', 'tag': 'low'}
 
     if expiry_ts and expiry_ts > 0 and str((expiry_info or {}).get('type') or '').lower() not in ('unlimited', 'start_after_use'):
         now_ms = int(time.time() * 1000)
         remaining_ms = expiry_ts - now_ms
         if remaining_ms > 0 and near_expiry_ms > 0 and remaining_ms <= near_expiry_ms:
-            return {'key': 'expiring_soon', 'label': 'انقضا نزدیکه', 'emoji': '⏳', 'tag': 'soon'}
+            return {'key': 'expiring_soon', 'label': labels['expiring_soon'], 'emoji': '⏳', 'tag': 'soon'}
 
-    return {'key': 'active', 'label': 'فعاله', 'emoji': '✅', 'tag': 'ok'}
+    return {'key': 'active', 'label': labels['active'], 'emoji': '✅', 'tag': 'ok'}
 
 
 def _normalize_whatsapp_region(value: str | None) -> str:
@@ -3730,7 +3754,54 @@ def format_bytes_gb_tb(size):
     else:
         return f"{gb_val:.2f} GB"
 
-def format_remaining_days(timestamp):
+def format_remaining_days(timestamp, lang: str = 'en'):
+    is_fa = _normalize_ui_lang(lang, default='en') == 'fa'
+
+    def _fmt_future(days: int, hours: int, minutes: int) -> str:
+        if is_fa:
+            parts = []
+            if days > 0:
+                parts.append(f"{days} روز")
+            if hours > 0:
+                parts.append(f"{hours} ساعت")
+            if minutes > 0 and not parts:
+                parts.append(f"{minutes} دقیقه")
+            if not parts:
+                return "امروز"
+            return f"{' و '.join(parts)} باقی مانده"
+
+        if days > 0 and hours > 0:
+            return f"{days}d {hours}h left"
+        if days > 0:
+            return f"{days}d left"
+        if hours > 0:
+            return f"{hours}h left"
+        if minutes > 0:
+            return f"{minutes}m left"
+        return "Today"
+
+    def _fmt_expired(days_ago: int, hours_ago: int) -> str:
+        if is_fa:
+            if days_ago > 0 and hours_ago > 0:
+                ago_label = f"{days_ago} روز و {hours_ago} ساعت پیش"
+            elif days_ago > 0:
+                ago_label = f"{days_ago} روز پیش"
+            elif hours_ago > 0:
+                ago_label = f"{hours_ago} ساعت پیش"
+            else:
+                ago_label = "لحظاتی پیش"
+            return f"منقضی شده ({ago_label})"
+
+        if days_ago > 0 and hours_ago > 0:
+            ago_label = f"{days_ago}d {hours_ago}h ago"
+        elif days_ago > 0:
+            ago_label = f"{days_ago}d ago"
+        elif hours_ago > 0:
+            ago_label = f"{hours_ago}h ago"
+        else:
+            ago_label = "just now"
+        return f"Expired ({ago_label})"
+
     # Some code paths (e.g. cached client objects) may pass expiry as string
     # like "Unlimited" or a numeric string. Normalize to int milliseconds.
     if isinstance(timestamp, str):
@@ -3745,10 +3816,14 @@ def format_remaining_days(timestamp):
                 timestamp = 0
 
     if timestamp == 0 or timestamp is None:
-        return {"text": "Unlimited", "days": -1, "type": "unlimited"}
+        return {"text": ("نامحدود" if is_fa else "Unlimited"), "days": -1, "type": "unlimited"}
     if timestamp < 0:
         days = abs(timestamp) // 86400000
-        return {"text": f"Not started ({days} days)", "days": days, "type": "start_after_use"}
+        if is_fa:
+            text = (f"{days} روز بعد از اولین اتصال" if days > 0 else "بعد از اولین اتصال")
+        else:
+            text = (f"Not started ({days} days)" if days > 0 else "Not started")
+        return {"text": text, "days": days, "type": "start_after_use"}
     try:
         now_ms = int(time.time() * 1000)
         delta_ms = int(timestamp) - now_ms
@@ -3757,30 +3832,13 @@ def format_remaining_days(timestamp):
             past_ms = abs(delta_ms)
             days_ago = past_ms // 86400000
             hours_ago = (past_ms % 86400000) // 3600000
-            if days_ago > 0 and hours_ago > 0:
-                ago_label = f"{days_ago}d {hours_ago}h ago"
-            elif days_ago > 0:
-                ago_label = f"{days_ago}d ago"
-            elif hours_ago > 0:
-                ago_label = f"{hours_ago}h ago"
-            else:
-                ago_label = "just now"
-            return {"text": f"Expired ({ago_label})", "days": -int(days_ago), "type": "expired"}
+            return {"text": _fmt_expired(int(days_ago), int(hours_ago)), "days": -int(days_ago), "type": "expired"}
 
         days = delta_ms // 86400000
         hours = (delta_ms % 86400000) // 3600000
         minutes = (delta_ms % 3600000) // 60000
 
-        if days > 0 and hours > 0:
-            text = f"{days}d {hours}h left"
-        elif days > 0:
-            text = f"{days}d left"
-        elif hours > 0:
-            text = f"{hours}h left"
-        elif minutes > 0:
-            text = f"{minutes}m left"
-        else:
-            text = "Today"
+        text = _fmt_future(int(days), int(hours), int(minutes))
 
         if days == 0:
             return {"text": text, "days": 0, "type": "today"}
@@ -3788,7 +3846,7 @@ def format_remaining_days(timestamp):
             return {"text": text, "days": int(days), "type": "soon"}
         return {"text": text, "days": int(days), "type": "normal"}
     except:
-        return {"text": "Invalid Date", "days": 0, "type": "error"}
+        return {"text": ("تاریخ نامعتبر" if is_fa else "Invalid Date"), "days": 0, "type": "error"}
 
 
 def get_accessible_servers(user, include_disabled=False):
@@ -4491,6 +4549,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
     processed = []
     stats = {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "upload_raw": 0, "download_raw": 0}
     dashboard_thresholds = _get_dashboard_status_thresholds()
+    panel_lang = _get_panel_ui_lang()
     
     assignments = assignments or {}
     online_index = online_index or {"pairs": set(), "emails": set()}
@@ -4587,14 +4646,15 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                     volume_status = "expiry-start-after"
 
                 expiry_raw = client.get('expiryTime', 0)
-                expiry_info = format_remaining_days(expiry_raw)
+                expiry_info = format_remaining_days(expiry_raw, lang=panel_lang)
                 account_state = _compute_client_service_state(
                     enabled=bool(client.get('enable', True)),
                     total_bytes=int(total_bytes or 0),
                     remaining_bytes=(None if remaining_bytes is None else int(remaining_bytes)),
                     expiry_ts=int(expiry_raw or 0),
                     expiry_info=expiry_info,
-                    thresholds=dashboard_thresholds
+                    thresholds=dashboard_thresholds,
+                    lang=panel_lang,
                 )
 
                 if expiry_info.get('type') == 'start_after_use':
@@ -5568,6 +5628,7 @@ def get_general_settings():
     return jsonify({
         'success': True,
         'timezone': _get_app_timezone_name(),
+        'panel_lang': _get_panel_ui_lang(),
         'near_expiry_days': thresholds.get('near_expiry_days', 3),
         'near_expiry_hours': thresholds.get('near_expiry_hours', 0),
         'low_volume_gb': thresholds.get('low_volume_gb', 1.0),
@@ -5592,6 +5653,8 @@ def save_general_settings():
             'error': 'Invalid timezone. Example: Asia/Tehran'
         }), 400
 
+    panel_lang = _normalize_ui_lang(data.get('panel_lang'), default='en')
+
     near_expiry_days = _parse_int(data.get('near_expiry_days'), 3, min_value=0, max_value=365)
     near_expiry_hours = _parse_int(data.get('near_expiry_hours'), 0, min_value=0, max_value=23)
 
@@ -5602,6 +5665,7 @@ def save_general_settings():
     low_volume_gb = max(0.1, min(low_volume_gb, 1024.0))
 
     _set_system_setting_value(GENERAL_TIMEZONE_SETTING_KEY, tz_name)
+    _set_system_setting_value(PANEL_UI_LANG_SETTING_KEY, panel_lang)
     _set_system_setting_value(GENERAL_EXPIRY_WARNING_DAYS_KEY, str(near_expiry_days))
     _set_system_setting_value(GENERAL_EXPIRY_WARNING_HOURS_KEY, str(near_expiry_hours))
     _set_system_setting_value(GENERAL_LOW_VOLUME_WARNING_GB_KEY, str(low_volume_gb))
@@ -5610,6 +5674,7 @@ def save_general_settings():
         'success': True,
         'message': 'General settings saved',
         'timezone': tz_name,
+        'panel_lang': panel_lang,
         'near_expiry_days': near_expiry_days,
         'near_expiry_hours': near_expiry_hours,
         'low_volume_gb': low_volume_gb,
@@ -9368,11 +9433,30 @@ def client_subscription(server_id, sub_id):
     remaining = max(total_limit - total_used, 0) if total_limit > 0 else None
     percentage_used = round((total_used / total_limit) * 100, 2) if total_limit else 0
 
+    page_lang = (_get_or_create_system_setting('subscription_page_lang', 'en') or 'en').strip().lower()
+    if page_lang not in ('fa', 'en'):
+        page_lang = 'en'
+
     # When serving from cache, `expiryTime` is already formatted text.
     expiry_raw_ms = target_client.get('expiryTimestamp', None) if found_in_cache else target_client.get('expiryTime', None)
     if expiry_raw_ms is None:
         expiry_raw_ms = target_client.get('expiryTime', 0)
-    expiry_info = format_remaining_days(expiry_raw_ms)
+    expiry_info = format_remaining_days(expiry_raw_ms, lang=page_lang)
+
+    try:
+        expiry_ts_norm = int(expiry_raw_ms or 0)
+    except Exception:
+        expiry_ts_norm = 0
+
+    subscription_state = _compute_client_service_state(
+        enabled=bool(target_client.get('enable', True)),
+        total_bytes=int(total_limit or 0),
+        remaining_bytes=(None if remaining is None else int(remaining)),
+        expiry_ts=expiry_ts_norm,
+        expiry_info=expiry_info,
+        thresholds=_get_dashboard_status_thresholds(),
+        lang=page_lang,
+    )
 
     # Prepare fallback headers for client apps (used for both upstream-proxy and manual generation)
     expiry_time_ms = expiry_raw_ms or 0
@@ -9604,6 +9688,10 @@ def client_subscription(server_id, sub_id):
     client_payload = {
         "email": client_email,
         "is_active": target_client.get('enable', True),
+        "service_state": subscription_state.get('key', 'active'),
+        "service_state_label": subscription_state.get('label', ('فعاله' if page_lang == 'fa' else 'Active')),
+        "service_state_emoji": subscription_state.get('emoji', '✅'),
+        "service_state_tag": subscription_state.get('tag', 'ok'),
         "total_used": format_bytes(total_used),
         "total_limit": format_bytes(total_limit) if total_limit > 0 else "Unlimited",
         "percentage_used": percentage_used,
@@ -9832,10 +9920,6 @@ def client_subscription(server_id, sub_id):
         announcements_payload = [a.to_dict() for a in active if _announcement_allows(a, server_id=server.id, inbound_id=inbound_id)]
     except Exception:
         announcements_payload = []
-
-    page_lang = (_get_or_create_system_setting('subscription_page_lang', 'en') or 'en').strip().lower()
-    if page_lang not in ('fa', 'en'):
-        page_lang = 'en'
 
     return render_template(
         'subscription.html',

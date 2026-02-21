@@ -66,9 +66,12 @@
             </div>
             {% endif %}
             
-            <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-card border border-border text-xs font-medium {% if client.is_active %}text-success{% else %}text-red-500{% endif %}">
-                <span class="w-2 h-2 rounded-full {% if client.is_active %}bg-success animate-pulse{% else %}bg-red-500{% endif %}"></span>
-                {% if client.is_active %}{{ 'فعاله' if is_fa else 'ACTIVE SUBSCRIPTION' }}{% else %}{{ 'غیرفعاله' if is_fa else 'INACTIVE' }}{% endif %}
+            {% set state_tag = client.service_state_tag or ('ok' if client.is_active else 'inactive') %}
+            {% set state_text_class = 'text-success' if state_tag == 'ok' else ('text-red-500' if state_tag in ['expired','ended'] else ('text-yellow-400' if state_tag in ['low','soon'] else 'text-muted')) %}
+            {% set state_dot_class = 'bg-success animate-pulse' if state_tag == 'ok' else ('bg-red-500' if state_tag in ['expired','ended'] else ('bg-yellow-400 animate-pulse' if state_tag in ['low','soon'] else 'bg-slate-400')) %}
+            <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-card border border-border text-xs font-medium {{ state_text_class }}">
+                <span class="w-2 h-2 rounded-full {{ state_dot_class }}"></span>
+                {{ (client.service_state_emoji ~ ' ' if client.service_state_emoji else '') ~ (client.service_state_label or ('فعاله' if is_fa else 'ACTIVE')) }}
             </div>
         </div>
 
@@ -124,7 +127,7 @@
                             {% elif client.expiry_type == 'soon' %}
                                 {{ client.expiry }}
                             {% elif client.expiry_type == 'normal' %}
-                                {{ client.expiry_days }} روز مانده
+                                {{ client.expiry if client.expiry else ((client.expiry_days|string) ~ ' روز مانده') }}
                             {% else %}
                                 {{ client.expiry if client.expiry else 'نامشخص' }}
                             {% endif %}
