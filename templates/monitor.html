@@ -61,8 +61,7 @@
                     </div>
                     <div class="form-group">
                         <label>TimeZone</label>
-                        <input type="text" id="monitor-timezone" list="monitor-timezone-options" class="form-input" placeholder="Asia/Tehran">
-                        <datalist id="monitor-timezone-options"></datalist>
+                        <select id="monitor-timezone" class="form-select"></select>
                     </div>
                     <label class="form-group form-toggle-item" style="cursor: pointer;">
                         <div class="toggle-switch">
@@ -189,7 +188,7 @@
         const filters = (monitorSettings || {}).filters || {};
         const templates = (monitorSettings || {}).templates || {};
 
-        applyTimezoneOptions('monitor-timezone-options', Array.isArray((monitorSettings || {}).timezone_options) ? monitorSettings.timezone_options : []);
+        applyTimezoneOptions('monitor-timezone', Array.isArray((monitorSettings || {}).timezone_options) ? monitorSettings.timezone_options : []);
 
         document.getElementById('monitor-warning-days').value = filters.warning_days ?? 3;
         document.getElementById('monitor-warning-gb').value = filters.warning_gb ?? 2;
@@ -203,9 +202,11 @@
         document.getElementById('tpl-soon').value = templates.soon || '';
     }
 
-    function applyTimezoneOptions(datalistId, options) {
-        const list = document.getElementById(datalistId);
+    function applyTimezoneOptions(selectId, options) {
+        const list = document.getElementById(selectId);
         if (!list) return;
+
+        const current = String(list.value || '').trim();
 
         const unique = [];
         const seen = new Set();
@@ -218,7 +219,11 @@
             unique.push(val);
         });
 
-        list.innerHTML = unique.map((tz) => `<option value="${tz}"></option>`).join('');
+        list.innerHTML = unique.map((tz) => `<option value="${tz}">${tz}</option>`).join('');
+
+        if (current && unique.includes(current)) {
+            list.value = current;
+        }
     }
 
     async function saveMonitorSettings() {

@@ -82,8 +82,7 @@
 
                 <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
                     <label>TimeZone</label>
-                    <input type="text" id="general-timezone" class="form-input" placeholder="Asia/Tehran" list="general-timezone-options">
-                    <datalist id="general-timezone-options"></datalist>
+                    <select id="general-timezone" class="form-select"></select>
                     <small class="text-secondary">IANA timezone. Example: Asia/Tehran, Europe/Berlin, UTC</small>
                 </div>
 
@@ -1390,7 +1389,7 @@
             const res = await fetch('/api/settings/general');
             const data = await res.json();
             if (data && data.success) {
-                applyTimezoneOptions('general-timezone-options', Array.isArray(data.timezone_options) ? data.timezone_options : []);
+                applyTimezoneOptions('general-timezone', Array.isArray(data.timezone_options) ? data.timezone_options : []);
                 const input = document.getElementById('general-timezone');
                 if (input) input.value = data.timezone || 'Asia/Tehran';
 
@@ -1433,7 +1432,7 @@
             });
             const data = await res.json();
             if (data && data.success) {
-                applyTimezoneOptions('general-timezone-options', Array.isArray(data.timezone_options) ? data.timezone_options : []);
+                applyTimezoneOptions('general-timezone', Array.isArray(data.timezone_options) ? data.timezone_options : []);
                 if (input) input.value = data.timezone || timezone;
                 const panelLangSel = document.getElementById('general-panel-lang');
                 if (panelLangSel) panelLangSel.value = (data.panel_lang === 'fa') ? 'fa' : 'en';
@@ -1454,9 +1453,11 @@
         }
     }
 
-    function applyTimezoneOptions(datalistId, options) {
-        const list = document.getElementById(datalistId);
+    function applyTimezoneOptions(selectId, options) {
+        const list = document.getElementById(selectId);
         if (!list) return;
+
+        const current = String(list.value || '').trim();
 
         const unique = [];
         const seen = new Set();
@@ -1469,7 +1470,11 @@
             unique.push(val);
         });
 
-        list.innerHTML = unique.map((tz) => `<option value="${tz}"></option>`).join('');
+        list.innerHTML = unique.map((tz) => `<option value="${tz}">${tz}</option>`).join('');
+
+        if (current && unique.includes(current)) {
+            list.value = current;
+        }
     }
 
     async function loadSubscriptionPageSettings() {
