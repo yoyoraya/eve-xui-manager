@@ -586,9 +586,9 @@ body {
 }
 
 .monitor-tag.tag-soon {
-    background: rgba(56, 189, 248, 0.25) !important;
-    border: 1px solid rgba(56, 189, 248, 0.35);
-    color: #38bdf8 !important;
+    background: rgba(245, 158, 11, 0.20) !important;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #fbbf24 !important;
 }
 
 .monitor-tag.tag-ok {
@@ -817,6 +817,47 @@ body {
 .app-layout {
     display: flex;
     min-height: 100vh;
+}
+
+html[dir="rtl"] body {
+    direction: rtl;
+}
+
+html[dir="rtl"] .sidebar {
+    left: auto;
+    right: 0;
+    border-right: none;
+    border-left: 1px solid var(--border-color);
+}
+
+html[dir="rtl"] .main-content {
+    margin-left: 0;
+    margin-right: var(--sidebar-width);
+}
+
+html[dir="rtl"] .sidebar-logo {
+    flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .nav-item {
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+}
+
+html[dir="rtl"] .user-info {
+    flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .header-actions {
+    flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .page-title,
+html[dir="rtl"] .content-area,
+html[dir="rtl"] .panel-card,
+html[dir="rtl"] .form-group,
+html[dir="rtl"] .table {
+    text-align: right;
 }
 
 .sidebar {

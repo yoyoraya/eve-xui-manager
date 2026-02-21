@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr" data-theme="dark">
+<html lang="{{ panel_lang or 'en' }}" dir="{{ panel_dir or 'ltr' }}" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -35,7 +35,7 @@
         }
     </script>
 </head>
-<body class="ltr">
+<body class="{{ panel_dir or 'ltr' }}">
     <div class="app-layout">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">

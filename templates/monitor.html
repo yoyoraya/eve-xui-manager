@@ -62,19 +62,7 @@
                     <div class="form-group">
                         <label>TimeZone</label>
                         <input type="text" id="monitor-timezone" list="monitor-timezone-options" class="form-input" placeholder="Asia/Tehran">
-                        <datalist id="monitor-timezone-options">
-                            <option value="Asia/Tehran"></option>
-                            <option value="UTC"></option>
-                            <option value="Asia/Dubai"></option>
-                            <option value="Europe/Istanbul"></option>
-                            <option value="Europe/Berlin"></option>
-                            <option value="Europe/London"></option>
-                            <option value="America/New_York"></option>
-                            <option value="America/Toronto"></option>
-                            <option value="Asia/Tokyo"></option>
-                            <option value="Asia/Shanghai"></option>
-                            <option value="Asia/Kolkata"></option>
-                        </datalist>
+                        <datalist id="monitor-timezone-options"></datalist>
                     </div>
                     <label class="form-group form-toggle-item" style="cursor: pointer;">
                         <div class="toggle-switch">
@@ -189,6 +177,7 @@
                 return;
             }
             monitorSettings = data.settings || {};
+            monitorSettings.timezone_options = data.timezone_options || [];
             monitorTimezone = (data.timezone || 'Asia/Tehran');
             applySettingsToForm();
         } catch (err) {
@@ -200,6 +189,8 @@
         const filters = (monitorSettings || {}).filters || {};
         const templates = (monitorSettings || {}).templates || {};
 
+        applyTimezoneOptions('monitor-timezone-options', Array.isArray((monitorSettings || {}).timezone_options) ? monitorSettings.timezone_options : []);
+
         document.getElementById('monitor-warning-days').value = filters.warning_days ?? 3;
         document.getElementById('monitor-warning-gb').value = filters.warning_gb ?? 2;
         document.getElementById('monitor-hide-days').value = filters.hide_days ?? 7;
@@ -210,6 +201,24 @@
         document.getElementById('tpl-expired').value = templates.expired || '';
         document.getElementById('tpl-low').value = templates.low || '';
         document.getElementById('tpl-soon').value = templates.soon || '';
+    }
+
+    function applyTimezoneOptions(datalistId, options) {
+        const list = document.getElementById(datalistId);
+        if (!list) return;
+
+        const unique = [];
+        const seen = new Set();
+        (Array.isArray(options) ? options : []).forEach((raw) => {
+            const val = String(raw || '').trim();
+            if (!val) return;
+            const lower = val.toLowerCase();
+            if (seen.has(lower)) return;
+            seen.add(lower);
+            unique.push(val);
+        });
+
+        list.innerHTML = unique.map((tz) => `<option value="${tz}"></option>`).join('');
     }
 
     async function saveMonitorSettings() {
@@ -241,6 +250,7 @@
                 return;
             }
             monitorSettings = data.settings || payload;
+            monitorSettings.timezone_options = data.timezone_options || [];
             monitorTimezone = data.timezone || payload.timezone || 'Asia/Tehran';
             showToast('Settings saved', 'success');
             renderAlerts();

@@ -83,19 +83,7 @@
                 <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
                     <label>TimeZone</label>
                     <input type="text" id="general-timezone" class="form-input" placeholder="Asia/Tehran" list="general-timezone-options">
-                    <datalist id="general-timezone-options">
-                        <option value="Asia/Tehran"></option>
-                        <option value="UTC"></option>
-                        <option value="Asia/Dubai"></option>
-                        <option value="Europe/Istanbul"></option>
-                        <option value="Europe/Berlin"></option>
-                        <option value="Europe/London"></option>
-                        <option value="America/New_York"></option>
-                        <option value="America/Toronto"></option>
-                        <option value="Asia/Tokyo"></option>
-                        <option value="Asia/Shanghai"></option>
-                        <option value="Asia/Kolkata"></option>
-                    </datalist>
+                    <datalist id="general-timezone-options"></datalist>
                     <small class="text-secondary">IANA timezone. Example: Asia/Tehran, Europe/Berlin, UTC</small>
                 </div>
 
@@ -1402,6 +1390,7 @@
             const res = await fetch('/api/settings/general');
             const data = await res.json();
             if (data && data.success) {
+                applyTimezoneOptions('general-timezone-options', Array.isArray(data.timezone_options) ? data.timezone_options : []);
                 const input = document.getElementById('general-timezone');
                 if (input) input.value = data.timezone || 'Asia/Tehran';
 
@@ -1424,7 +1413,7 @@
 
     async function saveGeneralSettings() {
         const input = document.getElementById('general-timezone');
-        const timezone = (input ? input.value : '').trim() || 'Asia/Tehran';
+        const timezone = ((input ? input.value : '') || 'Asia/Tehran').trim().replace(/\\/g, '/').replace(/\s+/g, '');
         const panelLang = (document.getElementById('general-panel-lang') || {}).value || 'en';
         const nearDays = parseInt((document.getElementById('general-near-expiry-days') || {}).value || '3', 10);
         const nearHours = parseInt((document.getElementById('general-near-expiry-hours') || {}).value || '0', 10);
@@ -1444,6 +1433,7 @@
             });
             const data = await res.json();
             if (data && data.success) {
+                applyTimezoneOptions('general-timezone-options', Array.isArray(data.timezone_options) ? data.timezone_options : []);
                 if (input) input.value = data.timezone || timezone;
                 const panelLangSel = document.getElementById('general-panel-lang');
                 if (panelLangSel) panelLangSel.value = (data.panel_lang === 'fa') ? 'fa' : 'en';
@@ -1462,6 +1452,24 @@
         } catch (e) {
             showToast('Network error', 'error');
         }
+    }
+
+    function applyTimezoneOptions(datalistId, options) {
+        const list = document.getElementById(datalistId);
+        if (!list) return;
+
+        const unique = [];
+        const seen = new Set();
+        (Array.isArray(options) ? options : []).forEach((raw) => {
+            const val = String(raw || '').trim();
+            if (!val) return;
+            const lower = val.toLowerCase();
+            if (seen.has(lower)) return;
+            seen.add(lower);
+            unique.push(val);
+        });
+
+        list.innerHTML = unique.map((tz) => `<option value="${tz}"></option>`).join('');
     }
 
     async function loadSubscriptionPageSettings() {

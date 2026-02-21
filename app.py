@@ -68,9 +68,10 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 import copy
 try:
-    from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo, available_timezones
 except Exception:
     ZoneInfo = None
+    available_timezones = None
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, session, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
@@ -2271,6 +2272,48 @@ DEFAULT_MONITOR_SETTINGS = {
     }
 }
 
+STANDARD_TIMEZONE_OPTIONS = [
+    'Asia/Tehran',
+    'UTC',
+    'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'Europe/Amsterdam', 'Europe/Brussels',
+    'Europe/Madrid', 'Europe/Rome', 'Europe/Vienna', 'Europe/Prague', 'Europe/Warsaw', 'Europe/Zurich',
+    'Europe/Athens', 'Europe/Helsinki', 'Europe/Bucharest', 'Europe/Istanbul', 'Europe/Moscow',
+    'Asia/Dubai', 'Asia/Riyadh', 'Asia/Jerusalem', 'Asia/Baghdad', 'Asia/Kuwait', 'Asia/Qatar',
+    'Asia/Baku', 'Asia/Tbilisi', 'Asia/Yerevan', 'Asia/Karachi', 'Asia/Kolkata', 'Asia/Dhaka',
+    'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Kuala_Lumpur', 'Asia/Singapore', 'Asia/Manila',
+    'Asia/Hong_Kong', 'Asia/Shanghai', 'Asia/Taipei', 'Asia/Seoul', 'Asia/Tokyo',
+    'Australia/Perth', 'Australia/Adelaide', 'Australia/Sydney', 'Pacific/Auckland',
+    'Africa/Cairo', 'Africa/Johannesburg', 'Africa/Nairobi', 'Africa/Lagos',
+    'America/St_Johns', 'America/Halifax', 'America/Toronto', 'America/New_York', 'America/Chicago',
+    'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
+    'America/Mexico_City', 'America/Bogota', 'America/Lima', 'America/Caracas', 'America/Sao_Paulo',
+    'America/Argentina/Buenos_Aires', 'America/Santiago',
+]
+
+
+def _get_standard_timezone_options() -> list[str]:
+    base = []
+    seen = set()
+    for item in STANDARD_TIMEZONE_OPTIONS:
+        key = str(item or '').strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        base.append(key)
+    return base
+
+
+def _normalize_timezone_name(value: str | None) -> str | None:
+    raw = str(value or '').strip()
+    if not raw:
+        return None
+
+    lowered = raw.lower()
+    for tz_name in _get_standard_timezone_options():
+        if tz_name.lower() == lowered:
+            return tz_name
+    return None
+
 
 def _get_or_create_system_setting(key: str, default_value: str | None = None) -> str | None:
     """Fetch a SystemSetting value; optionally create with default if missing.
@@ -2356,22 +2399,27 @@ def _get_monitor_settings() -> dict:
 
 
 def _is_valid_timezone_name(value: str | None) -> bool:
-    tz_name = (value or '').strip()
+    tz_name = _normalize_timezone_name(value)
     if not tz_name:
         return False
+
+    # If tz database is unavailable in runtime, still accept curated standard names.
     if ZoneInfo is None:
-        return tz_name == DEFAULT_APP_TIMEZONE
+        return True
+
     try:
         ZoneInfo(tz_name)
         return True
     except Exception:
-        return False
+        # Some environments miss tzdata; allow curated values for UX consistency.
+        return tz_name in _get_standard_timezone_options()
 
 
 def _get_app_timezone_name() -> str:
     stored = _get_or_create_system_setting(GENERAL_TIMEZONE_SETTING_KEY, DEFAULT_APP_TIMEZONE)
-    if _is_valid_timezone_name(stored):
-        return str(stored).strip()
+    normalized = _normalize_timezone_name(stored)
+    if _is_valid_timezone_name(normalized):
+        return str(normalized).strip()
     return DEFAULT_APP_TIMEZONE
 
 
@@ -3324,6 +3372,7 @@ def log_transaction(user_id, amount, type, desc, server_id=None, card_id=None, s
 def inject_wallet_credit():
     wallet_credit = 0
     app_timezone = DEFAULT_APP_TIMEZONE
+    panel_lang = 'en'
     admin_id = session.get('admin_id')
     if admin_id:
         user = db.session.get(Admin, admin_id)
@@ -3333,9 +3382,17 @@ def inject_wallet_credit():
         app_timezone = _get_app_timezone_name()
     except Exception:
         app_timezone = DEFAULT_APP_TIMEZONE
+
+    try:
+        panel_lang = _get_panel_ui_lang()
+    except Exception:
+        panel_lang = 'en'
+
     return {
         "wallet_credit": wallet_credit,
         "app_timezone": app_timezone,
+        "panel_lang": panel_lang,
+        "panel_dir": ('rtl' if panel_lang == 'fa' else 'ltr'),
     }
 
 def format_jalali(dt):
@@ -4848,6 +4905,7 @@ def get_monitor_settings():
         'success': True,
         'settings': _get_monitor_settings(),
         'timezone': _get_app_timezone_name(),
+        'timezone_options': _get_standard_timezone_options(),
     })
 
 
@@ -4875,6 +4933,7 @@ def save_monitor_settings():
         'success': True,
         'settings': normalized,
         'timezone': _get_app_timezone_name(),
+        'timezone_options': _get_standard_timezone_options(),
     })
 
 
@@ -5628,6 +5687,7 @@ def get_general_settings():
     return jsonify({
         'success': True,
         'timezone': _get_app_timezone_name(),
+        'timezone_options': _get_standard_timezone_options(),
         'panel_lang': _get_panel_ui_lang(),
         'near_expiry_days': thresholds.get('near_expiry_days', 3),
         'near_expiry_hours': thresholds.get('near_expiry_hours', 0),
@@ -5646,6 +5706,8 @@ def save_general_settings():
     tz_name = (data.get('timezone') or '').strip()
     if not tz_name:
         tz_name = DEFAULT_APP_TIMEZONE
+
+    tz_name = _normalize_timezone_name(tz_name) or tz_name
 
     if not _is_valid_timezone_name(tz_name):
         return jsonify({
@@ -5674,6 +5736,7 @@ def save_general_settings():
         'success': True,
         'message': 'General settings saved',
         'timezone': tz_name,
+        'timezone_options': _get_standard_timezone_options(),
         'panel_lang': panel_lang,
         'near_expiry_days': near_expiry_days,
         'near_expiry_hours': near_expiry_hours,
