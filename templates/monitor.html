@@ -407,7 +407,11 @@
         const expCls = (st === 'expired' || st === 'ended') ? ' detail-highlight' : '';
 
         row.innerHTML = `
-            <div class="monitor-cell monitor-user"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${escapeHtml(alert.email || '-')}</div>
+            <div class="monitor-cell monitor-user">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                ${escapeHtml(alert.email || '-')}
+                ${alert.verified ? '<span class="verified-badge" style="color: var(--success); font-size: 0.75rem; margin-left: 6px; font-weight: 600; display: inline-flex; align-items: center; gap: 2px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>Verified</span>' : ''}
+            </div>
             <div class="monitor-cell monitor-phone"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>${escapeHtml(phone || '-')}</div>
             <div class="monitor-cell"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>${escapeHtml(alert.server_name || '-')}</div>
             <div class="monitor-cell"><span class="monitor-tag tag-${st}">${escapeHtml(alert.status_label || alert.status)}</span></div>
@@ -518,7 +522,14 @@
 
     async function toggleClientFromMonitor(serverId, inboundId, email, enable) {
         const action = enable ? 'enable' : 'disable';
-        if (!confirm(`Are you sure you want to ${action} ${email}?`)) return;
+        
+        // Optimistic update
+        const alert = allAlerts.find(a => a.server_id === serverId && a.inbound_id === inboundId && a.email === email);
+        if (alert) {
+            alert.enabled = enable;
+            alert.verified = false;
+            renderAlerts();
+        }
         
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/toggle`, {
@@ -530,16 +541,49 @@
             const data = await response.json();
             if (data.success) {
                 showToast(`Client ${action}d successfully`, 'success');
-                const alert = allAlerts.find(a => a.server_id === serverId && a.inbound_id === inboundId && a.email === email);
-                if (alert) {
-                    alert.enabled = enable;
-                    renderAlerts();
+                
+                // Fetch real status from server immediately
+                try {
+                    const refreshResp = await fetch(`/api/server/${serverId}/refresh?force=true&wait=true`);
+                    const refreshData = await refreshResp.json();
+                    if (refreshData.success && refreshData.inbounds) {
+                        let realStatus = null;
+                        for (const ib of refreshData.inbounds) {
+                            if (ib.id === inboundId) {
+                                const client = (ib.clients || []).find(c => c.email === email);
+                                if (client) {
+                                    realStatus = client.enable;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (alert && realStatus !== null) {
+                            alert.enabled = realStatus;
+                            if (realStatus === enable) {
+                                alert.verified = true;
+                            }
+                            renderAlerts();
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error verifying status:', e);
                 }
             } else {
                 showToast(data.error || `Error ${action}ing client`, 'error');
+                // Revert optimistic update
+                if (alert) {
+                    alert.enabled = !enable;
+                    renderAlerts();
+                }
             }
         } catch (error) {
             showToast(`Error ${action}ing client`, 'error');
+            // Revert optimistic update
+            if (alert) {
+                alert.enabled = !enable;
+                renderAlerts();
+            }
         }
     }
 

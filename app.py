@@ -83,7 +83,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.8.2"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
