@@ -630,7 +630,9 @@ body {
 }
 
 .btn-whatsapp .icon,
-.btn-sms .icon {
+.btn-sms .icon,
+.btn-danger .icon,
+.btn-success .icon {
     display: inline-flex;
 }
 
@@ -639,6 +641,12 @@ body {
     width: 16px;
     height: 16px;
     fill: currentColor;
+}
+
+.btn-danger svg,
+.btn-success svg {
+    width: 16px;
+    height: 16px;
 }
 
 .monitor-empty {

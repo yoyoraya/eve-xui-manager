@@ -425,6 +425,10 @@
                     <span class="icon">${getWhatsAppIcon()}</span>
                     WhatsApp
                 </a>
+                <button class="btn ${alert.enabled ? 'btn-danger' : 'btn-success'}" onclick="toggleClientFromMonitor(${alert.server_id}, ${alert.inbound_id}, '${escapeHtml(alert.email)}', ${!alert.enabled})" title="${alert.enabled ? 'Disable' : 'Enable'}">
+                    <span class="icon">${alert.enabled ? getDisableIcon() : getEnableIcon()}</span>
+                    ${alert.enabled ? 'Disable' : 'Enable'}
+                </button>
             </div>
         `;
         return row;
@@ -502,6 +506,41 @@
 
     function getSmsIcon() {
         return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 12H6l-2 2V4h16v10z"/></svg>';
+    }
+
+    function getDisableIcon() {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>';
+    }
+
+    function getEnableIcon() {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>';
+    }
+
+    async function toggleClientFromMonitor(serverId, inboundId, email, enable) {
+        const action = enable ? 'enable' : 'disable';
+        if (!confirm(`Are you sure you want to ${action} ${email}?`)) return;
+        
+        try {
+            const response = await fetch(`/api/client/${serverId}/${inboundId}/toggle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email, enable: enable })
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                showToast(`Client ${action}d successfully`, 'success');
+                const alert = allAlerts.find(a => a.server_id === serverId && a.inbound_id === inboundId && a.email === email);
+                if (alert) {
+                    alert.enabled = enable;
+                    renderAlerts();
+                }
+            } else {
+                showToast(data.error || `Error ${action}ing client`, 'error');
+            }
+        } catch (error) {
+            showToast(`Error ${action}ing client`, 'error');
+        }
     }
 
     async function scanNetworks() {
