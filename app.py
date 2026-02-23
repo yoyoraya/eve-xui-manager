@@ -10734,12 +10734,15 @@ def auto_configure_whatsapp_gateway():
         if first_error is None and error_reason:
             first_error = str(error_reason)
 
-    return jsonify({
+    debug_enabled = _parse_bool(request.args.get('debug'))
+    response_payload = {
         'success': False,
-        'error': 'No reachable WhatsApp gateway was discovered automatically.',
-        'details': first_error,
+        'error': 'No WhatsApp gateway service is available yet. Auto setup will retry when you open this section again.',
         'checked': checked,
-    }), 400
+    }
+    if debug_enabled and first_error:
+        response_payload['details'] = first_error
+    return jsonify(response_payload), 400
 
 @app.route('/packages')
 @superadmin_required

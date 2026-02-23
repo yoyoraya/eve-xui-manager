@@ -1255,6 +1255,11 @@
 
     function loadWhatsAppSettings() {
         applyWhatsAppRegionStateSettings();
+        const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
+        const gateway = ((document.getElementById('wa-gateway-url') || {}).value || '').trim();
+        if (region !== 'iran' && !gateway) {
+            autoConfigureWhatsAppGatewaySettings({ silent: true }).catch(() => {});
+        }
     }
 
     function applyWhatsAppRegionStateSettings() {
@@ -1303,6 +1308,17 @@
         const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
         const isIran = region === 'iran';
 
+        if (!isIran) {
+            const gateway = ((document.getElementById('wa-gateway-url') || {}).value || '').trim();
+            if (!gateway) {
+                const setup = await autoConfigureWhatsAppGatewaySettings({ silent: true });
+                if (!setup.success) {
+                    showToast('WhatsApp gateway آماده نیست. لطفاً چند دقیقه بعد دوباره تلاش کنید.', 'error');
+                    return;
+                }
+            }
+        }
+
         const payload = {
             whatsapp_deployment_region: region,
             whatsapp_provider: (document.getElementById('wa-provider') || {}).value || 'baileys',
@@ -1350,6 +1366,15 @@
             return;
         }
 
+        const gateway = ((document.getElementById('wa-gateway-url') || {}).value || '').trim();
+        if (!gateway) {
+            const setup = await autoConfigureWhatsAppGatewaySettings({ silent: true });
+            if (!setup.success) {
+                showToast('اتصال خودکار به WhatsApp gateway انجام نشد. لطفاً بعداً دوباره تست بزنید.', 'error');
+                return;
+            }
+        }
+
         try {
             const res = await fetch('/api/whatsapp/test-connection', { method: 'POST' });
             const data = await res.json();
@@ -1391,9 +1416,9 @@
             }
 
             if (!silent) {
-                const message = (data && (data.error || data.details))
-                    ? `${data.error || 'Auto setup failed'}${data.details ? `: ${data.details}` : ''}`
-                    : 'Auto setup failed';
+                const message = (data && data.error)
+                    ? String(data.error)
+                    : 'تنظیم خودکار WhatsApp gateway انجام نشد. لطفاً کمی بعد دوباره تلاش کنید.';
                 showToast(message, 'error');
             }
             return { success: false };
