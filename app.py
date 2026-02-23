@@ -804,7 +804,7 @@ def _backoff_record_success(server_id: int):
         REFRESH_BACKOFF[sid] = {'fail_count': 0, 'next_allowed_at': 0, 'last_error': '', 'last_failed_at': 0}
 
 
-def _check_server_reachable(server, timeout_sec: float = 2.0):
+def _check_server_reachable(server: 'Server', timeout_sec: float = 2.0):
     try:
         base, webpath = extract_base_and_webpath(server.host)
         url = f"{base}{webpath}/login"
@@ -892,16 +892,7 @@ def _run_refresh_job(job_id: str):
                         if server_id:
                             servers_q = servers_q.filter(Server.id == int(server_id))
                         servers = servers_q.all()
-                        
-                        # Convert to SimpleNamespace to avoid lazy loads during network I/O
-                        server_objs = [SimpleNamespace(id=s.id, host=s.host) for s in servers]
-                        
-                        # Release the read lock before starting network I/O
-                        try:
-                            db.session.commit()
-                        except Exception:
-                            pass
-                        _update_reachability_status(server_objs, force=force)
+                        _update_reachability_status(servers, force=force)
                     else:
                         if server_id:
                             try:
@@ -1015,30 +1006,16 @@ def fetch_and_update_server_data(server_id: int):
     if not admin_user:
         admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
 
-    # Convert server to SimpleNamespace to avoid lazy loads during network I/O
-    server_obj = SimpleNamespace(
-        id=server.id, name=server.name, host=server.host,
-        username=server.username, password=get_server_password(server),
-        panel_type=server.panel_type, sub_port=server.sub_port,
-        sub_path=server.sub_path, json_path=server.json_path
-    )
-
-    # Release the read lock before starting network I/O
-    try:
-        db.session.commit()
-    except Exception:
-        pass
-
-    session_obj, error = get_xui_session(server_obj)
+    session_obj, error = get_xui_session(server)
     if error:
         raise RuntimeError(error)
 
-    inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
+    inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
     if fetch_error:
         raise RuntimeError(fetch_error)
 
-    online_index, _ = fetch_onlines(session_obj, server_obj.host, server_obj.panel_type)
-    status_payload, status_error, _status_type = fetch_server_status(session_obj, server_obj.host, server_obj.panel_type)
+    online_index, _ = fetch_onlines(session_obj, server.host, server.panel_type)
+    status_payload, status_error, _status_type = fetch_server_status(session_obj, server.host, server.panel_type)
 
     # Enrich status_payload with online_count from onlines endpoint
     if online_index:
@@ -4000,11 +3977,6 @@ def get_xui_session(server):
         base, webpath = extract_base_and_webpath(server.host)
         normalized_type = (getattr(server, 'panel_type', None) or 'auto').strip().lower()
         panel_api = get_panel_api(normalized_type)
-        # Release the read lock before starting network I/O
-        try:
-            db.session.commit()
-        except Exception:
-            pass
         login_ep = (getattr(panel_api, 'login_endpoint', None) if panel_api else None) or '/login'
         login_url = login_ep if login_ep.startswith('http') else f"{base}{webpath}{login_ep}"
         # Keep login timeout short so refresh endpoints stay responsive.
@@ -4065,11 +4037,6 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
 
     # If panel_type is known, try only its configured endpoint first
     panel_api = get_panel_api(normalized_type)
-    # Release the read lock before starting network I/O
-    try:
-        db.session.commit()
-    except Exception:
-        pass
     if normalized_type != 'auto' and panel_api and panel_api.inbounds_list:
         endpoints_map.append((panel_api.inbounds_list, normalized_type))
     else:
@@ -4321,11 +4288,6 @@ def fetch_server_status(session_obj, host, panel_type='auto'):
 
     endpoints = []
     panel_api = get_panel_api(normalized_type)
-    # Release the read lock before starting network I/O
-    try:
-        db.session.commit()
-    except Exception:
-        pass
     if normalized_type != 'auto' and panel_api and panel_api.server_status:
         endpoints.append((panel_api.server_status, normalized_type))
     else:
