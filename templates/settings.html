@@ -339,6 +339,9 @@
                         <p class="text-secondary">Configure gateway, authentication flow, triggers, and safety limits.</p>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
+                        <button id="wa-auto-setup" class="btn btn-secondary" onclick="autoConfigureWhatsAppGatewaySettings()">
+                            Auto Setup
+                        </button>
                         <button id="wa-test-connection" class="btn btn-secondary" onclick="testWhatsAppConnectionSettings()">
                             Test Connection
                         </button>
@@ -372,7 +375,7 @@
                 <div class="form-group">
                     <label>Gateway URL</label>
                     <input type="text" id="wa-gateway-url" class="form-control" value="{{ whatsapp_gateway_url }}" placeholder="https://wa-gateway.example.com">
-                    <small class="text-secondary">Gateway must expose <code>/health</code>, <code>/send</code>, and for auth wizard ideally <code>/auth</code>.</small>
+                    <small class="text-secondary">If you do not know this value, click <strong>Auto Setup</strong>. Manual value is optional.</small>
                 </div>
 
                 <div class="form-group">
@@ -1280,6 +1283,7 @@
             'wa-template-renew',
             'wa-template-welcome',
             'wa-template-pre-expiry',
+            'wa-auto-setup',
             'wa-test-connection',
             'wa-open-auth'
         ];
@@ -1359,17 +1363,66 @@
         }
     }
 
-    function openWhatsAppAuthWizard() {
+    async function autoConfigureWhatsAppGatewaySettings(options = {}) {
+        const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
+        if (region === 'iran') {
+            showToast('Server region is Iran. WhatsApp automation is unavailable.', 'warning');
+            return { success: false };
+        }
+
+        const autoBtn = document.getElementById('wa-auto-setup');
+        const silent = !!(options && options.silent);
+        const originalText = autoBtn ? autoBtn.textContent : '';
+
+        try {
+            if (autoBtn) {
+                autoBtn.disabled = true;
+                autoBtn.textContent = 'Detecting...';
+            }
+
+            const res = await fetch('/api/whatsapp/auto-configure', { method: 'POST' });
+            const data = await res.json();
+
+            if (data && data.success && data.gateway_url) {
+                const gatewayInput = document.getElementById('wa-gateway-url');
+                if (gatewayInput) gatewayInput.value = data.gateway_url;
+                if (!silent) showToast('Gateway configured automatically');
+                return { success: true, gateway_url: data.gateway_url, auth_url: data.auth_url || '' };
+            }
+
+            if (!silent) {
+                const message = (data && (data.error || data.details))
+                    ? `${data.error || 'Auto setup failed'}${data.details ? `: ${data.details}` : ''}`
+                    : 'Auto setup failed';
+                showToast(message, 'error');
+            }
+            return { success: false };
+        } catch (e) {
+            if (!silent) showToast('Network error during auto setup', 'error');
+            return { success: false };
+        } finally {
+            if (autoBtn) {
+                autoBtn.disabled = false;
+                autoBtn.textContent = originalText || 'Auto Setup';
+            }
+        }
+    }
+
+    async function openWhatsAppAuthWizard() {
         const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
         if (region === 'iran') {
             showToast('Server region is Iran. WhatsApp automation is unavailable.', 'warning');
             return;
         }
 
-        const raw = ((document.getElementById('wa-gateway-url') || {}).value || '').trim();
+        let raw = ((document.getElementById('wa-gateway-url') || {}).value || '').trim();
         if (!raw) {
-            showToast('Gateway URL is required first', 'error');
-            return;
+            const setup = await autoConfigureWhatsAppGatewaySettings({ silent: true });
+            if (!setup.success) {
+                showToast('Gateway URL not found automatically. Please run Auto Setup or set it manually.', 'error');
+                return;
+            }
+            raw = (setup.gateway_url || '').trim();
         }
 
         const base = raw.endsWith('/') ? raw.slice(0, -1) : raw;

@@ -2519,6 +2519,65 @@ def _normalize_whatsapp_gateway_url(value: str | None) -> str:
     return raw.rstrip('/')
 
 
+def _probe_whatsapp_gateway(gateway_url: str, timeout_seconds: int, api_key: str | None = None) -> tuple[bool, int | None, str | None]:
+    normalized = _normalize_whatsapp_gateway_url(gateway_url)
+    if not normalized:
+        return False, None, 'empty_gateway_url'
+
+    headers = {}
+    token = (api_key or '').strip()
+    if token:
+        headers['Authorization'] = f"Bearer {token}"
+
+    try:
+        response = requests.get(
+            f"{normalized}/health",
+            headers=headers,
+            timeout=max(3, int(timeout_seconds or 10)),
+            verify=False,
+        )
+        status_code = int(response.status_code)
+        if 200 <= status_code < 300:
+            return True, status_code, None
+        return False, status_code, 'non_success_status'
+    except Exception as exc:
+        return False, None, str(exc)
+
+
+def _build_whatsapp_gateway_candidates(host_hint: str | None = None, configured_url: str | None = None) -> list[str]:
+    candidates = []
+    seen = set()
+
+    def add(raw_value: str | None):
+        normalized = _normalize_whatsapp_gateway_url(raw_value)
+        if not normalized:
+            return
+        key = normalized.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(normalized)
+
+    add(configured_url)
+    add(os.environ.get('WHATSAPP_GATEWAY_URL'))
+
+    host = (host_hint or '').strip().split(':')[0].strip().lower()
+    local_hosts = ['127.0.0.1', 'localhost']
+    if host and host not in ('127.0.0.1', 'localhost'):
+        local_hosts.append(host)
+
+    for h in local_hosts:
+        add(f"http://{h}:3000")
+        add(f"http://{h}:3001")
+        add(f"http://{h}:8080")
+
+    if host and host not in ('127.0.0.1', 'localhost'):
+        add(f"https://{host}/wa-gateway")
+        add(f"https://{host}/whatsapp-gateway")
+
+    return candidates
+
+
 def _get_system_config_text(key: str, default: str = '') -> str:
     conf = db.session.get(SystemConfig, key)
     if not conf or conf.value is None:
@@ -10606,26 +10665,81 @@ def test_whatsapp_connection():
     if not gateway_url:
         return jsonify({'success': False, 'error': 'WhatsApp gateway URL is not configured.'}), 400
 
-    headers = {}
-    api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
-    if api_key:
-        headers['Authorization'] = f"Bearer {api_key}"
+    ok, status_code, error_reason = _probe_whatsapp_gateway(
+        gateway_url,
+        timeout_seconds=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
+        api_key=(runtime_cfg.get('gateway_api_key') or '').strip(),
+    )
 
-    try:
-        response = requests.get(
-            f"{gateway_url}/health",
-            headers=headers,
-            timeout=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
-            verify=False,
-        )
-        ok = 200 <= response.status_code < 300
+    if ok:
         return jsonify({
-            'success': ok,
-            'status_code': int(response.status_code),
-            'message': 'Gateway reachable' if ok else 'Gateway returned non-success status'
-        }), 200 if ok else 400
-    except Exception as exc:
-        return jsonify({'success': False, 'error': f'Gateway connection failed: {exc}'}), 400
+            'success': True,
+            'status_code': status_code,
+            'message': 'Gateway reachable'
+        })
+
+    if status_code is not None:
+        return jsonify({
+            'success': False,
+            'status_code': status_code,
+            'message': 'Gateway returned non-success status'
+        }), 400
+
+    return jsonify({'success': False, 'error': f'Gateway connection failed: {error_reason}'}), 400
+
+
+@app.route('/api/whatsapp/auto-configure', methods=['POST'])
+@superadmin_required
+def auto_configure_whatsapp_gateway():
+    runtime_cfg = _get_whatsapp_runtime_settings()
+    if runtime_cfg.get('deployment_region') == 'iran':
+        return jsonify({
+            'success': False,
+            'error': 'WhatsApp automation is not available when the panel is deployed in Iran.',
+            'blocked_reason': 'deployment_in_iran'
+        }), 400
+
+    timeout_seconds = int(runtime_cfg.get('gateway_timeout_seconds') or 10)
+    api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+    configured_url = (runtime_cfg.get('gateway_url') or '').strip()
+    host_hint = request.host
+
+    candidates = _build_whatsapp_gateway_candidates(host_hint=host_hint, configured_url=configured_url)
+    checked = []
+    first_error = None
+
+    for candidate in candidates:
+        ok, status_code, error_reason = _probe_whatsapp_gateway(candidate, timeout_seconds=timeout_seconds, api_key=api_key)
+        checked.append({
+            'url': candidate,
+            'ok': bool(ok),
+            'status_code': int(status_code) if status_code is not None else None,
+            'error': None if ok else (error_reason or 'health_check_failed')
+        })
+        if ok:
+            normalized = _normalize_whatsapp_gateway_url(candidate)
+            conf = db.session.get(SystemConfig, WHATSAPP_GATEWAY_URL_KEY)
+            if conf:
+                conf.value = normalized
+            else:
+                db.session.add(SystemConfig(key=WHATSAPP_GATEWAY_URL_KEY, value=normalized))
+            db.session.commit()
+            return jsonify({
+                'success': True,
+                'gateway_url': normalized,
+                'auth_url': f"{normalized}/auth",
+                'checked': checked,
+            })
+
+        if first_error is None and error_reason:
+            first_error = str(error_reason)
+
+    return jsonify({
+        'success': False,
+        'error': 'No reachable WhatsApp gateway was discovered automatically.',
+        'details': first_error,
+        'checked': checked,
+    }), 400
 
 @app.route('/packages')
 @superadmin_required
