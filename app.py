@@ -3006,6 +3006,51 @@ def get_panel_api(panel_type):
     return PanelAPI.query.filter_by(panel_type=panel_type).first()
 
 
+# ---------------------------------------------------------------------------
+# HealthLog model – stores health-check events & auto-heal action logs
+# ---------------------------------------------------------------------------
+class HealthLog(db.Model):
+    __tablename__ = 'health_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    level = db.Column(db.String(16), default='info')       # info / warning / error / critical
+    category = db.Column(db.String(32), default='general')  # db / server / static / disk / general
+    message = db.Column(db.Text, nullable=False)
+    action_taken = db.Column(db.Text)                       # description of auto-heal action, if any
+    details = db.Column(db.Text)                            # extra JSON payload
+    resolved = db.Column(db.Boolean, default=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'timestamp': self.timestamp.isoformat() + 'Z' if self.timestamp else None,
+            'level': self.level,
+            'category': self.category,
+            'message': self.message,
+            'action_taken': self.action_taken,
+            'details': self.details,
+            'resolved': self.resolved,
+        }
+
+
+def _add_health_log(level, category, message, action_taken=None, details=None, resolved=False):
+    """Helper to insert a HealthLog row safely."""
+    try:
+        log_entry = HealthLog(
+            level=level,
+            category=category,
+            message=message,
+            action_taken=action_taken,
+            details=json.dumps(details) if isinstance(details, (dict, list)) else details,
+            resolved=resolved,
+        )
+        db.session.add(log_entry)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[HealthLog] Failed to write log: {exc}")
+
+
 CLIENT_UPDATE_FALLBACKS = [
     "/panel/api/inbounds/updateClient/:clientId",
     "/panel/api/inbounds/:id/updateClient/:clientId",
@@ -4949,13 +4994,22 @@ def monitor_page():
 @app.route('/healthz', methods=['GET'])
 def healthz():
     """Lightweight health endpoint for reverse-proxy / uptime checks."""
+    db_ok = True
+    try:
+        db.session.execute(text('SELECT 1'))
+        db.session.rollback()
+    except Exception:
+        db_ok = False
+    status = 'ok' if db_ok else 'degraded'
+    code = 200 if db_ok else 503
     return jsonify({
-        'success': True,
-        'status': 'ok',
+        'success': db_ok,
+        'status': status,
+        'db': 'ok' if db_ok else 'unreachable',
         'version': APP_VERSION,
         'uptime_seconds': int(max(0, time.time() - APP_START_TS)),
         'timestamp_utc': datetime.utcnow().isoformat() + 'Z',
-    })
+    }), code
 
 
 @app.route('/api/monitor/settings', methods=['GET'])
@@ -11474,6 +11528,75 @@ def save_session_settings():
         return jsonify({'success': False, 'message': 'Invalid value'}), 400
 
 
+# ---------------------------------------------------------------------------
+# Health Logs API
+# ---------------------------------------------------------------------------
+@app.route('/api/settings/health-logs', methods=['GET'])
+@login_required
+def get_health_logs():
+    """Paginated health logs for the Settings > System Logs tab."""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or not user.is_superadmin:
+        return jsonify({'success': False, 'message': 'Forbidden'}), 403
+
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    level = request.args.get('level', '')
+    category = request.args.get('category', '')
+
+    query = HealthLog.query
+    if level:
+        query = query.filter(HealthLog.level == level)
+    if category:
+        query = query.filter(HealthLog.category == category)
+
+    pagination = query.order_by(HealthLog.id.desc()).paginate(
+        page=page, per_page=min(per_page, 200), error_out=False
+    )
+    return jsonify({
+        'success': True,
+        'logs': [l.to_dict() for l in pagination.items],
+        'total': pagination.total,
+        'page': pagination.page,
+        'pages': pagination.pages,
+    })
+
+
+@app.route('/api/settings/health-logs/clear', methods=['POST'])
+@login_required
+def clear_health_logs():
+    """Delete all health logs."""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or not user.is_superadmin:
+        return jsonify({'success': False, 'message': 'Forbidden'}), 403
+    try:
+        deleted = HealthLog.query.delete()
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'Cleared {deleted} log entries'})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
+@app.route('/api/settings/health-logs/run-check', methods=['POST'])
+@login_required
+def run_health_check_now():
+    """Trigger a manual health-check cycle and return results."""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or not user.is_superadmin:
+        return jsonify({'success': False, 'message': 'Forbidden'}), 403
+    try:
+        results = _run_single_health_cycle()
+        summary = {}
+        for key, (ok, detail) in results.items():
+            summary[key] = {'ok': ok, 'detail': str(detail) if detail else None}
+        _add_health_log('info', 'general', 'Manual health check triggered by admin',
+                        details=summary, resolved=True)
+        return jsonify({'success': True, 'results': summary})
+    except Exception as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 500
+
+
 @app.route('/api/renew-templates', methods=['GET'])
 @superadmin_required
 def get_renew_templates():
@@ -11972,8 +12095,143 @@ def update_session_lifetime():
             print(f"Error updating session lifetime: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Health Watchdog – background self-healing loop
+# ---------------------------------------------------------------------------
+HEALTH_CHECK_INTERVAL = 60  # seconds between checks
+
+# Critical static files that must exist
+_CRITICAL_STATIC_FILES = [
+    'style.css',
+    'tailwind.generated.css',
+    'jquery-3.6.0.min.js',
+    'jalalidatepicker.min.css',
+    'jalalidatepicker.min.js',
+]
+
+def _health_check_db():
+    """Verify DB connectivity. Auto-heal by recycling the connection pool."""
+    try:
+        db.session.execute(text('SELECT 1'))
+        db.session.rollback()
+        return True, None
+    except Exception as exc:
+        error_msg = str(exc)
+        # Auto-heal: dispose the pool so new connections are created
+        try:
+            db.session.rollback()
+            db.engine.dispose()
+            _add_health_log('warning', 'db', 'Database connection lost – pool recycled',
+                            action_taken='Disposed connection pool and recycled',
+                            details={'error': error_msg}, resolved=True)
+            return False, error_msg
+        except Exception as heal_exc:
+            _add_health_log('critical', 'db', f'Database unreachable and auto-heal failed: {error_msg}',
+                            action_taken=f'Heal attempt failed: {heal_exc}',
+                            details={'error': error_msg, 'heal_error': str(heal_exc)})
+            return False, error_msg
+
+
+def _health_check_static_files():
+    """Ensure critical static files exist on disk."""
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
+    missing = []
+    for fname in _CRITICAL_STATIC_FILES:
+        fpath = os.path.join(static_dir, fname)
+        if not os.path.isfile(fpath):
+            missing.append(fname)
+    if missing:
+        _add_health_log('error', 'static',
+                        f'Missing critical static files: {", ".join(missing)}',
+                        details={'missing': missing})
+        return False, missing
+    return True, None
+
+
+def _health_check_disk():
+    """Warn if disk usage is above 90%."""
+    try:
+        usage = shutil.disk_usage(os.path.dirname(os.path.abspath(__file__)))
+        pct = (usage.used / usage.total) * 100
+        if pct > 95:
+            _add_health_log('critical', 'disk',
+                            f'Disk nearly full: {pct:.1f}% used',
+                            details={'used_pct': round(pct, 1),
+                                     'free_gb': round(usage.free / (1024**3), 2)})
+            return False, pct
+        elif pct > 90:
+            _add_health_log('warning', 'disk',
+                            f'Disk usage high: {pct:.1f}% used',
+                            details={'used_pct': round(pct, 1),
+                                     'free_gb': round(usage.free / (1024**3), 2)})
+            return False, pct
+        return True, round(pct, 1)
+    except Exception as exc:
+        return True, str(exc)  # non-fatal
+
+
+def _health_check_servers():
+    """Check reachability of enabled servers, log any that are down."""
+    try:
+        servers = Server.query.filter_by(enabled=True).all()
+    except Exception:
+        return True, None  # if we can't query, the DB check will catch it
+    down_servers = []
+    for srv in servers:
+        ok, err = _check_server_reachable(srv, timeout_sec=3.0)
+        if not ok:
+            down_servers.append({'id': srv.id, 'name': srv.name or srv.host, 'error': err})
+    if down_servers:
+        names = ', '.join(s['name'] for s in down_servers)
+        _add_health_log('warning', 'server',
+                        f'{len(down_servers)} server(s) unreachable: {names}',
+                        details={'servers': down_servers})
+        return False, down_servers
+    return True, None
+
+
+def _run_single_health_cycle():
+    """Execute one full health-check cycle. Returns summary dict."""
+    results = {}
+    results['db'] = _health_check_db()
+    results['static'] = _health_check_static_files()
+    results['disk'] = _health_check_disk()
+    results['servers'] = _health_check_servers()
+    return results
+
+
+def health_watchdog():
+    """Long-running watchdog daemon – runs health checks every HEALTH_CHECK_INTERVAL seconds."""
+    with app.app_context():
+        _add_health_log('info', 'general', 'Health watchdog started',
+                        details={'interval_seconds': HEALTH_CHECK_INTERVAL})
+        while True:
+            try:
+                time.sleep(HEALTH_CHECK_INTERVAL)
+                _run_single_health_cycle()
+                # Prune old logs – keep last 500
+                try:
+                    count = HealthLog.query.count()
+                    if count > 500:
+                        cutoff = (HealthLog.query
+                                  .order_by(HealthLog.id.desc())
+                                  .offset(500)
+                                  .first())
+                        if cutoff:
+                            HealthLog.query.filter(HealthLog.id <= cutoff.id).delete()
+                            db.session.commit()
+                except Exception:
+                    db.session.rollback()
+            except Exception as exc:
+                print(f"[HealthWatchdog] Error in cycle: {exc}")
+                try:
+                    time.sleep(30)
+                except Exception:
+                    pass
+
+
 def ensure_background_threads_started():
-    """Start background threads (scheduler + fetcher) once per process."""
+    """Start background threads (scheduler + fetcher + watchdog) once per process."""
     global BACKGROUND_THREADS_STARTED
     if BACKGROUND_THREADS_STARTED:
         return
@@ -11991,6 +12249,12 @@ def ensure_background_threads_started():
         data_thread.start()
     except Exception as e:
         print(f"Failed to start data fetcher thread: {e}")
+
+    try:
+        watchdog_thread = threading.Thread(target=health_watchdog, daemon=True)
+        watchdog_thread.start()
+    except Exception as e:
+        print(f"Failed to start health watchdog thread: {e}")
 
 if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
     # Start threads on module import (works under gunicorn as well)

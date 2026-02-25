@@ -38,6 +38,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
             Session Settings
         </button>
+        <button class="settings-tab" onclick="switchTab('health_logs')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><polyline points="9 15 12 12 15 15"></polyline></svg>
+            System Logs
+        </button>
         <!-- Add more tabs here later -->
     </div>
 
@@ -517,6 +521,77 @@
                 </div>
             </div>
         </div>
+
+        <!-- System Logs / Health Check tab -->
+        <div id="tab-health_logs" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>System Health Logs</h2>
+                        <p class="text-secondary">Self-healing watchdog monitors DB, servers, disk &amp; static files every 60 s.</p>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn btn-primary" onclick="runHealthCheckNow()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                            Run Check Now
+                        </button>
+                        <button class="btn btn-secondary" onclick="loadHealthLogs()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"></path></svg>
+                            Refresh
+                        </button>
+                        <button class="btn btn-danger" onclick="clearHealthLogs()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-2 14H7L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
+                            Clear Logs
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+                    <select id="hl-filter-level" class="form-control" style="width:auto;min-width:120px;" onchange="loadHealthLogs()">
+                        <option value="">All Levels</option>
+                        <option value="info">Info</option>
+                        <option value="warning">Warning</option>
+                        <option value="error">Error</option>
+                        <option value="critical">Critical</option>
+                    </select>
+                    <select id="hl-filter-category" class="form-control" style="width:auto;min-width:140px;" onchange="loadHealthLogs()">
+                        <option value="">All Categories</option>
+                        <option value="general">General</option>
+                        <option value="db">Database</option>
+                        <option value="server">Server</option>
+                        <option value="static">Static Files</option>
+                        <option value="disk">Disk</option>
+                    </select>
+                    <span id="hl-total-badge" class="text-secondary" style="font-size:0.85rem;"></span>
+                </div>
+
+                <!-- Last manual check results -->
+                <div id="hl-check-result" class="hidden" style="margin-bottom:14px;padding:12px 16px;border-radius:8px;font-size:0.9rem;"></div>
+
+                <!-- Logs table -->
+                <div style="overflow-x:auto;">
+                    <table class="data-table" id="health-logs-table">
+                        <thead>
+                            <tr>
+                                <th style="width:170px;">Time</th>
+                                <th style="width:90px;">Level</th>
+                                <th style="width:100px;">Category</th>
+                                <th>Message</th>
+                                <th style="width:220px;">Action Taken</th>
+                            </tr>
+                        </thead>
+                        <tbody id="hl-tbody">
+                            <tr><td colspan="5" class="text-secondary" style="text-align:center;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div id="hl-pagination" style="display:flex;justify-content:center;gap:8px;margin-top:14px;flex-wrap:wrap;"></div>
+            </div>
+        </div>
+
     </div>
 </div>
 
@@ -1191,6 +1266,7 @@
             else if (onclick.includes("'whatsapp'")) loadWhatsAppSettings();
             else if (onclick.includes("'ssl'")) loadSSLSettings();
             else if (onclick.includes("'session'")) loadSessionSettings();
+            else if (onclick.includes("'health_logs'")) loadHealthLogs();
         }
     });
 
@@ -1250,6 +1326,8 @@
             loadRenewTemplates();
         } else if (tabName === 'templates') {
             loadTemplates();
+        } else if (tabName === 'health_logs') {
+            loadHealthLogs();
         }
     }
 
@@ -2484,6 +2562,146 @@
         } catch (e) {
             showToast('Network error', 'error');
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Health Logs (System Logs tab)
+    // -----------------------------------------------------------------------
+    let _hlCurrentPage = 1;
+
+    function _hlLevelBadge(level) {
+        const colors = {
+            info: 'background:var(--accent);color:#fff;',
+            warning: 'background:#f59e0b;color:#000;',
+            error: 'background:#ef4444;color:#fff;',
+            critical: 'background:#dc2626;color:#fff;font-weight:700;',
+        };
+        const style = colors[level] || 'background:var(--card-bg);color:var(--text);';
+        return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.78rem;${style}">${(level||'').toUpperCase()}</span>`;
+    }
+
+    function _hlCategoryLabel(cat) {
+        const labels = { db: 'Database', server: 'Server', static: 'Static Files', disk: 'Disk', general: 'General' };
+        return labels[cat] || cat || '-';
+    }
+
+    function _hlFormatTime(iso) {
+        if (!iso) return '-';
+        try {
+            const d = new Date(iso);
+            return d.toLocaleString();
+        } catch { return iso; }
+    }
+
+    async function loadHealthLogs(page) {
+        if (page) _hlCurrentPage = page;
+        const level = (document.getElementById('hl-filter-level') || {}).value || '';
+        const category = (document.getElementById('hl-filter-category') || {}).value || '';
+        const tbody = document.getElementById('hl-tbody');
+        tbody.innerHTML = '<tr><td colspan="5" class="text-secondary" style="text-align:center;">Loading...</td></tr>';
+
+        try {
+            const params = new URLSearchParams({ page: _hlCurrentPage, per_page: 50 });
+            if (level) params.set('level', level);
+            if (category) params.set('category', category);
+
+            const resp = await fetch(`/api/settings/health-logs?${params}`);
+            const data = await resp.json();
+            if (!data.success) { tbody.innerHTML = `<tr><td colspan="5" class="text-secondary" style="text-align:center;">${data.message||'Error'}</td></tr>`; return; }
+
+            const badge = document.getElementById('hl-total-badge');
+            if (badge) badge.textContent = `${data.total} log${data.total !== 1 ? 's' : ''}`;
+
+            if (!data.logs || data.logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-secondary" style="text-align:center;">No logs found. The watchdog is running – logs will appear when issues are detected.</td></tr>';
+                document.getElementById('hl-pagination').innerHTML = '';
+                return;
+            }
+
+            tbody.innerHTML = data.logs.map(l => `
+                <tr>
+                    <td style="white-space:nowrap;font-size:0.85rem;">${_hlFormatTime(l.timestamp)}</td>
+                    <td>${_hlLevelBadge(l.level)}</td>
+                    <td style="font-size:0.85rem;">${_hlCategoryLabel(l.category)}</td>
+                    <td style="font-size:0.85rem;">${escapeHtml(l.message || '')}</td>
+                    <td style="font-size:0.85rem;color:var(--text-secondary);">${l.action_taken ? escapeHtml(l.action_taken) : '-'}</td>
+                </tr>
+            `).join('');
+
+            // Pagination
+            const pagDiv = document.getElementById('hl-pagination');
+            if (data.pages > 1) {
+                let btns = '';
+                for (let p = 1; p <= data.pages; p++) {
+                    const active = p === data.page ? 'btn-primary' : 'btn-secondary';
+                    btns += `<button class="btn ${active}" style="min-width:36px;padding:4px 10px;" onclick="loadHealthLogs(${p})">${p}</button>`;
+                }
+                pagDiv.innerHTML = btns;
+            } else {
+                pagDiv.innerHTML = '';
+            }
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-secondary" style="text-align:center;">Network error</td></tr>`;
+        }
+    }
+
+    async function runHealthCheckNow() {
+        const resultDiv = document.getElementById('hl-check-result');
+        resultDiv.classList.remove('hidden');
+        resultDiv.style.background = 'var(--card-bg)';
+        resultDiv.style.border = '1px solid var(--border)';
+        resultDiv.innerHTML = 'Running health check...';
+
+        try {
+            const resp = await fetch('/api/settings/health-logs/run-check', { method: 'POST' });
+            const data = await resp.json();
+            if (!data.success) {
+                resultDiv.style.background = '#fef2f2';
+                resultDiv.style.border = '1px solid #fca5a5';
+                resultDiv.innerHTML = `<strong>Error:</strong> ${escapeHtml(data.message || 'Unknown error')}`;
+                return;
+            }
+            const r = data.results || {};
+            const allOk = Object.values(r).every(v => v.ok);
+            if (allOk) {
+                resultDiv.style.background = 'var(--card-bg)';
+                resultDiv.style.border = '1px solid var(--accent)';
+                resultDiv.innerHTML = '✅ <strong>All checks passed</strong> — DB, servers, disk &amp; static files are healthy.';
+            } else {
+                const issues = Object.entries(r).filter(([,v]) => !v.ok).map(([k,v]) => `<strong>${k}:</strong> ${escapeHtml(v.detail || 'issue detected')}`);
+                resultDiv.style.background = '#fef2f2';
+                resultDiv.style.border = '1px solid #fca5a5';
+                resultDiv.innerHTML = '⚠️ <strong>Issues detected:</strong><br>' + issues.join('<br>');
+            }
+            loadHealthLogs();
+        } catch (e) {
+            resultDiv.style.background = '#fef2f2';
+            resultDiv.style.border = '1px solid #fca5a5';
+            resultDiv.innerHTML = 'Network error running health check.';
+        }
+    }
+
+    async function clearHealthLogs() {
+        if (!confirm('Clear all health logs?')) return;
+        try {
+            const resp = await fetch('/api/settings/health-logs/clear', { method: 'POST' });
+            const data = await resp.json();
+            if (data.success) {
+                showToast(data.message || 'Logs cleared');
+                loadHealthLogs();
+            } else {
+                showToast(data.message || 'Error', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 </script>
 {% endblock %}
