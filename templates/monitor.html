@@ -127,6 +127,15 @@
                     <button class="chip active" data-status="soon" data-label="Soon" onclick="toggleStatusFilter(this)">Soon (0)</button>
                     <button class="chip" data-status="ok" data-label="All" onclick="toggleStatusFilter(this)">All (0)</button>
                 </div>
+                {% if role != 'reseller' %}
+                <div style="display:flex; align-items:center; gap:8px; margin-left:12px;">
+                    <label style="font-size:0.9rem; color:var(--text-secondary);">Show reseller users</label>
+                    <label class="filter-toggle" title="Show reseller-owned users">
+                        <input type="checkbox" id="monitor-show-reseller-users" onchange="onToggleShowResellerUsers()" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                {% endif %}
                 <div id="monitor-selected-summary" class="text-secondary" style="font-size: 0.9rem; margin-top: 6px;">Selected users: 0</div>
             </div>
 
@@ -160,6 +169,9 @@
     let allAlerts = [];
     const MONITOR_STATUS_KEYS = ['ended', 'expired', 'low', 'soon'];
     const activeStatusFilters = new Set(['ended', 'expired', 'low', 'soon']);
+    const USER_ROLE = "{{ role }}";
+    const IS_SUPERADMIN = {{ is_superadmin|tojson }};
+    let showResellerUsers = true; // when false, show only system-owned users for admin views
 
     document.addEventListener('DOMContentLoaded', async () => {
         await loadMonitorSettings();
@@ -362,6 +374,12 @@
         });
     }
 
+    function onToggleShowResellerUsers() {
+        const cb = document.getElementById('monitor-show-reseller-users');
+        showResellerUsers = Boolean(cb && cb.checked);
+        renderAlerts();
+    }
+
     function getBaseFilteredAlerts() {
         const search = (document.getElementById('monitor-search').value || '').trim().toLowerCase();
         const serverFilter = document.getElementById('monitor-server-filter').value || 'all';
@@ -376,6 +394,13 @@
                 if (!emailMatch && !phoneMatch) {
                     return false;
                 }
+            }
+            // Owner filtering: if showResellerUsers is false and current user is admin/superadmin,
+            // only include alerts that are system-owned (no owner_reseller_id / owner_username)
+            if (!showResellerUsers && USER_ROLE !== 'reseller') {
+                // treat owner_reseller_id or owner_username presence as reseller-owned
+                if (Object.prototype.hasOwnProperty.call(alert, 'owner_reseller_id') && alert.owner_reseller_id) return false;
+                if (Object.prototype.hasOwnProperty.call(alert, 'owner_username') && alert.owner_username) return false;
             }
             return true;
         });
