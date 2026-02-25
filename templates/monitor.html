@@ -121,12 +121,13 @@
                     </div>
                 </div>
                 <div class="monitor-status-filters">
-                    <button class="chip active" data-status="ended" onclick="toggleStatusFilter(this)">Ended</button>
-                    <button class="chip active" data-status="expired" onclick="toggleStatusFilter(this)">Expired</button>
-                    <button class="chip active" data-status="low" onclick="toggleStatusFilter(this)">Low</button>
-                    <button class="chip active" data-status="soon" onclick="toggleStatusFilter(this)">Soon</button>
-                    <button class="chip" data-status="ok" onclick="toggleStatusFilter(this)">All</button>
+                    <button class="chip active" data-status="ended" data-label="Ended" onclick="toggleStatusFilter(this)">Ended (0)</button>
+                    <button class="chip active" data-status="expired" data-label="Expired" onclick="toggleStatusFilter(this)">Expired (0)</button>
+                    <button class="chip active" data-status="low" data-label="Low" onclick="toggleStatusFilter(this)">Low (0)</button>
+                    <button class="chip active" data-status="soon" data-label="Soon" onclick="toggleStatusFilter(this)">Soon (0)</button>
+                    <button class="chip" data-status="ok" data-label="All" onclick="toggleStatusFilter(this)">All (0)</button>
                 </div>
+                <div id="monitor-selected-summary" class="text-secondary" style="font-size: 0.9rem; margin-top: 6px;">Selected users: 0</div>
             </div>
 
             <div class="monitor-list">
@@ -157,6 +158,7 @@
     let monitorSettings = null;
     let monitorTimezone = 'Asia/Tehran';
     let allAlerts = [];
+    const MONITOR_STATUS_KEYS = ['ended', 'expired', 'low', 'soon'];
     const activeStatusFilters = new Set(['ended', 'expired', 'low', 'soon']);
 
     document.addEventListener('DOMContentLoaded', async () => {
@@ -320,11 +322,11 @@
     function toggleStatusFilter(button) {
         const status = button.dataset.status;
         if (status === 'ok') {
-            if (activeStatusFilters.size === 4) {
+            if (activeStatusFilters.size === MONITOR_STATUS_KEYS.length) {
                 activeStatusFilters.clear();
             } else {
                 activeStatusFilters.clear();
-                ['ended', 'expired', 'low', 'soon'].forEach((s) => activeStatusFilters.add(s));
+                MONITOR_STATUS_KEYS.forEach((s) => activeStatusFilters.add(s));
             }
             updateStatusChips();
             renderAlerts();
@@ -343,25 +345,28 @@
 
     function updateStatusChips() {
         const statusChips = document.querySelectorAll('.monitor-status-filters .chip');
-        const allActive = ['ended', 'expired', 'low', 'soon'].every((s) => activeStatusFilters.has(s));
+        const allActive = MONITOR_STATUS_KEYS.every((s) => activeStatusFilters.has(s));
+        const statusCounts = getStatusCounts(getBaseFilteredAlerts());
 
         statusChips.forEach((chip) => {
+            const status = chip.dataset.status;
+            const label = chip.dataset.label || chip.textContent || '';
+
             if (chip.dataset.status === 'ok') {
                 chip.classList.toggle('active', allActive);
+                chip.textContent = `${label} (${statusCounts.all})`;
             } else {
-                chip.classList.toggle('active', activeStatusFilters.has(chip.dataset.status));
+                chip.classList.toggle('active', activeStatusFilters.has(status));
+                chip.textContent = `${label} (${statusCounts[status] || 0})`;
             }
         });
     }
 
-    function renderAlerts() {
-        const list = document.getElementById('monitor-list');
-        list.textContent = '';
-
+    function getBaseFilteredAlerts() {
         const search = (document.getElementById('monitor-search').value || '').trim().toLowerCase();
         const serverFilter = document.getElementById('monitor-server-filter').value || 'all';
 
-        const filtered = allAlerts.filter((alert) => {
+        return allAlerts.filter((alert) => {
             if (serverFilter !== 'all' && String(alert.server_id) !== serverFilter) {
                 return false;
             }
@@ -372,11 +377,41 @@
                     return false;
                 }
             }
+            return true;
+        });
+    }
+
+    function getStatusCounts(alerts) {
+        const counts = { all: alerts.length, ended: 0, expired: 0, low: 0, soon: 0 };
+        alerts.forEach((alert) => {
+            const status = String(alert.status || '').toLowerCase();
+            if (Object.prototype.hasOwnProperty.call(counts, status)) {
+                counts[status] += 1;
+            }
+        });
+        return counts;
+    }
+
+    function updateSelectedSummary(count) {
+        const summary = document.getElementById('monitor-selected-summary');
+        if (!summary) return;
+        summary.textContent = `Selected users: ${count}`;
+    }
+
+    function renderAlerts() {
+        const list = document.getElementById('monitor-list');
+        list.textContent = '';
+
+        const baseFiltered = getBaseFilteredAlerts();
+        const filtered = baseFiltered.filter((alert) => {
             if (activeStatusFilters.size && !activeStatusFilters.has(alert.status)) {
                 return false;
             }
             return true;
         });
+
+        updateStatusChips();
+        updateSelectedSummary(filtered.length);
 
         if (!filtered.length) {
             const empty = document.createElement('div');
