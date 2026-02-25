@@ -268,9 +268,16 @@ body {
 
 .monitor-toolbar {
     display: grid;
-    grid-template-columns: 180px minmax(0, 1fr) auto;
+    grid-template-columns: 180px minmax(0, 1fr);
     gap: 12px;
     align-items: end;
+}
+
+.monitor-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
 }
 
 .monitor-toolbar .search-wrapper {
@@ -793,6 +800,11 @@ body {
     .monitor-toolbar {
         grid-template-columns: 1fr;
         align-items: stretch;
+    }
+
+    .monitor-filter-row {
+        flex-direction: column;
+        align-items: flex-start;
     }
 
     .monitor-status-filters {
