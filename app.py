@@ -1292,20 +1292,17 @@ def add_security_headers(response):
     # Debug endpoint
     # print(f"DEBUG: endpoint={getattr(request, 'endpoint', '')}", flush=True)
 
-    # The public subscription page uses local compiled CSS (no Tailwind CDN runtime),
-    # so we can keep a nonce-based style-src everywhere.
-    style_src = f"style-src 'self' 'nonce-{nonce}'"
-
-    style_src += " https://fonts.googleapis.com https://cdn.quilljs.com; "
+    # All assets (fonts, JS libs, CSS) are now served locally – no CDN origins needed.
+    style_src = f"style-src 'self' 'nonce-{nonce}'; "
     response.headers.setdefault(
         'Content-Security-Policy',
         (
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
             "img-src 'self' data:; "
-            "font-src 'self' data: https://fonts.gstatic.com; "
+            "font-src 'self' data:; "
             f"{style_src}"
             "style-src-attr 'unsafe-inline'; "
-            f"script-src 'self' 'nonce-{nonce}' https://code.jquery.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
+            f"script-src 'self' 'nonce-{nonce}'; "
             "script-src-attr 'unsafe-inline'; "
             "connect-src 'self'"
         )

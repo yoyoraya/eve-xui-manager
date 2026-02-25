@@ -904,7 +904,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/persian-date@latest/dist/persian-date.min.js"></script>
+<script src="{{ url_for('static', filename='persian-date.min.js') }}"></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='jalalidatepicker.min.css') }}">
 <script src="{{ url_for('static', filename='jalalidatepicker.min.js') }}"></script>
 

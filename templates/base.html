@@ -16,9 +16,9 @@
             }
         })();
     </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='fonts/fonts.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="{{ url_for('static', filename='jquery-3.6.0.min.js') }}"></script>
     <script nonce="{{ csp_nonce }}">
         function formatNumberInput(input) {
             let value = input.value.replace(/,/g, '').replace(/\D/g, '');
