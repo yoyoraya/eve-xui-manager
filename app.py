@@ -5018,6 +5018,8 @@ def get_monitor_alerts():
 
     allowed_map, assignments = ('*', {})
     owned_emails_by_server = defaultdict(set)
+    reseller_owned_email_pairs = set()
+    reseller_owned_uuid_pairs = set()
     if user and user.role == 'reseller':
         allowed_map, assignments = get_reseller_access_maps(user)
         ownerships = ClientOwnership.query.filter_by(reseller_id=user.id).all()
@@ -5029,6 +5031,30 @@ def get_monitor_alerts():
             email_l = (own.client_email or '').strip().lower()
             if email_l:
                 owned_emails_by_server[sid].add(email_l)
+    elif user:
+        server_ids = set()
+        for inbound in inbounds:
+            try:
+                sid = int(inbound.get('server_id'))
+            except Exception:
+                continue
+            server_ids.add(sid)
+
+        if server_ids:
+            ownerships = ClientOwnership.query.filter(ClientOwnership.server_id.in_(list(server_ids))).all()
+            for own in ownerships:
+                try:
+                    sid = int(own.server_id)
+                except Exception:
+                    continue
+
+                email_l = (own.client_email or '').strip().lower()
+                if email_l:
+                    reseller_owned_email_pairs.add((sid, email_l))
+
+                client_uuid_l = str(own.client_uuid or '').strip().lower()
+                if client_uuid_l:
+                    reseller_owned_uuid_pairs.add((sid, client_uuid_l))
 
     status_labels = {
         'ended': 'Ended',
@@ -5061,13 +5087,24 @@ def get_monitor_alerts():
         for client in (inbound.get('clients') or []):
             email = (client.get('email') or '').strip()
             email_l = email.lower()
+            client_uuid_l = str(client.get('id') or '').strip().lower()
+
+            try:
+                sid_norm = int(sid)
+            except Exception:
+                sid_norm = None
+
+            is_reseller_owned = False
+            if sid_norm is not None:
+                if (sid_norm, email_l) in reseller_owned_email_pairs:
+                    is_reseller_owned = True
+                elif client_uuid_l and (sid_norm, client_uuid_l) in reseller_owned_uuid_pairs:
+                    is_reseller_owned = True
 
             if user and user.role == 'reseller':
                 if not owned_emails_by_server:
                     continue
-                try:
-                    sid_norm = int(sid)
-                except Exception:
+                if sid_norm is None:
                     continue
                 if email_l not in owned_emails_by_server.get(sid_norm, set()):
                     continue
@@ -5150,7 +5187,8 @@ def get_monitor_alerts():
                 'remaining': client.get('remaining_formatted') or 'Unlimited',
                 'time_left': expiry_info.get('text'),
                 'expiry_date': expiry_date,
-                'enabled': enabled
+                'enabled': enabled,
+                'is_reseller_owned': is_reseller_owned,
             })
 
     alerts.sort(key=lambda row: (
