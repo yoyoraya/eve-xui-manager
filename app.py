@@ -83,7 +83,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "1.8.2"
+APP_VERSION = "1.8.3"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -1292,7 +1292,13 @@ def add_security_headers(response):
     # Debug endpoint
     # print(f"DEBUG: endpoint={getattr(request, 'endpoint', '')}", flush=True)
 
-    # All assets (fonts, JS libs, CSS) are now served locally – no CDN origins needed.
+    # All assets are local by default. Subscription page can optionally allow external
+    # online-chat widget domains when an active chat script is configured.
+    allow_external_chat = bool(getattr(g, 'allow_external_chat_widget', False))
+    script_src_extra = " https:" if allow_external_chat else ""
+    connect_src_extra = " https: wss:" if allow_external_chat else ""
+    frame_src_part = "frame-src 'self' https:; " if allow_external_chat else ""
+
     style_src = f"style-src 'self' 'nonce-{nonce}'; "
     response.headers.setdefault(
         'Content-Security-Policy',
@@ -1300,11 +1306,12 @@ def add_security_headers(response):
             "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; "
             "img-src 'self' data:; "
             "font-src 'self' data:; "
+            f"{frame_src_part}"
             f"{style_src}"
             "style-src-attr 'unsafe-inline'; "
-            f"script-src 'self' 'nonce-{nonce}'; "
+            f"script-src 'self' 'nonce-{nonce}'{script_src_extra}; "
             "script-src-attr 'unsafe-inline'; "
-            "connect-src 'self'"
+            f"connect-src 'self'{connect_src_extra}"
         )
     )
     return response
@@ -2192,6 +2199,32 @@ class Announcement(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'created_at_jalali': format_jalali(self.created_at) if self.created_at else None,
             'is_active': is_active,
+        }
+
+
+class OnlineChatScript(db.Model):
+    __tablename__ = 'online_chat_scripts'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    script_code = db.Column(db.Text, nullable=False)
+    is_active = db.Column(db.Boolean, default=False)
+    created_by = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        preview = (self.script_code or '').strip().replace('\n', ' ')
+        if len(preview) > 160:
+            preview = preview[:160] + '...'
+        return {
+            'id': self.id,
+            'name': self.name,
+            'script_code': self.script_code,
+            'preview': preview,
+            'is_active': bool(self.is_active),
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -10169,6 +10202,21 @@ def client_subscription(server_id, sub_id):
     except Exception:
         announcements_payload = []
 
+    # Active Online Chat snippet for subscription page
+    active_online_chat_script = ''
+    try:
+        active_chat = OnlineChatScript.query.filter_by(is_active=True).order_by(OnlineChatScript.id.desc()).first()
+        if active_chat and active_chat.script_code:
+            nonce = getattr(g, 'csp_nonce', '') or ''
+            snippet = (active_chat.script_code or '').strip()
+            if nonce and snippet:
+                snippet = re.sub(r'<script(?![^>]*\bnonce=)', f'<script nonce="{nonce}"', snippet, flags=re.IGNORECASE)
+            active_online_chat_script = snippet
+            if active_online_chat_script:
+                g.allow_external_chat_widget = True
+    except Exception:
+        active_online_chat_script = ''
+
     return render_template(
         'subscription.html',
         client=client_payload,
@@ -10177,6 +10225,7 @@ def client_subscription(server_id, sub_id):
         support=support_info,
         channels=channels_info,
         announcements=announcements_payload,
+        active_online_chat_script=active_online_chat_script,
         page_lang=page_lang,
     )
 
@@ -10639,6 +10688,119 @@ def delete_announcement(announcement_id):
         db.session.delete(ann)
         db.session.commit()
         return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Online Chat Scripts APIs (Sub Manager)
+def _parse_online_chat_payload(data: dict) -> tuple[dict | None, str | None]:
+    if not data:
+        return None, 'No data provided'
+
+    name = (data.get('name') or '').strip()
+    script_code = (data.get('script_code') or '').strip()
+
+    if not name:
+        return None, 'Name is required'
+    if not script_code:
+        return None, 'Script code is required'
+    if len(name) > 120:
+        return None, 'Name is too long'
+    if len(script_code) > 50000:
+        return None, 'Script code is too long'
+
+    return {
+        'name': name,
+        'script_code': script_code,
+    }, None
+
+
+@app.route('/api/online-chat-scripts', methods=['GET'])
+@superadmin_required
+def get_online_chat_scripts():
+    items = OnlineChatScript.query.order_by(OnlineChatScript.created_at.desc()).all()
+    return jsonify([item.to_dict() for item in items])
+
+
+@app.route('/api/online-chat-scripts', methods=['POST'])
+@superadmin_required
+def create_online_chat_script():
+    data = request.get_json() or {}
+    payload, err = _parse_online_chat_payload(data)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    user = db.session.get(Admin, session.get('admin_id')) if session.get('admin_id') else None
+    created_by = (getattr(user, 'username', None) or session.get('admin_username') or '').strip() or None
+
+    item = OnlineChatScript(
+        name=sanitize_html(payload['name']),
+        script_code=payload['script_code'],
+        is_active=False,
+        created_by=created_by,
+    )
+
+    try:
+        db.session.add(item)
+        db.session.commit()
+        return jsonify({'success': True, 'item': item.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/online-chat-scripts/<int:item_id>', methods=['PUT'])
+@superadmin_required
+def update_online_chat_script(item_id):
+    item = db.session.get(OnlineChatScript, item_id)
+    if not item:
+        return jsonify({'success': False, 'error': 'Script not found'}), 404
+
+    data = request.get_json() or {}
+    payload, err = _parse_online_chat_payload(data)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    item.name = sanitize_html(payload['name'])
+    item.script_code = payload['script_code']
+
+    try:
+        db.session.commit()
+        return jsonify({'success': True, 'item': item.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/online-chat-scripts/<int:item_id>', methods=['DELETE'])
+@superadmin_required
+def delete_online_chat_script(item_id):
+    item = db.session.get(OnlineChatScript, item_id)
+    if not item:
+        return jsonify({'success': False, 'error': 'Script not found'}), 404
+
+    try:
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/online-chat-scripts/<int:item_id>/activate', methods=['POST'])
+@superadmin_required
+def activate_online_chat_script(item_id):
+    item = db.session.get(OnlineChatScript, item_id)
+    if not item:
+        return jsonify({'success': False, 'error': 'Script not found'}), 404
+
+    try:
+        OnlineChatScript.query.update({OnlineChatScript.is_active: False})
+        item.is_active = True
+        db.session.commit()
+        return jsonify({'success': True, 'item': item.to_dict()})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500

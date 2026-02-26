@@ -38,6 +38,9 @@
             scrollbar-width: none;  /* Firefox */
         }
     </style>
+    {% if active_online_chat_script %}
+    {{ active_online_chat_script | safe }}
+    {% endif %}
 </head>
 <body class="min-h-screen flex justify-center items-start pt-10 pb-10 px-4 bg-bg font-sans">
 

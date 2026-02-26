@@ -3177,6 +3177,18 @@ html[data-theme="light"] .server-icon {
     padding: 3px 8px;
 }
 
+.server-badges .badge.active {
+    background: rgba(34, 197, 94, 0.18);
+    color: #86efac;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.server-badges .badge.inactive {
+    background: rgba(239, 68, 68, 0.16);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
 .server-badges .badge.panel-type {
     background: rgba(59, 130, 246, 0.2);
     color: #60a5fa;

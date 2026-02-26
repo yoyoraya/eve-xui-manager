@@ -25,6 +25,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v11a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z"/><path d="M8 22h8"/><path d="M12 15v-3"/><path d="M12 6h.01"/></svg>
             Announcement
         </button>
+        <button class="settings-tab" onclick="switchTab('online_chat')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Online Chat
+        </button>
     </div>
 
     <div class="settings-content">
@@ -231,6 +235,22 @@
                     </button>
                 </div>
                 <div id="announcements-container" class="servers-grid"></div>
+            </div>
+        </div>
+
+        <div id="tab-online_chat" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Online Chat Scripts</h2>
+                        <p class="text-secondary">Add/edit chat widget snippets. Activate one script to load on subscription page.</p>
+                    </div>
+                    <button class="btn btn-success" onclick="openAddOnlineChatModal()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Chat Script
+                    </button>
+                </div>
+                <div id="online-chat-container" class="servers-grid"></div>
             </div>
         </div>
     </div>
@@ -922,6 +942,34 @@
     </div>
 </div>
 
+<div class="modal-overlay hidden" id="online-chat-modal">
+    <div class="modal" style="max-width: 760px;">
+        <div class="modal-header">
+            <h2 id="online-chat-modal-title">Add Online Chat Script</h2>
+            <button class="modal-close" onclick="closeOnlineChatModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="online-chat-id">
+
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="online-chat-name" class="form-input" placeholder="e.g., Raychat - Main Widget">
+            </div>
+
+            <div class="form-group">
+                <label>Embed Code</label>
+                <textarea id="online-chat-code" class="form-input" rows="10" placeholder="Paste full chat widget snippet here (script/iframe/etc)"></textarea>
+                <small style="color: var(--text-secondary);">Active script is injected before &lt;/head&gt; in subscription page.</small>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn btn-secondary" onclick="closeOnlineChatModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveOnlineChatScript()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Quill JS -->
 <script src="{{ url_for('static', filename='quill.js') }}"></script>
 {% endblock %}
@@ -1125,6 +1173,10 @@
 
         if (tabName === 'announcements') {
             loadAnnouncements();
+        }
+
+        if (tabName === 'online_chat') {
+            loadOnlineChatScripts();
         }
     }
 
@@ -1682,6 +1734,152 @@
             }
         } catch (e) {
             showToast('Error deleting announcement', 'error');
+        }
+    }
+
+    // Online Chat Scripts Logic
+    let onlineChatScripts = [];
+
+    async function loadOnlineChatScripts() {
+        try {
+            const response = await fetch('/api/online-chat-scripts');
+            onlineChatScripts = await response.json();
+            renderOnlineChatScripts();
+        } catch (error) {
+            showToast('Error loading online chat scripts', 'error');
+        }
+    }
+
+    function renderOnlineChatScripts() {
+        const container = document.getElementById('online-chat-container');
+        if (!container) return;
+
+        if (!onlineChatScripts || onlineChatScripts.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No online chat scripts defined</p></div>';
+            return;
+        }
+
+        container.innerHTML = onlineChatScripts.map(item => `
+            <div class="server-card ${!item.is_active ? 'disabled' : ''}">
+                <div class="server-header">
+                    <div class="server-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    </div>
+                    <div class="server-title">
+                        <h3>${escapeHtml(item.name || 'Chat Script')}</h3>
+                        <p class="server-url" style="margin-top: 2px;">${escapeHtml(item.preview || '')}</p>
+                    </div>
+                </div>
+
+                <div class="server-badges" style="flex-wrap: wrap;">
+                    <span class="badge ${item.is_active ? 'active' : 'inactive'}">${item.is_active ? 'Active' : 'Inactive'}</span>
+                </div>
+
+                <div style="margin-top: 10px; color: var(--text-secondary); font-size: 0.8rem;">
+                    <div>Created: ${escapeHtml(item.created_at ? new Date(item.created_at).toLocaleString('fa-IR') : '')} • By: ${escapeHtml(item.created_by || 'unknown')}</div>
+                </div>
+
+                <div class="server-actions" style="gap: 8px; flex-wrap: wrap;">
+                    ${item.is_active
+                        ? '<button class="btn btn-success" style="padding: 6px 10px;" disabled>Active</button>'
+                        : `<button class="btn btn-primary" style="padding: 6px 10px;" onclick="activateOnlineChatScript(${item.id})">Activate</button>`
+                    }
+                    <button class="action-btn" onclick="openEditOnlineChatModal(${item.id})" title="Edit">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    </button>
+                    <button class="action-btn danger" onclick="deleteOnlineChatScript(${item.id})" title="Delete">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function closeOnlineChatModal() {
+        document.getElementById('online-chat-modal').classList.add('hidden');
+    }
+
+    function openAddOnlineChatModal() {
+        document.getElementById('online-chat-id').value = '';
+        document.getElementById('online-chat-modal-title').textContent = 'Add Online Chat Script';
+        document.getElementById('online-chat-name').value = '';
+        document.getElementById('online-chat-code').value = '';
+        document.getElementById('online-chat-modal').classList.remove('hidden');
+    }
+
+    function openEditOnlineChatModal(id) {
+        const item = (onlineChatScripts || []).find(x => x.id === id);
+        if (!item) return;
+        document.getElementById('online-chat-id').value = String(item.id);
+        document.getElementById('online-chat-modal-title').textContent = 'Edit Online Chat Script';
+        document.getElementById('online-chat-name').value = item.name || '';
+        document.getElementById('online-chat-code').value = item.script_code || '';
+        document.getElementById('online-chat-modal').classList.remove('hidden');
+    }
+
+    async function saveOnlineChatScript() {
+        const id = (document.getElementById('online-chat-id').value || '').trim();
+        const name = (document.getElementById('online-chat-name').value || '').trim();
+        const script_code = (document.getElementById('online-chat-code').value || '').trim();
+
+        if (!name) {
+            showToast('Name is required', 'error');
+            return;
+        }
+        if (!script_code) {
+            showToast('Script code is required', 'error');
+            return;
+        }
+
+        try {
+            const url = id ? `/api/online-chat-scripts/${id}` : '/api/online-chat-scripts';
+            const method = id ? 'PUT' : 'POST';
+            const resp = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, script_code })
+            });
+            const result = await resp.json();
+            if (result.success) {
+                showToast(id ? 'Online chat script updated' : 'Online chat script created');
+                closeOnlineChatModal();
+                loadOnlineChatScripts();
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown'), 'error');
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+        }
+    }
+
+    async function activateOnlineChatScript(id) {
+        try {
+            const resp = await fetch(`/api/online-chat-scripts/${id}/activate`, { method: 'POST' });
+            const result = await resp.json();
+            if (result.success) {
+                showToast('Online chat script activated');
+                loadOnlineChatScripts();
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown'), 'error');
+            }
+        } catch (e) {
+            showToast('Error activating script', 'error');
+        }
+    }
+
+    async function deleteOnlineChatScript(id) {
+        if (!confirm('Are you sure you want to delete this online chat script?')) return;
+        try {
+            const resp = await fetch(`/api/online-chat-scripts/${id}`, { method: 'DELETE' });
+            const result = await resp.json();
+            if (result.success) {
+                showToast('Online chat script deleted');
+                loadOnlineChatScripts();
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown'), 'error');
+            }
+        } catch (e) {
+            showToast('Error deleting script', 'error');
         }
     }
 
