@@ -2239,6 +2239,41 @@ class SystemSetting(db.Model):
     value = db.Column(db.Text)
 
 
+class UsageSnapshot(db.Model):
+    """Hourly usage snapshot per subscription. No personal data stored."""
+    __tablename__ = 'usage_snapshots'
+    id = db.Column(db.Integer, primary_key=True)
+    server_id = db.Column(db.Integer, db.ForeignKey('servers.id', ondelete='CASCADE'), nullable=False, index=True)
+    sub_id = db.Column(db.String(128), nullable=False, index=True)
+    recorded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    upload_bytes = db.Column(db.BigInteger, nullable=False, default=0)
+    download_bytes = db.Column(db.BigInteger, nullable=False, default=0)
+    total_bytes = db.Column(db.BigInteger, nullable=False, default=0)
+    remaining_bytes = db.Column(db.BigInteger, nullable=True)
+    volume_limit_bytes = db.Column(db.BigInteger, nullable=True)
+
+    __table_args__ = (
+        db.Index('ix_usage_snapshots_server_sub', 'server_id', 'sub_id'),
+    )
+
+
+class RenewalEvent(db.Model):
+    """Detected renewal event for a subscription."""
+    __tablename__ = 'renewal_events'
+    id = db.Column(db.Integer, primary_key=True)
+    server_id = db.Column(db.Integer, db.ForeignKey('servers.id', ondelete='CASCADE'), nullable=False, index=True)
+    sub_id = db.Column(db.String(128), nullable=False, index=True)
+    renewed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    volume_bytes = db.Column(db.BigInteger, nullable=True)
+    days = db.Column(db.Integer, nullable=True)
+    is_unlimited_volume = db.Column(db.Boolean, default=False)
+    is_unlimited_time = db.Column(db.Boolean, default=False)
+
+    __table_args__ = (
+        db.Index('ix_renewal_events_server_sub', 'server_id', 'sub_id'),
+    )
+
+
 RENEW_TEMPLATE_SETTING_KEY = 'renew_template'
 DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nتمدید شد"""
 
@@ -3235,6 +3270,20 @@ with app.app_context():
     except Exception as e:
         print(f"Migration error (announcements.targets): {e}")
     
+    # Auto-detect SSL paths at startup if DB is empty (handles case where setup.sh ran but Flask hadn't started)
+    try:
+        _c = db.session.get(SystemSetting, 'ssl_cert_path')
+        _k = db.session.get(SystemSetting, 'ssl_key_path')
+        if not (_c and _c.value) and not (_k and _k.value):
+            _det_cert, _det_key = _autodetect_ssl_paths()
+            if _det_cert and _det_key:
+                db.session.merge(SystemSetting(key='ssl_cert_path', value=_det_cert))
+                db.session.merge(SystemSetting(key='ssl_key_path', value=_det_key))
+                db.session.commit()
+                print(f"[startup] Auto-detected SSL paths: {_det_cert}")
+    except Exception as _ssl_e:
+        print(f"[startup] SSL auto-detect error: {_ssl_e}")
+
     # Initialize PanelAPI data
     if not PanelAPI.query.first():
         panel_apis = [
@@ -9701,6 +9750,65 @@ def get_finance_overview():
     })
 
 
+@app.route('/sub/history/<int:server_id>/<sub_id>')
+def sub_usage_history(server_id, sub_id):
+    """Return usage snapshots + renewal events for a subscription (identified by sub_id token)."""
+    normalized_sub_id = str(sub_id or '').strip()
+    if not normalized_sub_id or any(c in normalized_sub_id for c in ('/', '\\', '?', '#', '@', ':')):
+        return jsonify({'success': False, 'error': 'Invalid subscription ID'}), 400
+
+    server = db.session.get(Server, server_id)
+    if not server:
+        return jsonify({'success': False, 'error': 'Server not found'}), 404
+
+    limit = min(int(request.args.get('limit', 168)), 720)  # default 7 days, max 30 days of hourly records
+
+    snapshots = (UsageSnapshot.query
+                 .filter_by(server_id=server_id, sub_id=normalized_sub_id)
+                 .order_by(UsageSnapshot.recorded_at.asc())
+                 .limit(limit)
+                 .all())
+
+    renewals = (RenewalEvent.query
+                .filter_by(server_id=server_id, sub_id=normalized_sub_id)
+                .order_by(RenewalEvent.renewed_at.desc())
+                .limit(50)
+                .all())
+
+    # Build hourly delta rows from consecutive snapshots
+    history_rows = []
+    for i, snap in enumerate(snapshots):
+        if i == 0:
+            continue  # skip first; can't compute delta without prior point
+        prev = snapshots[i - 1]
+        delta_upload = max(snap.upload_bytes - prev.upload_bytes, 0)
+        delta_download = max(snap.download_bytes - prev.download_bytes, 0)
+        delta_total = delta_upload + delta_download
+        history_rows.append({
+            'recorded_at': snap.recorded_at.isoformat() + 'Z',
+            'delta_upload': delta_upload,
+            'delta_download': delta_download,
+            'delta_total': delta_total,
+            'cumulative_total': snap.total_bytes,
+            'remaining': snap.remaining_bytes,
+            'volume_limit': snap.volume_limit_bytes,
+        })
+
+    renewal_rows = [{
+        'renewed_at': r.renewed_at.isoformat() + 'Z',
+        'volume_bytes': r.volume_bytes,
+        'days': r.days,
+        'is_unlimited_volume': r.is_unlimited_volume,
+        'is_unlimited_time': r.is_unlimited_time,
+    } for r in renewals]
+
+    return jsonify({
+        'success': True,
+        'history': history_rows,
+        'renewals': renewal_rows,
+    })
+
+
 @app.route('/s/<int:server_id>/<sub_id>')
 def client_subscription(server_id, sub_id):
     server = db.session.get(Server, server_id)
@@ -10327,6 +10435,8 @@ def client_subscription(server_id, sub_id):
         announcements=announcements_payload,
         active_online_chat_script=active_online_chat_script,
         page_lang=page_lang,
+        server_id=server_id,
+        sub_id=normalized_sub_id,
     )
 
 @app.route('/sub-manager')
@@ -12704,6 +12814,120 @@ def health_watchdog():
                     pass
 
 
+_USAGE_SNAPSHOT_INTERVAL = 3600  # seconds between snapshots
+_USAGE_SNAPSHOT_RETENTION_DAYS = 90  # keep 90 days of history
+
+
+def _take_usage_snapshots():
+    """Read GLOBAL_SERVER_DATA and save one UsageSnapshot per active client per server."""
+    try:
+        inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+        if not inbounds:
+            return
+        now = datetime.utcnow()
+        new_snapshots = []
+        renewals = []
+        for inbound in inbounds:
+            server_id = inbound.get('server_id')
+            if not server_id:
+                continue
+            for client in inbound.get('clients', []):
+                sub_id = str(client.get('subId') or '').strip()
+                if not sub_id:
+                    sub_id = str(client.get('id') or '').strip()
+                if not sub_id:
+                    continue
+
+                up = int(client.get('up') or 0)
+                down = int(client.get('down') or 0)
+                total_used = up + down
+                try:
+                    vol_limit_gb = float(client.get('totalGB') or 0)
+                except Exception:
+                    vol_limit_gb = 0
+                volume_limit_bytes = int(vol_limit_gb * 1024 * 1024 * 1024) if vol_limit_gb > 0 else None
+                remaining_bytes = max(volume_limit_bytes - total_used, 0) if volume_limit_bytes else None
+
+                # Renewal detection: compare with the most recent snapshot
+                prev = (UsageSnapshot.query
+                        .filter_by(server_id=server_id, sub_id=sub_id)
+                        .order_by(UsageSnapshot.recorded_at.desc())
+                        .first())
+
+                if prev:
+                    prev_total = prev.total_bytes
+                    prev_limit = prev.volume_limit_bytes or 0
+                    # Traffic reset (current total_used < previous) = quota refill / renewal
+                    if total_used < prev_total and prev_total > 0:
+                        try:
+                            expiry_ts = int(client.get('expiryTimestamp') or client.get('expiryTime') or 0)
+                            days = None
+                            is_unlimited_time = False
+                            if expiry_ts and expiry_ts > 0:
+                                expiry_dt = datetime.utcfromtimestamp(expiry_ts / 1000)
+                                delta_days = (expiry_dt - now).days
+                                days = max(delta_days, 0)
+                            else:
+                                is_unlimited_time = True
+                            renewals.append(RenewalEvent(
+                                server_id=server_id,
+                                sub_id=sub_id,
+                                renewed_at=now,
+                                volume_bytes=volume_limit_bytes,
+                                days=days,
+                                is_unlimited_volume=(volume_limit_bytes is None),
+                                is_unlimited_time=is_unlimited_time,
+                            ))
+                        except Exception:
+                            pass
+
+                new_snapshots.append(UsageSnapshot(
+                    server_id=server_id,
+                    sub_id=sub_id,
+                    recorded_at=now,
+                    upload_bytes=up,
+                    download_bytes=down,
+                    total_bytes=total_used,
+                    remaining_bytes=remaining_bytes,
+                    volume_limit_bytes=volume_limit_bytes,
+                ))
+
+        if new_snapshots:
+            db.session.bulk_save_objects(new_snapshots)
+        if renewals:
+            db.session.bulk_save_objects(renewals)
+        if new_snapshots or renewals:
+            db.session.commit()
+
+        # Prune old snapshots
+        cutoff = now - timedelta(days=_USAGE_SNAPSHOT_RETENTION_DAYS)
+        deleted = UsageSnapshot.query.filter(UsageSnapshot.recorded_at < cutoff).delete()
+        if deleted:
+            db.session.commit()
+    except Exception as exc:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        print(f"[UsageSnapshot] Error: {exc}")
+
+
+def usage_snapshot_worker():
+    """Background daemon: takes hourly usage snapshots."""
+    with app.app_context():
+        print(f"[UsageSnapshot] Worker started, interval={_USAGE_SNAPSHOT_INTERVAL}s")
+        while True:
+            try:
+                time.sleep(_USAGE_SNAPSHOT_INTERVAL)
+                _take_usage_snapshots()
+            except Exception as exc:
+                print(f"[UsageSnapshot] Worker error: {exc}")
+                try:
+                    time.sleep(60)
+                except Exception:
+                    pass
+
+
 def ensure_background_threads_started():
     """Start background threads (scheduler + fetcher + watchdog) once per process."""
     global BACKGROUND_THREADS_STARTED
@@ -12729,6 +12953,12 @@ def ensure_background_threads_started():
         watchdog_thread.start()
     except Exception as e:
         print(f"Failed to start health watchdog thread: {e}")
+
+    try:
+        snapshot_thread = threading.Thread(target=usage_snapshot_worker, daemon=True)
+        snapshot_thread.start()
+    except Exception as e:
+        print(f"Failed to start usage snapshot thread: {e}")
 
 if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
     # Start threads on module import (works under gunicorn as well)

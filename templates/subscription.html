@@ -244,6 +244,39 @@
             <div id="app-content-container"></div>
         </div>
 
+        <!-- Usage History Section -->
+        <div id="usage-history-card" class="bg-card rounded-lg border border-border p-6 shadow-lg transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]" style="display:none;">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2 text-primary font-semibold">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                    {{ 'تاریخچه مصرف' if is_fa else 'Usage History' }}
+                </div>
+                <span id="history-loading" class="text-xs text-muted">{{ 'در حال بارگزاری...' if is_fa else 'Loading...' }}</span>
+            </div>
+
+            <!-- Renewal Events -->
+            <div id="renewal-events-container" class="mb-4 space-y-2 hidden"></div>
+
+            <!-- Hourly table -->
+            <div id="history-table-container" class="hidden">
+                <div class="overflow-x-auto rounded-xl border border-white/5">
+                    <table class="w-full text-xs text-left">
+                        <thead>
+                            <tr class="border-b border-white/10 bg-white/5 text-muted uppercase tracking-wider">
+                                <th class="px-3 py-2">{{ 'زمان' if is_fa else 'Time' }}</th>
+                                <th class="px-3 py-2 text-right">{{ 'دانلود' if is_fa else 'Download' }}</th>
+                                <th class="px-3 py-2 text-right">{{ 'آپلود' if is_fa else 'Upload' }}</th>
+                                <th class="px-3 py-2 text-right">{{ 'مصرف' if is_fa else 'Used' }}</th>
+                                <th class="px-3 py-2 text-right">{{ 'مانده' if is_fa else 'Left' }}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-tbody" class="divide-y divide-white/5"></tbody>
+                    </table>
+                </div>
+                <p id="history-empty" class="hidden text-center text-muted py-4 text-xs">{{ 'هنوز داده‌ای ثبت نشده.' if is_fa else 'No history recorded yet. Data appears after the first hourly snapshot.' }}</p>
+            </div>
+        </div>
+
         <!-- FAQ Section -->
         <div class="bg-card rounded-lg border border-border p-6 shadow-lg transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
             <div class="flex items-center gap-2 mb-4 text-white font-semibold">
@@ -349,6 +382,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             renderApps('android');
             renderFAQs();
+            loadUsageHistory();
         });
 
         function initializeTabs() {
@@ -541,7 +575,7 @@
         function toggleFAQ(id) {
             const content = document.getElementById(`faq-content-${id}`);
             const icon = document.getElementById(`faq-icon-${id}`);
-            
+
             if (content.classList.contains('hidden')) {
                 content.classList.remove('hidden');
                 icon.style.transform = 'rotate(180deg)';
@@ -550,6 +584,96 @@
                 icon.style.transform = 'rotate(0deg)';
             }
         }
+
+        // ── Usage History ──────────────────────────────────────────────
+        const HISTORY_SERVER_ID = {{ server_id | tojson }};
+        const HISTORY_SUB_ID = {{ sub_id | tojson }};
+
+        function fmtBytes(b) {
+            if (b == null) return '—';
+            if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+            if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+            if (b >= 1024) return (b / 1024).toFixed(0) + ' KB';
+            return b + ' B';
+        }
+
+        function fmtDatetime(isoStr) {
+            if (!isoStr) return '—';
+            const d = new Date(isoStr);
+            if (isNaN(d)) return isoStr;
+            return d.toLocaleString(IS_FA ? 'fa-IR' : 'en-GB', {
+                month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false
+            });
+        }
+
+        async function loadUsageHistory() {
+            const card = document.getElementById('usage-history-card');
+            const loadingEl = document.getElementById('history-loading');
+            const tableContainer = document.getElementById('history-table-container');
+            const tbody = document.getElementById('history-tbody');
+            const emptyEl = document.getElementById('history-empty');
+            const renewalContainer = document.getElementById('renewal-events-container');
+
+            card.style.display = '';
+            try {
+                const resp = await fetch(`/sub/history/${HISTORY_SERVER_ID}/${encodeURIComponent(HISTORY_SUB_ID)}`);
+                const data = await resp.json();
+                loadingEl.style.display = 'none';
+                tableContainer.classList.remove('hidden');
+
+                if (!data.success) {
+                    emptyEl.textContent = IS_FA ? 'خطا در بارگزاری.' : 'Failed to load history.';
+                    emptyEl.classList.remove('hidden');
+                    return;
+                }
+
+                // Renewal events
+                if (data.renewals && data.renewals.length > 0) {
+                    renewalContainer.classList.remove('hidden');
+                    renewalContainer.innerHTML = data.renewals.map(r => {
+                        const volText = r.is_unlimited_volume
+                            ? (IS_FA ? 'نامحدود' : 'Unlimited')
+                            : fmtBytes(r.volume_bytes);
+                        const timeText = r.is_unlimited_time
+                            ? (IS_FA ? 'نامحدود' : 'Unlimited')
+                            : (r.days != null ? (IS_FA ? `${r.days} روز` : `${r.days} days`) : '—');
+                        return `<div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-success/10 border border-success/20 text-sm">
+                            <svg class="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            <div>
+                                <div class="font-semibold text-success">${IS_FA ? 'تمدید شد' : 'Renewed'} — ${fmtDatetime(r.renewed_at)}</div>
+                                <div class="text-xs text-muted mt-0.5">${IS_FA ? 'حجم' : 'Volume'}: ${volText} &nbsp;·&nbsp; ${IS_FA ? 'مدت' : 'Duration'}: ${timeText}</div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+
+                // History rows (most recent first for display)
+                const rows = [...(data.history || [])].reverse();
+                if (rows.length === 0) {
+                    emptyEl.classList.remove('hidden');
+                    return;
+                }
+
+                tbody.innerHTML = rows.map(row => {
+                    const leftColor = (row.remaining != null && row.volume_limit && row.remaining / row.volume_limit < 0.1)
+                        ? 'text-red-400' : 'text-success';
+                    return `<tr class="hover:bg-white/5 transition-colors">
+                        <td class="px-3 py-2 text-muted whitespace-nowrap">${fmtDatetime(row.recorded_at)}</td>
+                        <td class="px-3 py-2 text-right text-blue-400">${fmtBytes(row.delta_download)}</td>
+                        <td class="px-3 py-2 text-right text-purple-400">${fmtBytes(row.delta_upload)}</td>
+                        <td class="px-3 py-2 text-right text-white font-medium">${fmtBytes(row.delta_total)}</td>
+                        <td class="px-3 py-2 text-right ${leftColor}">${fmtBytes(row.remaining)}</td>
+                    </tr>`;
+                }).join('');
+            } catch (e) {
+                loadingEl.style.display = 'none';
+                tableContainer.classList.remove('hidden');
+                emptyEl.textContent = IS_FA ? 'خطا در بارگزاری.' : 'Failed to load history.';
+                emptyEl.classList.remove('hidden');
+            }
+        }
+
     </script>
 </body>
 </html>
