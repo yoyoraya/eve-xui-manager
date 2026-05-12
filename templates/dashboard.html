@@ -1849,8 +1849,18 @@
             refreshJobPollTimer = null;
         }
 
+        const pollStart = Date.now();
+        const MAX_POLL_MS = 120000;
+
         const pollOnce = async () => {
             if (!activeRefreshJobId) return;
+
+            if (Date.now() - pollStart > MAX_POLL_MS) {
+                stopRefreshJobPolling();
+                handleRefreshError();
+                return;
+            }
+
             try {
                 const resp = await fetch(`/api/refresh/job/${encodeURIComponent(activeRefreshJobId)}`);
                 const payload = await resp.json();
@@ -1879,6 +1889,7 @@
                     stopRefreshJobPolling();
                     if (showErrors) showToast(err, 'error');
                     refreshJobContext.delete(jobId);
+                    handleRefreshError();
                     return;
                 }
             } catch (e) {
@@ -1933,7 +1944,9 @@
                 const jobId = data.refresh_job && data.refresh_job.id;
                 const jobState = data.refresh_job && data.refresh_job.state;
                 const isAsyncJobPending = Boolean(jobId && (jobState === 'queued' || jobState === 'running'));
-                const shouldApplySnapshotNow = !isAsyncJobPending;
+                // Always apply when poll=false (cache read after job done) so skeleton clears
+                // even if server re-queued a job (e.g. 0-inbound servers).
+                const shouldApplySnapshotNow = !isAsyncJobPending || !poll;
 
                 if (shouldApplySnapshotNow) {
                     allInboundsData = data.inbounds;

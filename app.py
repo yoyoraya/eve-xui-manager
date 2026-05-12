@@ -5413,20 +5413,24 @@ def api_refresh():
     data = copy.deepcopy(GLOBAL_SERVER_DATA)
     t_after_copy = time.perf_counter() if debug_timing else None
 
-    # If cache is empty and nothing is running, kick off a refresh job (non-blocking)
-    if not data.get('inbounds') and not GLOBAL_SERVER_DATA.get('is_updating') and not job:
+    never_fetched = not data.get('last_update')
+
+    # Kick off a refresh job only when cache has never been populated (app start / first load)
+    if not data.get('inbounds') and never_fetched and not GLOBAL_SERVER_DATA.get('is_updating') and not job:
         job = enqueue_refresh_job(mode='full', server_id=server_id, force=False)
-    
-    if not data.get('inbounds'):
+
+    # Return early with skeleton response only when data was never fetched yet.
+    # If last_update is set but inbounds is empty (server has 0 inbounds), fall through
+    # so the full (empty) payload is returned and the UI can clear its skeleton.
+    if not data.get('inbounds') and never_fetched:
         return jsonify({
-            "success": True, 
-            "inbounds": [], 
-            "stats": {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0, 
-                      "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "total_traffic": "0 B", 
-                      "total_upload": "0 B", "total_download": "0 B"}, 
+            "success": True,
+            "inbounds": [],
+            "stats": {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0,
+                      "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "total_traffic": "0 B",
+                      "total_upload": "0 B", "total_download": "0 B"},
             "servers": (data.get('servers_status') or []),
-            "server_count": len(data.get('servers_status') or [])
-            ,
+            "server_count": len(data.get('servers_status') or []),
             "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
             "refresh_job": _summarize_job(job)
         }), (202 if job and job.get('state') in ('queued', 'running') else 200)
