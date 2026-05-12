@@ -1944,9 +1944,10 @@
                 const jobId = data.refresh_job && data.refresh_job.id;
                 const jobState = data.refresh_job && data.refresh_job.state;
                 const isAsyncJobPending = Boolean(jobId && (jobState === 'queued' || jobState === 'running'));
-                // Always apply when poll=false (cache read after job done) so skeleton clears
-                // even if server re-queued a job (e.g. 0-inbound servers).
-                const shouldApplySnapshotNow = !isAsyncJobPending || !poll;
+                // Apply cached data immediately when available (avoid blank skeleton while job runs).
+                // Also apply when poll=false (post-job cache read) to clear skeleton for 0-inbound servers.
+                const hasCachedData = Array.isArray(data.inbounds) && data.inbounds.length > 0;
+                const shouldApplySnapshotNow = !isAsyncJobPending || !poll || hasCachedData;
 
                 if (shouldApplySnapshotNow) {
                     allInboundsData = data.inbounds;
@@ -2004,23 +2005,37 @@
     }
 
     function handleRefreshError() {
-        // If we have servers but failed to load data, show error state instead of "No servers added"
         if (allServers && allServers.length > 0) {
             const container = document.getElementById('inbounds-container');
-            // Only replace if it's currently showing the empty state or nothing
-            if (container.querySelector('.empty-state') || container.querySelector('.dashboard-skeleton-card') || container.innerHTML.trim() === '') {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="8" x2="12" y2="12"></line>
-                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                        </svg>
-                        <h3>Connection Error</h3>
-                        <p>Failed to load data from servers. Please check your connection and try again.</p>
-                        <button class="btn btn-primary" onclick="refreshData()">Try Again</button>
-                    </div>`;
+            const showingSkeletonOrEmpty = container.querySelector('.empty-state') || container.querySelector('.dashboard-skeleton-card') || container.innerHTML.trim() === '';
+            if (!showingSkeletonOrEmpty) return;
+
+            // If we have cached inbounds, render them instead of a hard error.
+            if (allInboundsData && allInboundsData.length > 0) {
+                applyFilters();
+                return;
             }
+
+            // Determine per-server error detail for the message.
+            let errDetail = '';
+            if (serverStatuses && serverStatuses.length > 0) {
+                const errs = serverStatuses
+                    .filter(s => s.panel_status_error || s.reachable_error)
+                    .map(s => `<li style="text-align:left;margin:2px 0;">${escapeHtml(s.panel_status_error || s.reachable_error || '')}</li>`);
+                if (errs.length) errDetail = `<ul style="margin:8px 0 0;padding:0 0 0 18px;font-size:0.82rem;opacity:0.75;">${errs.join('')}</ul>`;
+            }
+
+            container.innerHTML = `
+                <div class="empty-state">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <h3>Connection Error</h3>
+                    <p>Failed to load data from servers. Please check your connection and try again.${errDetail}</p>
+                    <button class="btn btn-primary" onclick="refreshData()">Try Again</button>
+                </div>`;
         }
     }
 

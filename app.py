@@ -2482,7 +2482,7 @@ def _get_dashboard_status_thresholds() -> dict:
         low_volume_gb = float(raw_gb if raw_gb is not None else 1.0)
     except Exception:
         low_volume_gb = 1.0
-    low_volume_gb = max(0.1, min(low_volume_gb, 1024.0))
+    low_volume_gb = max(0.01, min(low_volume_gb, 1024.0))
 
     return {
         'near_expiry_days': near_expiry_days,
@@ -5953,7 +5953,7 @@ def save_general_settings():
         low_volume_gb = float(data.get('low_volume_gb', 1.0) or 1.0)
     except Exception:
         low_volume_gb = 1.0
-    low_volume_gb = max(0.1, min(low_volume_gb, 1024.0))
+    low_volume_gb = max(0.01, min(low_volume_gb, 1024.0))
 
     _set_system_setting_value(GENERAL_TIMEZONE_SETTING_KEY, tz_name)
     _set_system_setting_value(PANEL_UI_LANG_SETTING_KEY, panel_lang)
@@ -12371,14 +12371,15 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 st['reachable'] = False
                 st['reachable_error'] = error
                 st['reachable_checked_at'] = now_iso
+                # Always expose the error in panel_status_error so the UI badge shows it.
+                st['panel_status_error'] = (status_error or error)
+                st['panel_status_checked_at'] = now_iso
                 if status_payload:
                     st['xui_version'] = status_payload.get('xui_version')
                     st['xray_version'] = status_payload.get('xray_version')
                     st['xray_state'] = status_payload.get('xray_state')
                     st['xray_core'] = status_payload.get('xray_core')
                     st['online_count'] = status_payload.get('online_count')
-                    st['panel_status_error'] = status_error if status_error else None
-                    st['panel_status_checked_at'] = now_iso
                 status_map[sid] = st
                 # keep existing inbounds block (if any)
                 continue
