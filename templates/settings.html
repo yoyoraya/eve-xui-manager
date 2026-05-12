@@ -6,11 +6,15 @@
 {% block content %}
 <div class="settings-layout">
     <div class="settings-sidebar">
+        <button class="settings-tab active" onclick="switchTab('overview')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            Overview
+        </button>
         <button class="settings-tab" onclick="switchTab('general')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
             General
         </button>
-        <button class="settings-tab active" onclick="switchTab('templates')">
+        <button class="settings-tab" onclick="switchTab('templates')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             Notification Templates
         </button>
@@ -46,6 +50,24 @@
     </div>
 
     <div class="settings-content">
+        <div id="tab-overview" class="tab-pane active">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>System Overview</h2>
+                        <p class="text-secondary">Live snapshot of your panel's current state.</p>
+                    </div>
+                    <button class="btn btn-secondary" onclick="loadOverview()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"></path></svg>
+                        Refresh
+                    </button>
+                </div>
+                <div id="overview-content">
+                    <div style="color:var(--text-secondary);padding:24px 0;text-align:center;">Loading…</div>
+                </div>
+            </div>
+        </div>
+
         <div id="tab-general" class="tab-pane">
             <div class="panel-card">
                 <div class="panel-card-header">
@@ -915,6 +937,45 @@
     .badge-success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
     .badge-secondary { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+    .badge-danger { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+    /* Overview grid */
+    .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 16px;
+        margin-top: 4px;
+    }
+    .overview-card {
+        background: var(--card-bg, rgba(255,255,255,0.04));
+        border: 1px solid var(--border-color, rgba(255,255,255,0.08));
+        border-radius: 10px;
+        padding: 18px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .overview-card-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 7px;
+    }
+    .overview-card-value {
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: var(--text-primary, #f1f5f9);
+        word-break: break-word;
+    }
+    .overview-card-sub {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        margin-top: -4px;
+    }
 
     /* Vazirmatn font for forms */
     .form-input, .form-select, .form-control, label, .modal-body {
@@ -1269,6 +1330,8 @@
         const activeTab = document.querySelector('.settings-tab.active');
         if (activeTab) {
             const onclick = activeTab.getAttribute('onclick');
+            if (onclick.includes("'overview'")) loadOverview();
+            else
             if (onclick.includes("'general'")) syncThemeToggleUI();
             else if (onclick.includes("'templates'")) loadTemplates();
             else if (onclick.includes("'renew_template'")) loadRenewTemplates();
@@ -1320,7 +1383,9 @@
         event.currentTarget.classList.add('active');
         document.getElementById(`tab-${tabName}`).classList.add('active');
 
-        if (tabName === 'general') {
+        if (tabName === 'overview') {
+            loadOverview();
+        } else if (tabName === 'general') {
             loadGeneralSettings();
         } else if (tabName === 'backups') {
             loadBackups();
@@ -1675,6 +1740,128 @@
             }
         } catch (e) {
             showToast('Network error', 'error');
+        }
+    }
+
+    function fmtDate(iso) {
+        if (!iso) return '—';
+        try {
+            const d = new Date(iso);
+            return d.toLocaleString(undefined, { year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+        } catch { return iso; }
+    }
+
+    function fmtUptime(seconds) {
+        const d = Math.floor(seconds / 86400);
+        const h = Math.floor((seconds % 86400) / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        if (d > 0) return `${d}d ${h}h ${m}m`;
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m`;
+    }
+
+    function sslTypeLabel(type) {
+        return { letsencrypt: "Let's Encrypt", self_signed: "Self-Signed", custom: "Custom / Manual", none: "None (HTTP)" }[type] || type;
+    }
+
+    function sslTypeBadge(type) {
+        const cls = { letsencrypt: 'badge-success', self_signed: 'badge-warning', custom: 'badge-info', none: 'badge-secondary' }[type] || 'badge-secondary';
+        return `<span class="badge ${cls}">${sslTypeLabel(type)}</span>`;
+    }
+
+    async function loadOverview() {
+        const container = document.getElementById('overview-content');
+        container.innerHTML = '<div style="color:var(--text-secondary);padding:24px 0;text-align:center;">Loading…</div>';
+        try {
+            const res = await fetch('/api/settings/overview');
+            const d = await res.json();
+            if (!d.success) { container.innerHTML = `<p style="color:#ef4444">${d.error || 'Failed to load'}</p>`; return; }
+
+            // SSL expiry warning
+            let sslExpirySub = '';
+            if (d.ssl_expiry) {
+                const expDate = new Date(d.ssl_expiry);
+                const daysLeft = Math.ceil((expDate - Date.now()) / 86400000);
+                const expStr = fmtDate(d.ssl_expiry);
+                if (daysLeft < 0) {
+                    sslExpirySub = `<span style="color:#ef4444">⚠ Expired ${Math.abs(daysLeft)} days ago</span>`;
+                } else if (daysLeft < 30) {
+                    sslExpirySub = `<span style="color:#f59e0b">⚠ Expires in ${daysLeft} days (${expStr})</span>`;
+                } else {
+                    sslExpirySub = `<span style="color:#22c55e">Valid until ${expStr}</span>`;
+                }
+            } else if (d.ssl_type === 'none') {
+                sslExpirySub = '<span style="color:#94a3b8">No certificate configured</span>';
+            }
+
+            const versionBadge = d.update_available
+                ? `<span class="badge badge-warning" style="cursor:pointer" onclick="window.open('${d.release_url}','_blank')">Update available → v${d.latest_version}</span>`
+                : (d.latest_version ? `<span class="badge badge-success">Up to date</span>` : `<span class="badge badge-secondary">Unknown</span>`);
+
+            const dbBadge = d.db_type === 'PostgreSQL'
+                ? `<span class="badge badge-info">PostgreSQL</span>`
+                : `<span class="badge badge-secondary">SQLite</span>`;
+
+            container.innerHTML = `
+            <div class="overview-grid">
+                <div class="overview-card">
+                    <div class="overview-card-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        Panel Uptime
+                    </div>
+                    <div class="overview-card-value">${fmtUptime(d.uptime_seconds)}</div>
+                    <div class="overview-card-sub">Since last restart</div>
+                </div>
+
+                <div class="overview-card">
+                    <div class="overview-card-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        Panel Version
+                    </div>
+                    <div class="overview-card-value">v${d.current_version}</div>
+                    <div class="overview-card-sub">
+                        GitHub: ${d.latest_version ? `v${d.latest_version}` : '—'} &nbsp; ${versionBadge}
+                    </div>
+                </div>
+
+                <div class="overview-card">
+                    <div class="overview-card-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                        Database
+                    </div>
+                    <div class="overview-card-value">${dbBadge}</div>
+                    <div class="overview-card-sub">${d.db_info || ''}</div>
+                </div>
+
+                <div class="overview-card">
+                    <div class="overview-card-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Last Backup
+                    </div>
+                    <div class="overview-card-value" style="font-size:0.95rem">${fmtDate(d.last_backup)}</div>
+                    <div class="overview-card-sub">Auto database backup</div>
+                </div>
+
+                <div class="overview-card">
+                    <div class="overview-card-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4 20-7z"/></svg>
+                        Last Telegram Backup
+                    </div>
+                    <div class="overview-card-value" style="font-size:0.95rem">${fmtDate(d.last_telegram_backup)}</div>
+                    <div class="overview-card-sub">Sent via Telegram bot</div>
+                </div>
+
+                <div class="overview-card">
+                    <div class="overview-card-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        SSL Certificate
+                    </div>
+                    <div class="overview-card-value">${sslTypeBadge(d.ssl_type)}</div>
+                    <div class="overview-card-sub">${sslExpirySub || (d.ssl_issuer ? `Issuer: ${d.ssl_issuer}` : '')}</div>
+                </div>
+            </div>`;
+        } catch (e) {
+            container.innerHTML = `<p style="color:#ef4444">Error: ${e.message}</p>`;
         }
     }
 

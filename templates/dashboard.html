@@ -3949,21 +3949,58 @@
         return filtered;
     }
 
+    function _serverStateDot(state) {
+        if (!state) return '';
+        const color = state === 'running' ? '#22c55e' : state === 'stop' ? '#ef4444' : '#f59e0b';
+        const label = state === 'running' ? 'Running' : state === 'stop' ? 'Stopped' : state;
+        return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:${color}"><span style="width:7px;height:7px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>${label}</span>`;
+    }
+
+    function _panelTypeBadge(pt) {
+        if (!pt || pt === 'auto') return '';
+        const labels = { sanaei: '3X-UI', alireza: 'X-UI', xui: 'X-UI' };
+        const label = labels[pt.toLowerCase()] || pt;
+        return `<span style="background:rgba(99,102,241,0.15);color:#818cf8;border-radius:4px;padding:1px 6px;font-size:0.7rem;font-weight:600;">${label}</span>`;
+    }
+
     function renderServerList(servers) {
         const container = document.getElementById('server-list');
-        
+
         if (servers.length === 0) {
             container.innerHTML = '<p class="no-servers">No servers added</p>';
             return;
         }
-        
-        container.innerHTML = servers.map(server => `
-            <div class="server-item ${!server.enabled ? 'disabled' : ''}">
+
+        container.innerHTML = servers.map(server => {
+            const xrayBadge = server.xray_version
+                ? `<span style="background:rgba(34,197,94,0.12);color:#4ade80;border-radius:4px;padding:1px 6px;font-size:0.7rem;font-weight:600;">xray ${escapeHtml(server.xray_version)}</span>`
+                : '';
+            const xuiBadge = server.xui_version
+                ? `<span style="background:rgba(56,189,248,0.12);color:#38bdf8;border-radius:4px;padding:1px 6px;font-size:0.7rem;">v${escapeHtml(server.xui_version)}</span>`
+                : '';
+            const stateDot = _serverStateDot(server.xray_state);
+            const ptBadge = _panelTypeBadge(server.panel_type);
+            const fetchingBadge = (!server.xray_version && !server.panel_status_error)
+                ? `<span id="srv-fetching-${server.id}" style="font-size:0.7rem;color:#94a3b8;">fetching…</span>`
+                : '';
+            const errBadge = server.panel_status_error
+                ? `<span style="font-size:0.7rem;color:#ef4444;" title="${escapeHtml(server.panel_status_error)}">⚠ unreachable</span>`
+                : '';
+
+            const meta = [ptBadge, xrayBadge, xuiBadge, stateDot, fetchingBadge, errBadge].filter(Boolean).join(' ');
+
+            return `
+            <div class="server-item ${!server.enabled ? 'disabled' : ''}" id="srv-item-${server.id}">
                 <div class="server-info">
-                    <h4>${server.name}</h4>
-                    <p>${server.host}</p>
+                    <h4>${escapeHtml(server.name)}</h4>
+                    <p style="margin:0 0 4px 0;">${escapeHtml(server.host)}</p>
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:3px;">${meta}</div>
                 </div>
                 <div class="server-actions">
+                    <button class="action-btn" onclick="refreshServerInfo(${server.id})" title="Refresh info"
+                        style="font-size:11px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"/></svg>
+                    </button>
                     <button class="action-btn" onclick="editServer(${server.id})" title="Edit">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -3977,8 +4014,21 @@
                         </svg>
                     </button>
                 </div>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
+    }
+
+    async function refreshServerInfo(serverId) {
+        const fetchEl = document.getElementById(`srv-fetching-${serverId}`);
+        if (fetchEl) fetchEl.textContent = 'fetching…';
+        try {
+            const res = await fetch(`/api/servers/${serverId}/panel-info`);
+            const data = await res.json();
+            // Reload full list to reflect updated info
+            await loadServers();
+        } catch (e) {
+            showToast('Could not fetch panel info', 'error');
+        }
     }
 
     function openServerModal() {
@@ -4089,8 +4139,16 @@
             if (result.success) {
                 showToast(id ? 'Server updated' : 'Server added');
                 closeServerModal();
-                loadServers();
+                await loadServers();
                 refreshData();
+                // Fetch panel info in background for the saved server
+                const serverId = id || result.id;
+                if (serverId) {
+                    fetch(`/api/servers/${serverId}/panel-info`)
+                        .then(r => r.json())
+                        .then(() => loadServers())
+                        .catch(() => {});
+                }
             } else {
                 showToast(result.error || 'Error', 'error');
             }

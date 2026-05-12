@@ -1,3 +1,21 @@
+# Eve - Xui Manager v1.9.1
+
+## [1.9.1] - 2026-05-12
+
+English:
+- Feature: Enhanced dashboard showing real-time panel info - panel type badges, Xray version, X-UI version, and server state indicators
+- Feature: New `/api/servers/{id}/panel-info` endpoint for quick server status verification after addition
+- Feature: Settings overview page with system health: uptime, last backups, database type, version info, SSL certificate details
+- Improvement: Added Werkzeug ProxyFix middleware for proper Nginx SSL termination support
+- Improvement: Better error states for unreachable servers with visual indicators
+- Fix: Server list properly refreshes after adding new server
+- Tweak: Improved XSS protection with HTML escaping in templates
+
+Notes:
+- All new features use existing @login_required authentication
+- ProxyFix supports standard Nginx reverse proxy configurations
+- Server panel info can be refreshed on-demand from dashboard
+
 # Eve - Xui Manager v1.9.0
 
 ## [1.9.0] - 2026-05-12

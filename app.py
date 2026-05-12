@@ -80,6 +80,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 from urllib.parse import urlparse, quote, urlencode, unquote
 from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, func, text, inspect, case
@@ -1237,6 +1238,8 @@ def _security_per_request_setup():
     _maybe_migrate_server_passwords()
 
 app = Flask(__name__)
+# Trust one proxy hop (nginx SSL termination) so Flask sees correct scheme/host
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # Register per-request security setup.
 app.before_request(_security_per_request_setup)
@@ -7740,6 +7743,62 @@ def test_server_connection(server_id):
         return jsonify({"success": False, "error": error}), 400
     return jsonify({"success": True, "panel_type": server.panel_type})
 
+
+@app.route('/api/servers/<int:server_id>/panel-info', methods=['GET'])
+@login_required
+def get_server_panel_info(server_id):
+    """Quick fetch: login → status endpoint → return version/state info.
+    Does NOT fetch inbounds. Designed to be called right after adding a server."""
+    server = Server.query.get_or_404(server_id)
+
+    session_obj, login_error = get_xui_session(server)
+    if login_error:
+        return jsonify({"success": False, "error": login_error}), 400
+
+    status_payload, status_error, detected_type = fetch_server_status(
+        session_obj, server.host, server.panel_type
+    )
+
+    if detected_type and detected_type != 'auto':
+        persist_detected_panel_type(server, detected_type)
+
+    info = {
+        "success": True,
+        "server_id": server.id,
+        "panel_type": server.panel_type or detected_type or "auto",
+        "xui_version": None,
+        "xray_version": None,
+        "xray_state": None,
+        "xray_core": None,
+        "status_error": status_error,
+    }
+
+    if status_payload:
+        normalized = _normalize_server_status_payload(status_payload)
+        info.update({
+            "xui_version": normalized.get("xui_version"),
+            "xray_version": normalized.get("xray_version"),
+            "xray_state": normalized.get("xray_state"),
+            "xray_core": normalized.get("xray_core"),
+        })
+
+    # Also update in-memory cache so GET /api/servers reflects this immediately
+    existing = GLOBAL_SERVER_DATA.get('servers_status') or []
+    updated = False
+    for st in existing:
+        if isinstance(st, dict) and st.get('server_id') == server.id:
+            st.update({k: v for k, v in info.items() if k not in ('success', 'status_error')})
+            st['panel_status_checked_at'] = datetime.utcnow().isoformat()
+            updated = True
+            break
+    if not updated:
+        entry = {k: v for k, v in info.items() if k not in ('success', 'status_error')}
+        entry['panel_status_checked_at'] = datetime.utcnow().isoformat()
+        entry['panel_status_error'] = status_error
+        GLOBAL_SERVER_DATA.setdefault('servers_status', []).append(entry)
+
+    return jsonify(info)
+
 @app.route('/api/assign-client', methods=['POST'])
 @user_management_required
 def assign_client():
@@ -11650,6 +11709,91 @@ def telegram_backup_job_status(job_id):
         if not job:
             return jsonify({'success': False, 'error': 'Job not found'}), 404
         return jsonify({'success': True, 'job': _summarize_telegram_backup_job(job)})
+
+@app.route('/api/settings/overview', methods=['GET'])
+@login_required
+def get_settings_overview():
+    result = {}
+
+    # Uptime
+    result['uptime_seconds'] = int(time.time() - APP_START_TS)
+
+    # Last auto backup
+    result['last_backup'] = _get_system_setting_value('last_auto_backup', '') or ''
+
+    # Last Telegram backup
+    result['last_telegram_backup'] = _get_system_setting_value('telegram_backup_last_run', '') or ''
+
+    # Database type
+    db_url_cfg = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if db_url_cfg.startswith('postgresql'):
+        result['db_type'] = 'PostgreSQL'
+        try:
+            parsed = urlparse(db_url_cfg)
+            result['db_info'] = f"{parsed.hostname}/{(parsed.path or '').lstrip('/')}"
+        except Exception:
+            result['db_info'] = 'PostgreSQL'
+    else:
+        result['db_type'] = 'SQLite'
+        result['db_info'] = 'Local SQLite'
+
+    # Versions
+    result['current_version'] = APP_VERSION
+    result['latest_version'] = None
+    result['update_available'] = False
+    result['release_url'] = ''
+    try:
+        if UPDATE_CACHE.get('data'):
+            result['latest_version'] = UPDATE_CACHE['data'].get('latest_version')
+            result['update_available'] = bool(UPDATE_CACHE['data'].get('update_available'))
+            result['release_url'] = UPDATE_CACHE['data'].get('release_url', '')
+        else:
+            resp = requests.get(
+                f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+                timeout=4
+            )
+            if resp.status_code == 200:
+                gh = resp.json()
+                result['latest_version'] = gh.get('tag_name', '').lstrip('v')
+                result['release_url'] = gh.get('html_url', '')
+    except Exception:
+        pass
+
+    # SSL info
+    cert_path = _get_system_setting_value('ssl_cert_path', '') or ''
+    ssl_type = 'none'
+    ssl_expiry = None
+    ssl_issuer = None
+
+    if cert_path and os.path.isfile(cert_path) and os.access(cert_path, os.R_OK):
+        if '/etc/letsencrypt/' in cert_path:
+            ssl_type = 'letsencrypt'
+        elif '/etc/ssl/eve-manager/' in cert_path:
+            ssl_type = 'self_signed'
+        else:
+            ssl_type = 'custom'
+        try:
+            from cryptography import x509 as _x509
+            from cryptography.hazmat.backends import default_backend as _default_backend
+            from cryptography.x509.oid import NameOID as _NameOID
+            with open(cert_path, 'rb') as f:
+                cert = _x509.load_pem_x509_certificate(f.read(), _default_backend())
+            # not_valid_after_utc is preferred in newer cryptography; fall back to not_valid_after
+            expiry_dt = getattr(cert, 'not_valid_after_utc', None) or cert.not_valid_after
+            ssl_expiry = expiry_dt.isoformat()
+            try:
+                ssl_issuer = cert.issuer.get_attributes_for_oid(_NameOID.COMMON_NAME)[0].value
+            except Exception:
+                ssl_issuer = None
+        except Exception as exc:
+            app.logger.debug(f"SSL cert parse error: {exc}")
+
+    result['ssl_type'] = ssl_type
+    result['ssl_expiry'] = ssl_expiry
+    result['ssl_issuer'] = ssl_issuer
+
+    return jsonify({'success': True, **result})
+
 
 @app.route('/api/settings/ssl', methods=['GET'])
 @login_required
