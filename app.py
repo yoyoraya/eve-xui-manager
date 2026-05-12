@@ -11749,11 +11749,13 @@ def get_settings_overview():
     result['current_version'] = APP_VERSION
     result['latest_version'] = None
     result['update_available'] = False
+    result['is_beta'] = False
     result['release_url'] = ''
     try:
         if UPDATE_CACHE.get('data'):
             result['latest_version'] = UPDATE_CACHE['data'].get('latest_version')
             result['update_available'] = bool(UPDATE_CACHE['data'].get('update_available'))
+            result['is_beta'] = bool(UPDATE_CACHE['data'].get('is_beta'))
             result['release_url'] = UPDATE_CACHE['data'].get('release_url', '')
         else:
             resp = requests.get(
@@ -11762,13 +11764,25 @@ def get_settings_overview():
             )
             if resp.status_code == 200:
                 gh = resp.json()
-                result['latest_version'] = gh.get('tag_name', '').lstrip('v')
+                latest_raw = gh.get('tag_name', '').strip().lstrip('vV')
+                result['latest_version'] = latest_raw
                 result['release_url'] = gh.get('html_url', '')
+                try:
+                    cur_parts = [int(x) for x in APP_VERSION.split('.')]
+                    lat_parts = [int(x) for x in latest_raw.split('.')]
+                    while len(cur_parts) < 3: cur_parts.append(0)
+                    while len(lat_parts) < 3: lat_parts.append(0)
+                    result['update_available'] = lat_parts > cur_parts
+                    result['is_beta'] = cur_parts > lat_parts
+                except Exception:
+                    pass
     except Exception:
         pass
 
     # SSL info
     cert_path = _get_system_setting_value('ssl_cert_path', '') or ''
+    if not cert_path:
+        cert_path, _ = _autodetect_ssl_paths()
     ssl_type = 'none'
     ssl_expiry = None
     ssl_issuer = None
@@ -11860,6 +11874,40 @@ def get_ssl_settings():
     else:
         ssl_status = 'not_configured'
 
+    # Detect SSL type from path
+    ssl_type = 'none'
+    if cert_path:
+        if '/etc/letsencrypt/' in cert_path:
+            ssl_type = 'letsencrypt'
+        elif '/etc/ssl/eve-manager/' in cert_path:
+            ssl_type = 'self_signed'
+        elif cert_path:
+            ssl_type = 'custom'
+
+    # Parse cert metadata
+    cert_expiry = None
+    cert_issuer = None
+    cert_subject = None
+    if cert_ok:
+        try:
+            from cryptography import x509 as _x509
+            from cryptography.hazmat.backends import default_backend as _default_backend
+            from cryptography.x509.oid import NameOID as _NameOID
+            with open(cert_path, 'rb') as _f:
+                _cert = _x509.load_pem_x509_certificate(_f.read(), _default_backend())
+            _exp = getattr(_cert, 'not_valid_after_utc', None) or _cert.not_valid_after
+            cert_expiry = _exp.isoformat()
+            try:
+                cert_issuer = _cert.issuer.get_attributes_for_oid(_NameOID.COMMON_NAME)[0].value
+            except Exception:
+                cert_issuer = None
+            try:
+                cert_subject = _cert.subject.get_attributes_for_oid(_NameOID.COMMON_NAME)[0].value
+            except Exception:
+                cert_subject = None
+        except Exception:
+            pass
+
     return jsonify({
         'success': True,
         'cert_path': cert_path,
@@ -11867,6 +11915,10 @@ def get_ssl_settings():
         'cert_ok': cert_ok,
         'key_ok': key_ok,
         'ssl_status': ssl_status,
+        'ssl_type': ssl_type,
+        'cert_expiry': cert_expiry,
+        'cert_issuer': cert_issuer,
+        'cert_subject': cert_subject,
         'auto_detected': auto_detected
     })
 

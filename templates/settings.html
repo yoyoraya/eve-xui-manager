@@ -142,7 +142,7 @@
             </div>
         </div>
 
-        <div id="tab-templates" class="tab-pane active">
+        <div id="tab-templates" class="tab-pane">
             <div class="panel-card">
                 <div class="panel-card-header">
                     <div class="header-content">
@@ -1807,9 +1807,16 @@
                 sslExpirySub = '<span style="color:#94a3b8">No certificate configured</span>';
             }
 
-            const versionBadge = d.update_available
-                ? `<span class="badge badge-warning" style="cursor:pointer" onclick="window.open('${d.release_url}','_blank')">Update available → v${d.latest_version}</span>`
-                : (d.latest_version ? `<span class="badge badge-success">Up to date</span>` : `<span class="badge badge-secondary">Unknown</span>`);
+            let versionBadge;
+            if (d.update_available) {
+                versionBadge = `<span class="badge badge-warning" style="cursor:pointer" onclick="window.open('${d.release_url}','_blank')">Update available → v${d.latest_version}</span>`;
+            } else if (d.is_beta) {
+                versionBadge = `<span class="badge badge-info" title="Local version is ahead of latest GitHub release">Using beta / dev build</span>`;
+            } else if (d.latest_version) {
+                versionBadge = `<span class="badge badge-success">Up to date</span>`;
+            } else {
+                versionBadge = `<span class="badge badge-secondary">Unknown</span>`;
+            }
 
             const dbBadge = d.db_type === 'PostgreSQL'
                 ? `<span class="badge badge-info">PostgreSQL</span>`
@@ -1885,16 +1892,38 @@
         const certFeedback = document.getElementById('ssl-cert-feedback');
         const keyFeedback = document.getElementById('ssl-key-feedback');
 
+        const typeLabels = { letsencrypt: "Let's Encrypt", self_signed: 'Self-Signed', custom: 'Custom', none: 'HTTP' };
+        const typeLabel = typeLabels[data.ssl_type] || '';
+
+        let activeText = `SSL Active (${typeLabel}) — certificate and key files found and readable.`;
+        if (data.ssl_type === 'self_signed') {
+            const parts = [];
+            if (data.cert_subject) parts.push(`CN: ${data.cert_subject}`);
+            if (data.cert_issuer && data.cert_issuer !== data.cert_subject) parts.push(`Issuer: ${data.cert_issuer}`);
+            if (data.cert_expiry) {
+                const exp = new Date(data.cert_expiry);
+                const daysLeft = Math.ceil((exp - Date.now()) / 86400000);
+                parts.push(`Expires: ${exp.toLocaleDateString()} (${daysLeft > 0 ? daysLeft + ' days' : 'EXPIRED'})`);
+            }
+            if (parts.length) activeText += ' · ' + parts.join(' · ');
+        } else if (data.ssl_type === 'letsencrypt') {
+            if (data.cert_expiry) {
+                const exp = new Date(data.cert_expiry);
+                const daysLeft = Math.ceil((exp - Date.now()) / 86400000);
+                activeText += ` Expires in ${daysLeft} days.`;
+            }
+        }
+
         const statusStyles = {
-            active:         { bg: 'rgba(34,197,94,0.12)',  border: '1px solid rgba(34,197,94,0.3)',  color: '#22c55e', icon: '🔒', text: 'SSL Active — certificate and key files found and readable.' },
+            active:         { bg: 'rgba(34,197,94,0.12)',  border: '1px solid rgba(34,197,94,0.3)',  color: '#22c55e', icon: '🔒', text: activeText },
             error:          { bg: 'rgba(239,68,68,0.1)',   border: '1px solid rgba(239,68,68,0.3)',   color: '#ef4444', icon: '⚠️', text: 'SSL Error — one or more files could not be found or read. Check paths and permissions.' },
             not_configured: { bg: 'rgba(148,163,184,0.1)', border: '1px solid rgba(148,163,184,0.25)', color: '#94a3b8', icon: '🔓', text: 'SSL not configured — running in HTTP mode.' }
         };
 
         const s = statusStyles[data.ssl_status] || statusStyles.not_configured;
-        const autoNote = data.auto_detected ? ' <span style="opacity:0.7;font-size:0.8em;">(auto-detected from filesystem — paths saved)</span>' : '';
-        panel.style.cssText = `display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:8px; margin-bottom:16px; font-size:0.875rem; background:${s.bg}; border:${s.border}; color:${s.color};`;
-        panel.innerHTML = `<span>${s.icon}</span><span>${s.text}${autoNote}</span>`;
+        const autoNote = data.auto_detected ? ' <span style="opacity:0.7;font-size:0.8em;">(auto-detected — paths saved)</span>' : '';
+        panel.style.cssText = `display:flex; align-items:flex-start; gap:8px; padding:10px 14px; border-radius:8px; margin-bottom:16px; font-size:0.875rem; background:${s.bg}; border:${s.border}; color:${s.color};`;
+        panel.innerHTML = `<span style="flex-shrink:0">${s.icon}</span><span>${s.text}${autoNote}</span>`;
 
         // Per-field feedback
         const setFieldStatus = (ok, hasPath, icon, feedback) => {
