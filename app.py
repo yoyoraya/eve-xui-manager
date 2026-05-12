@@ -4251,6 +4251,7 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
         seen.add(key)
         deduped.append((ep, pt))
 
+    last_error = None
     for ep, detected_type in deduped:
         try:
             url = ep if ep.startswith('http') else f"{base}{webpath}{ep}"
@@ -4267,10 +4268,12 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
                 resp = session_obj.get(url, verify=False, timeout=timeout_sec)
 
             if resp.status_code != 200:
+                last_error = f"HTTP {resp.status_code} from {ep}"
                 continue
 
             data = resp.json()
             if not isinstance(data, dict) or not data.get('success'):
+                last_error = f"Panel returned success=false from {ep}"
                 continue
 
             if 'obj' in data:
@@ -4279,10 +4282,11 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
                 d = data['data']
                 return (d if isinstance(d, list) else d.get('list', [])), None, detected_type
         except Exception as e:
-            app.logger.debug(f"Failed inbounds endpoint {ep}: {str(e)}")
+            last_error = str(e)
+            app.logger.debug(f"Failed inbounds endpoint {ep}: {last_error}")
             continue
 
-    return None, "Failed to fetch inbounds", 'auto'
+    return None, (last_error or "Failed to fetch inbounds from all known endpoints"), 'auto'
 
 
 def fetch_onlines(session_obj, host, panel_type='auto'):
@@ -11799,6 +11803,30 @@ def get_settings_overview():
     return jsonify({'success': True, **result})
 
 
+_SSL_KNOWN_PATHS = [
+    # Self-signed via setup.sh option 11
+    ('/etc/ssl/eve-manager/cert.pem', '/etc/ssl/eve-manager/privkey.pem'),
+    # Let's Encrypt via setup.sh option 3 (glob expanded at runtime)
+]
+
+def _autodetect_ssl_paths():
+    """Return (cert_path, key_path) from well-known locations, or ('', '')."""
+    for cert_cand, key_cand in _SSL_KNOWN_PATHS:
+        if os.path.isfile(cert_cand) and os.path.isfile(key_cand):
+            return cert_cand, key_cand
+    # Let's Encrypt: /etc/letsencrypt/live/<domain>/fullchain.pem
+    try:
+        import glob as _glob
+        le_certs = sorted(_glob.glob('/etc/letsencrypt/live/*/fullchain.pem'))
+        for le_cert in le_certs:
+            le_key = os.path.join(os.path.dirname(le_cert), 'privkey.pem')
+            if os.path.isfile(le_key):
+                return le_cert, le_key
+    except Exception:
+        pass
+    return '', ''
+
+
 @app.route('/api/settings/ssl', methods=['GET'])
 @login_required
 def get_ssl_settings():
@@ -11806,6 +11834,23 @@ def get_ssl_settings():
     key = db.session.get(SystemSetting, 'ssl_key_path')
     cert_path = cert.value if cert else ''
     key_path = key.value if key else ''
+
+    auto_detected = False
+    if not cert_path and not key_path:
+        detected_cert, detected_key = _autodetect_ssl_paths()
+        if detected_cert and detected_key:
+            cert_path = detected_cert
+            key_path = detected_key
+            auto_detected = True
+            # Persist so the settings page shows the correct state going forward
+            try:
+                c_row = SystemSetting(key='ssl_cert_path', value=cert_path)
+                k_row = SystemSetting(key='ssl_key_path', value=key_path)
+                db.session.merge(c_row)
+                db.session.merge(k_row)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
     cert_ok = bool(cert_path) and os.path.isfile(cert_path) and os.access(cert_path, os.R_OK)
     key_ok = bool(key_path) and os.path.isfile(key_path) and os.access(key_path, os.R_OK)
@@ -11821,7 +11866,8 @@ def get_ssl_settings():
         'key_path': key_path,
         'cert_ok': cert_ok,
         'key_ok': key_ok,
-        'ssl_status': ssl_status
+        'ssl_status': ssl_status,
+        'auto_detected': auto_detected
     })
 
 @app.route('/api/settings/ssl', methods=['POST'])

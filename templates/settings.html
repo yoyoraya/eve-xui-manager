@@ -1879,8 +1879,9 @@
         };
 
         const s = statusStyles[data.ssl_status] || statusStyles.not_configured;
+        const autoNote = data.auto_detected ? ' <span style="opacity:0.7;font-size:0.8em;">(auto-detected from filesystem — paths saved)</span>' : '';
         panel.style.cssText = `display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:8px; margin-bottom:16px; font-size:0.875rem; background:${s.bg}; border:${s.border}; color:${s.color};`;
-        panel.innerHTML = `<span>${s.icon}</span><span>${s.text}</span>`;
+        panel.innerHTML = `<span>${s.icon}</span><span>${s.text}${autoNote}</span>`;
 
         // Per-field feedback
         const setFieldStatus = (ok, hasPath, icon, feedback) => {
