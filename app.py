@@ -10164,12 +10164,15 @@ def sub_usage_history(server_id, sub_id):
         if baseline:
             snapshots = [baseline] + list(snapshots)
 
-    # Compute per-snapshot deltas
-    # has_baseline = True when snapshots[0] came from outside the window (prepended baseline)
+    # Compute per-snapshot deltas.
+    # has_baseline = True when snapshots[0] was prepended from before the window.
     has_baseline = len(snapshots) > 1 and snapshots[0].recorded_at < since
     delta_rows = []
-    if len(snapshots) == 1:
-        # Only one snapshot, no baseline — show cumulative totals, mark as such
+
+    if not snapshots:
+        pass
+    elif len(snapshots) == 1:
+        # Single snapshot, no baseline — expose its cumulative totals directly.
         snap = snapshots[0]
         delta_rows.append({
             'ts': snap.recorded_at,
@@ -10182,22 +10185,40 @@ def sub_usage_history(server_id, sub_id):
             'is_cumulative': True,
         })
     else:
+        # When there is no baseline before the window, snap[0]'s absolute values
+        # would otherwise be invisible (only used as the prev of the first delta).
+        # Expose them as a dedicated cumulative row so historical context is never lost.
+        if not has_baseline:
+            snap0 = snapshots[0]
+            delta_rows.append({
+                'ts': snap0.recorded_at,
+                'delta_upload': snap0.upload_bytes,
+                'delta_download': snap0.download_bytes,
+                'delta_total': snap0.total_bytes,
+                'remaining': snap0.remaining_bytes,
+                'volume_limit': snap0.volume_limit_bytes,
+                'cumulative': snap0.total_bytes,
+                'is_cumulative': True,
+            })
+
         for i in range(1, len(snapshots)):
             prev = snapshots[i - 1]
             curr = snapshots[i]
-            delta_up = max(curr.upload_bytes - prev.upload_bytes, 0)
+            delta_up   = max(curr.upload_bytes   - prev.upload_bytes,   0)
             delta_down = max(curr.download_bytes - prev.download_bytes, 0)
-            # The very first delta row is cumulative when prev had no baseline before it
-            is_cum = (i == 1 and not has_baseline)
+            # Use latest non-null remaining; fall back to prev if curr has none
+            remaining = curr.remaining_bytes
+            if remaining is None:
+                remaining = prev.remaining_bytes
             delta_rows.append({
                 'ts': curr.recorded_at,
                 'delta_upload': delta_up,
                 'delta_download': delta_down,
                 'delta_total': delta_up + delta_down,
-                'remaining': curr.remaining_bytes,
-                'volume_limit': curr.volume_limit_bytes,
+                'remaining': remaining,
+                'volume_limit': curr.volume_limit_bytes or prev.volume_limit_bytes,
                 'cumulative': curr.total_bytes,
-                'is_cumulative': is_cum,
+                'is_cumulative': False,
             })
 
     # Aggregate by period using Tehran timezone label (UTC+3:30)
@@ -13418,8 +13439,12 @@ def _take_usage_snapshots():
                 up = int(client.get('up') or 0)
                 down = int(client.get('down') or 0)
                 total_used = up + down
-                # totalGB in GLOBAL_SERVER_DATA is already in bytes (raw panel value)
-                volume_limit_bytes = int(client.get('totalGB') or 0) or None
+                # totalGB in 3x-ui client settings is a GB float (e.g. 17.61); convert to bytes
+                try:
+                    vol_limit_gb = float(client.get('totalGB') or 0)
+                except Exception:
+                    vol_limit_gb = 0.0
+                volume_limit_bytes = int(vol_limit_gb * 1024 * 1024 * 1024) if vol_limit_gb > 0 else None
                 remaining_bytes = max(volume_limit_bytes - total_used, 0) if volume_limit_bytes else None
 
                 # Renewal detection: compare with the most recent snapshot
