@@ -236,6 +236,7 @@ ask_database_type() {
 
 setup_postgresql_for_install() {
     print_header "Installing & Configuring PostgreSQL"
+    wait_for_apt
     apt-get install -y postgresql postgresql-contrib libpq-dev
 
     # Ensure service is running
@@ -280,6 +281,7 @@ ensure_python_pkg() {
     fi
     print_warning "python${PYTHON_VERSION} not found, installing..."
     export DEBIAN_FRONTEND=noninteractive
+    wait_for_apt
     apt-get update -qq
     apt-get install -y software-properties-common gnupg ca-certificates curl lsb-release ubuntu-keyring
     add-apt-repository universe -y
@@ -305,15 +307,43 @@ ensure_python_pkg() {
     fi
 }
 
+# -------------------- APT Lock Helper -------------------
+wait_for_apt() {
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+        if [ $waited -eq 0 ]; then
+            print_warning "Another package manager is running, waiting..."
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        if [ $waited -ge 300 ]; then
+            print_warning "Waited 5 minutes — force-killing stuck dpkg lock..."
+            kill "$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null)" 2>/dev/null || true
+            rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock
+            dpkg --configure -a 2>/dev/null || true
+            break
+        fi
+    done
+    # Fix corrupt dpkg updates if any
+    if ls /var/lib/dpkg/updates/*.dpkg-new >/dev/null 2>&1 || \
+       grep -rlq '#padding' /var/lib/dpkg/updates/ 2>/dev/null; then
+        print_warning "Corrupt dpkg update files detected — cleaning..."
+        rm -f /var/lib/dpkg/updates/*
+        dpkg --configure -a 2>/dev/null || true
+    fi
+}
+
 # -------------------- Installation Steps -------------------
 update_system() {
     print_header "Step 1: Update system"
+    wait_for_apt
     apt-get update -qq
     print_success "Packages list updated"
 }
 
 install_dependencies() {
     print_header "Step 2: Install dependencies"
+    wait_for_apt
     apt-get install -y -qq \
         python3-pip \
         git \
@@ -824,6 +854,7 @@ migrate_to_postgres() {
 
     # 1. Install PostgreSQL
     print_warning "Installing PostgreSQL packages..."
+    wait_for_apt
     apt-get update -qq
     apt-get install -y postgresql postgresql-contrib libpq-dev
 
@@ -896,6 +927,7 @@ remote_db_migration() {
 
     # Ensure DB server available on new host
     print_warning "Installing PostgreSQL server/client..."
+    wait_for_apt
     apt-get update -qq
     apt-get install -y postgresql postgresql-contrib libpq-dev postgresql-client
 
