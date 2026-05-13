@@ -2003,6 +2003,21 @@
                     <div class="overview-card-value">${sslTypeBadge(d.ssl_type)}</div>
                     <div class="overview-card-sub">${sslExpirySub || (d.ssl_issuer ? `Issuer: ${d.ssl_issuer}` : '')}</div>
                 </div>
+
+                <div class="overview-card">
+                    <div class="overview-card-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+                        Last Snapshot
+                    </div>
+                    ${d.last_snapshot_at ? (() => {
+                        const sd = new Date(d.last_snapshot_at);
+                        const ago = Math.round((Date.now() - sd.getTime()) / 60000);
+                        const agoStr = ago < 1 ? 'just now' : ago < 60 ? `${ago}m ago` : `${Math.round(ago/60)}h ago`;
+                        return `<div class="overview-card-value" style="font-size:0.95rem">${sd.toLocaleTimeString()}</div>
+                    <div class="overview-card-sub">${agoStr} &nbsp;·&nbsp; ${(d.total_snapshots||0).toLocaleString()} rows</div>`;
+                    })() : `<div class="overview-card-value" style="font-size:0.95rem;color:#94a3b8">—</div>
+                    <div class="overview-card-sub">No snapshots yet</div>`}
+                </div>
             </div>`;
         } catch (e) {
             container.innerHTML = `<p style="color:#ef4444">Error: ${e.message}</p>`;

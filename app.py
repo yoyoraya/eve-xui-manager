@@ -12509,6 +12509,18 @@ def get_settings_overview():
     result['ssl_expiry'] = ssl_expiry
     result['ssl_issuer'] = ssl_issuer
 
+    # Last usage snapshot
+    try:
+        last_snap = (UsageSnapshot.query
+                     .order_by(UsageSnapshot.recorded_at.desc())
+                     .with_entities(UsageSnapshot.recorded_at)
+                     .first())
+        result['last_snapshot_at'] = (last_snap.recorded_at.isoformat() + 'Z') if last_snap else None
+        result['total_snapshots'] = UsageSnapshot.query.count()
+    except Exception:
+        result['last_snapshot_at'] = None
+        result['total_snapshots'] = 0
+
     return jsonify({'success': True, **result})
 
 
