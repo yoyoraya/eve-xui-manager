@@ -6033,6 +6033,12 @@ def save_subscription_page_settings():
 @superadmin_required
 def get_general_settings():
     thresholds = _get_dashboard_status_thresholds()
+    try:
+        snapshot_interval = int(_get_or_create_system_setting(
+            USAGE_SNAPSHOT_INTERVAL_KEY, str(_USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN)) or _USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN)
+        snapshot_interval = max(5, min(120, snapshot_interval))
+    except Exception:
+        snapshot_interval = _USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN
     return jsonify({
         'success': True,
         'timezone': _get_app_timezone_name(),
@@ -6041,6 +6047,7 @@ def get_general_settings():
         'near_expiry_days': thresholds.get('near_expiry_days', 3),
         'near_expiry_hours': thresholds.get('near_expiry_hours', 0),
         'low_volume_gb': thresholds.get('low_volume_gb', 1.0),
+        'snapshot_interval_minutes': snapshot_interval,
     })
 
 
@@ -6075,11 +6082,14 @@ def save_general_settings():
         low_volume_gb = 1.0
     low_volume_gb = max(0.01, min(low_volume_gb, 1024.0))
 
+    snapshot_interval = _parse_int(data.get('snapshot_interval_minutes'), _USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN, min_value=5, max_value=120)
+
     _set_system_setting_value(GENERAL_TIMEZONE_SETTING_KEY, tz_name)
     _set_system_setting_value(PANEL_UI_LANG_SETTING_KEY, panel_lang)
     _set_system_setting_value(GENERAL_EXPIRY_WARNING_DAYS_KEY, str(near_expiry_days))
     _set_system_setting_value(GENERAL_EXPIRY_WARNING_HOURS_KEY, str(near_expiry_hours))
     _set_system_setting_value(GENERAL_LOW_VOLUME_WARNING_GB_KEY, str(low_volume_gb))
+    _set_system_setting_value(USAGE_SNAPSHOT_INTERVAL_KEY, str(snapshot_interval))
     db.session.commit()
     return jsonify({
         'success': True,
@@ -6090,6 +6100,7 @@ def save_general_settings():
         'near_expiry_days': near_expiry_days,
         'near_expiry_hours': near_expiry_hours,
         'low_volume_gb': low_volume_gb,
+        'snapshot_interval_minutes': snapshot_interval,
     })
 
 
@@ -9823,7 +9834,11 @@ def get_finance_overview():
 
 @app.route('/sub/history/<int:server_id>/<sub_id>')
 def sub_usage_history(server_id, sub_id):
-    """Return usage snapshots + renewal events for a subscription (identified by sub_id token)."""
+    """Return usage snapshots + renewal events for a subscription.
+
+    Query params:
+      period: hour (last 24h raw) | day (last 30d, by day) | month (last 12m, by month)
+    """
     normalized_sub_id = str(sub_id or '').strip()
     if not normalized_sub_id or any(c in normalized_sub_id for c in ('/', '\\', '?', '#', '@', ':')):
         return jsonify({'success': False, 'error': 'Invalid subscription ID'}), 400
@@ -9832,38 +9847,108 @@ def sub_usage_history(server_id, sub_id):
     if not server:
         return jsonify({'success': False, 'error': 'Server not found'}), 404
 
-    limit = min(int(request.args.get('limit', 168)), 720)  # default 7 days, max 30 days of hourly records
+    period = (request.args.get('period') or 'day').strip().lower()
+    if period not in ('hour', 'day', 'month'):
+        period = 'day'
+
+    now_utc = datetime.utcnow()
+    if period == 'hour':
+        since = now_utc - timedelta(hours=48)   # 48h window so daily boundary is visible
+    elif period == 'month':
+        since = now_utc - timedelta(days=366)
+    else:
+        since = now_utc - timedelta(days=30)
 
     snapshots = (UsageSnapshot.query
                  .filter_by(server_id=server_id, sub_id=normalized_sub_id)
+                 .filter(UsageSnapshot.recorded_at >= since)
                  .order_by(UsageSnapshot.recorded_at.asc())
-                 .limit(limit)
                  .all())
+
+    # Prepend the last snapshot before the window as a baseline for delta computation
+    if snapshots:
+        baseline = (UsageSnapshot.query
+                    .filter_by(server_id=server_id, sub_id=normalized_sub_id)
+                    .filter(UsageSnapshot.recorded_at < since)
+                    .order_by(UsageSnapshot.recorded_at.desc())
+                    .first())
+        if baseline:
+            snapshots = [baseline] + list(snapshots)
+
+    # Compute per-snapshot deltas
+    delta_rows = []
+    for i in range(1, len(snapshots)):
+        prev = snapshots[i - 1]
+        curr = snapshots[i]
+        delta_up = max(curr.upload_bytes - prev.upload_bytes, 0)
+        delta_down = max(curr.download_bytes - prev.download_bytes, 0)
+        delta_rows.append({
+            'ts': curr.recorded_at,
+            'delta_upload': delta_up,
+            'delta_download': delta_down,
+            'delta_total': delta_up + delta_down,
+            'remaining': curr.remaining_bytes,
+            'volume_limit': curr.volume_limit_bytes,
+            'cumulative': curr.total_bytes,
+        })
+
+    # Aggregate by period using Tehran timezone label (UTC+3:30)
+    _TEHRAN_OFFSET = timedelta(hours=3, minutes=30)
+
+    def _tehran_date(ts):
+        local = ts + _TEHRAN_OFFSET
+        return local.strftime('%Y-%m-%d')
+
+    def _tehran_hour_key(ts):
+        local = ts + _TEHRAN_OFFSET
+        return local.strftime('%Y-%m-%dT%H')
+
+    def _tehran_month_key(ts):
+        local = ts + _TEHRAN_OFFSET
+        return local.strftime('%Y-%m')
+
+    from collections import defaultdict, OrderedDict
+
+    def _aggregate(key_fn):
+        bucket = OrderedDict()
+        for r in delta_rows:
+            k = key_fn(r['ts'])
+            if k not in bucket:
+                bucket[k] = {'delta_upload': 0, 'delta_download': 0, 'delta_total': 0,
+                              'remaining': None, 'volume_limit': None, 'ts_example': r['ts']}
+            bucket[k]['delta_upload'] += r['delta_upload']
+            bucket[k]['delta_download'] += r['delta_download']
+            bucket[k]['delta_total'] += r['delta_total']
+            bucket[k]['remaining'] = r['remaining']      # keep latest value
+            bucket[k]['volume_limit'] = r['volume_limit']
+        return bucket
+
+    if period == 'hour':
+        bucket = _aggregate(_tehran_hour_key)
+    elif period == 'month':
+        bucket = _aggregate(_tehran_month_key)
+    else:  # day
+        bucket = _aggregate(_tehran_date)
+
+    history_rows = []
+    for k, v in bucket.items():
+        history_rows.append({
+            'period_key': k,
+            'recorded_at': v['ts_example'].isoformat() + 'Z',
+            'delta_upload': v['delta_upload'],
+            'delta_download': v['delta_download'],
+            'delta_total': v['delta_total'],
+            'remaining': v['remaining'],
+            'volume_limit': v['volume_limit'],
+        })
+    # Most recent first
+    history_rows.reverse()
 
     renewals = (RenewalEvent.query
                 .filter_by(server_id=server_id, sub_id=normalized_sub_id)
                 .order_by(RenewalEvent.renewed_at.desc())
-                .limit(50)
+                .limit(30)
                 .all())
-
-    # Build hourly delta rows from consecutive snapshots
-    history_rows = []
-    for i, snap in enumerate(snapshots):
-        if i == 0:
-            continue  # skip first; can't compute delta without prior point
-        prev = snapshots[i - 1]
-        delta_upload = max(snap.upload_bytes - prev.upload_bytes, 0)
-        delta_download = max(snap.download_bytes - prev.download_bytes, 0)
-        delta_total = delta_upload + delta_download
-        history_rows.append({
-            'recorded_at': snap.recorded_at.isoformat() + 'Z',
-            'delta_upload': delta_upload,
-            'delta_download': delta_download,
-            'delta_total': delta_total,
-            'cumulative_total': snap.total_bytes,
-            'remaining': snap.remaining_bytes,
-            'volume_limit': snap.volume_limit_bytes,
-        })
 
     renewal_rows = [{
         'renewed_at': r.renewed_at.isoformat() + 'Z',
@@ -9873,10 +9958,21 @@ def sub_usage_history(server_id, sub_id):
         'is_unlimited_time': r.is_unlimited_time,
     } for r in renewals]
 
+    # Latest snapshot for current state
+    latest = (UsageSnapshot.query
+              .filter_by(server_id=server_id, sub_id=normalized_sub_id)
+              .order_by(UsageSnapshot.recorded_at.desc())
+              .first())
+
     return jsonify({
         'success': True,
+        'period': period,
         'history': history_rows,
         'renewals': renewal_rows,
+        'snapshot_count': len(snapshots),
+        'latest_remaining': latest.remaining_bytes if latest else None,
+        'latest_volume_limit': latest.volume_limit_bytes if latest else None,
+        'latest_recorded_at': (latest.recorded_at.isoformat() + 'Z') if latest else None,
     })
 
 
@@ -12861,8 +12957,9 @@ def health_watchdog():
                     pass
 
 
-_USAGE_SNAPSHOT_INTERVAL = 3600  # seconds between snapshots
+_USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN = 30  # default: 30 minutes
 _USAGE_SNAPSHOT_RETENTION_DAYS = 90  # keep 90 days of history
+USAGE_SNAPSHOT_INTERVAL_KEY = 'usage_snapshot_interval_minutes'
 
 
 def _take_usage_snapshots():
@@ -12960,12 +13057,37 @@ def _take_usage_snapshots():
 
 
 def usage_snapshot_worker():
-    """Background daemon: takes hourly usage snapshots."""
+    """Background daemon: takes periodic usage snapshots."""
     with app.app_context():
-        print(f"[UsageSnapshot] Worker started, interval={_USAGE_SNAPSHOT_INTERVAL}s")
+        print(f"[UsageSnapshot] Worker started, waiting for server data...")
+        # Wait until GLOBAL_SERVER_DATA is populated (up to 10 minutes)
+        _waited = 0
+        while _waited < 600:
+            if GLOBAL_SERVER_DATA.get('inbounds'):
+                break
+            time.sleep(30)
+            _waited += 30
+
+        # Take first snapshot immediately once data is available
+        if GLOBAL_SERVER_DATA.get('inbounds'):
+            print("[UsageSnapshot] Taking initial snapshot...")
+            _take_usage_snapshots()
+        else:
+            print("[UsageSnapshot] No server data after 10 min wait, will retry on next cycle.")
+
         while True:
             try:
-                time.sleep(_USAGE_SNAPSHOT_INTERVAL)
+                # Read interval dynamically so Settings changes take effect
+                try:
+                    _raw = _get_or_create_system_setting(
+                        USAGE_SNAPSHOT_INTERVAL_KEY,
+                        str(_USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN)
+                    )
+                    interval_min = int(_raw or _USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN)
+                    interval_min = max(5, min(120, interval_min))
+                except Exception:
+                    interval_min = _USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN
+                time.sleep(interval_min * 60)
                 _take_usage_snapshots()
             except Exception as exc:
                 print(f"[UsageSnapshot] Worker error: {exc}")

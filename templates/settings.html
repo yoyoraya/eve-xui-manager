@@ -136,6 +136,15 @@
                     <small class="text-secondary">Clients with remaining volume less than this are marked as: حجم رو به اتمامه &nbsp;—&nbsp; مثال: 0.2 = 200 MB</small>
                 </div>
 
+                <div class="form-group" style="margin-top: 18px; margin-bottom: 0;">
+                    <label>Usage Snapshot Interval (minutes) — فاصله ثبت مصرف</label>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <input type="number" id="general-snapshot-interval" class="form-input" min="5" max="120" step="5" value="30" style="max-width:120px;">
+                        <span style="font-size:0.82rem;color:#94a3b8;">هر چند دقیقه مصرف ذخیره شود (۵–۱۲۰ دقیقه)</span>
+                    </div>
+                    <small class="text-secondary">Lower = more accurate history but higher DB load. Recommended: 15–30 min.</small>
+                </div>
+
                 <div class="form-group" style="margin-top: 16px; margin-bottom: 0;">
                     <button class="btn btn-primary" onclick="saveGeneralSettings()">Save</button>
                 </div>
@@ -1639,6 +1648,9 @@
 
                 const lowVolumeInput = document.getElementById('general-low-volume-gb');
                 if (lowVolumeInput) { lowVolumeInput.value = Number(data.low_volume_gb ?? 1); updateLowVolumeHint(); }
+
+                const snapshotInput = document.getElementById('general-snapshot-interval');
+                if (snapshotInput) snapshotInput.value = Number(data.snapshot_interval_minutes ?? 30);
             }
         } catch (e) {
             console.error('Error loading general settings', e);
@@ -1662,6 +1674,7 @@
         const nearDays = parseInt((document.getElementById('general-near-expiry-days') || {}).value || '3', 10);
         const nearHours = parseInt((document.getElementById('general-near-expiry-hours') || {}).value || '0', 10);
         const lowVolumeGb = parseFloat((document.getElementById('general-low-volume-gb') || {}).value || '1');
+        const snapshotInterval = parseInt((document.getElementById('general-snapshot-interval') || {}).value || '30', 10);
 
         try {
             const res = await fetch('/api/settings/general', {
@@ -1673,6 +1686,7 @@
                     near_expiry_days: Number.isFinite(nearDays) ? nearDays : 3,
                     near_expiry_hours: Number.isFinite(nearHours) ? nearHours : 0,
                     low_volume_gb: Number.isFinite(lowVolumeGb) ? lowVolumeGb : 1,
+                    snapshot_interval_minutes: Number.isFinite(snapshotInterval) ? snapshotInterval : 30,
                 })
             });
             const data = await res.json();
@@ -1689,6 +1703,9 @@
 
                 const lowVolumeInput = document.getElementById('general-low-volume-gb');
                 if (lowVolumeInput) lowVolumeInput.value = Number(data.low_volume_gb ?? 1);
+
+                const snapshotEl = document.getElementById('general-snapshot-interval');
+                if (snapshotEl) snapshotEl.value = Number(data.snapshot_interval_minutes ?? 30);
                 showToast('Settings saved');
             } else {
                 showToast((data && data.error) ? data.error : 'Error saving settings', 'error');

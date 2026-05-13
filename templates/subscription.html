@@ -245,27 +245,34 @@
         </div>
 
         <!-- Usage History Section -->
-        <div id="usage-history-card" class="bg-card rounded-lg border border-border p-6 shadow-lg transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]" style="display:none;">
+        <div id="usage-history-card" class="bg-card rounded-lg border border-border p-6 shadow-lg transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-2 text-primary font-semibold">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
                     {{ 'تاریخچه مصرف' if is_fa else 'Usage History' }}
                 </div>
-                <span id="history-loading" class="text-xs text-muted">{{ 'در حال بارگزاری...' if is_fa else 'Loading...' }}</span>
+                <span id="history-loading" class="text-xs text-muted animate-pulse">{{ 'در حال بارگزاری...' if is_fa else 'Loading...' }}</span>
+            </div>
+
+            <!-- Period filter tabs -->
+            <div class="flex gap-2 mb-4">
+                <button onclick="switchHistoryPeriod('day')" id="hist-tab-day" class="hist-tab-btn active px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 text-white transition-colors">{{ 'روزانه' if is_fa else 'Daily' }}</button>
+                <button onclick="switchHistoryPeriod('hour')" id="hist-tab-hour" class="hist-tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-muted hover:bg-white/5 hover:text-white transition-colors">{{ 'ساعتی' if is_fa else 'Hourly' }}</button>
+                <button onclick="switchHistoryPeriod('month')" id="hist-tab-month" class="hist-tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-muted hover:bg-white/5 hover:text-white transition-colors">{{ 'ماهانه' if is_fa else 'Monthly' }}</button>
             </div>
 
             <!-- Renewal Events -->
             <div id="renewal-events-container" class="mb-4 space-y-2 hidden"></div>
 
-            <!-- Hourly table -->
-            <div id="history-table-container" class="hidden">
+            <!-- Table -->
+            <div id="history-table-container">
                 <div class="overflow-x-auto rounded-xl border border-white/5">
-                    <table class="w-full text-xs text-left">
+                    <table class="w-full text-xs">
                         <thead>
-                            <tr class="border-b border-white/10 bg-white/5 text-muted uppercase tracking-wider">
-                                <th class="px-3 py-2">{{ 'زمان' if is_fa else 'Time' }}</th>
-                                <th class="px-3 py-2 text-right">{{ 'دانلود' if is_fa else 'Download' }}</th>
-                                <th class="px-3 py-2 text-right">{{ 'آپلود' if is_fa else 'Upload' }}</th>
+                            <tr class="border-b border-white/10 bg-white/5 text-muted uppercase tracking-wider text-right" style="direction:rtl;">
+                                <th class="px-3 py-2 text-right">{{ 'تاریخ' if is_fa else 'Date' }}</th>
+                                <th class="px-3 py-2 text-right">{{ 'دانلود' if is_fa else 'DL' }}</th>
+                                <th class="px-3 py-2 text-right">{{ 'آپلود' if is_fa else 'UL' }}</th>
                                 <th class="px-3 py-2 text-right">{{ 'مصرف' if is_fa else 'Used' }}</th>
                                 <th class="px-3 py-2 text-right">{{ 'مانده' if is_fa else 'Left' }}</th>
                             </tr>
@@ -273,7 +280,7 @@
                         <tbody id="history-tbody" class="divide-y divide-white/5"></tbody>
                     </table>
                 </div>
-                <p id="history-empty" class="hidden text-center text-muted py-4 text-xs">{{ 'هنوز داده‌ای ثبت نشده.' if is_fa else 'No history recorded yet. Data appears after the first hourly snapshot.' }}</p>
+                <p id="history-empty" class="hidden text-center text-muted py-6 text-xs">{{ 'هنوز داده‌ای ثبت نشده. اولین snapshot چند دقیقه بعد از راه‌اندازی سرور ثبت می‌شود.' if is_fa else 'No history yet. First snapshot is taken a few minutes after server startup.' }}</p>
             </div>
         </div>
 
@@ -588,89 +595,122 @@
         // ── Usage History ──────────────────────────────────────────────
         const HISTORY_SERVER_ID = {{ server_id | tojson }};
         const HISTORY_SUB_ID = {{ sub_id | tojson }};
+        let _historyPeriod = 'day';
 
-        function fmtBytes(b) {
-            if (b == null) return '—';
-            if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
-            if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
-            if (b >= 1024) return (b / 1024).toFixed(0) + ' KB';
-            return b + ' B';
+        // ── Jalali (Shamsi) conversion ─────────────────────────────────
+        const _JALALI_MONTHS_FA = ['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+        const _JALALI_MONTHS_EN = ['Farvardin','Ordibehesht','Khordad','Tir','Mordad','Shahrivar','Mehr','Aban','Azar','Dey','Bahman','Esfand'];
+
+        function _g2j(gy, gm, gd) {
+            const g_d_no = 365*gy + Math.floor((gy+3)/4) - Math.floor((gy+99)/100) + Math.floor((gy+399)/400)
+                + [0,31,28,31,30,31,30,31,31,30,31,30,31].slice(0, gm).reduce((a,b)=>a+b,0)
+                + (gm>2 && ((gy%4===0&&gy%100!==0)||(gy%400===0)) ? 1 : 0) + gd;
+            let j_d_no = g_d_no - 79;
+            const j_np = Math.floor(j_d_no / 12053); j_d_no %= 12053;
+            let j_y = 979 + 33*j_np + 4*Math.floor(j_d_no/1461); j_d_no %= 1461;
+            if (j_d_no >= 366) { j_y += Math.floor((j_d_no-1)/365); j_d_no = (j_d_no-1)%365; }
+            const jDays = [31,31,31,31,31,31,30,30,30,30,30,29];
+            let j_m = 0;
+            for (; j_m < 11 && j_d_no >= jDays[j_m]; j_m++) j_d_no -= jDays[j_m];
+            return [j_y, j_m+1, j_d_no+1];
         }
 
-        function fmtDatetime(isoStr) {
+        function fmtJalali(isoStr, period) {
             if (!isoStr) return '—';
             const d = new Date(isoStr);
             if (isNaN(d)) return isoStr;
-            return d.toLocaleString(IS_FA ? 'fa-IR' : 'en-GB', {
-                month: 'short', day: 'numeric',
-                hour: '2-digit', minute: '2-digit', hour12: false
+            // Convert to Tehran time (UTC+3:30)
+            const tehran = new Date(d.getTime() + (3*60+30)*60000);
+            const [jy, jm, jd] = _g2j(tehran.getUTCFullYear(), tehran.getUTCMonth()+1, tehran.getUTCDate());
+            const months = IS_FA ? _JALALI_MONTHS_FA : _JALALI_MONTHS_EN;
+            if (period === 'month') return `${months[jm-1]} ${jy}`;
+            if (period === 'hour') {
+                const h = String(tehran.getUTCHours()).padStart(2,'0');
+                const mn = String(tehran.getUTCMinutes()).padStart(2,'0');
+                return `${jd} ${months[jm-1]} ${h}:${mn}`;
+            }
+            return `${jd} ${months[jm-1]} ${jy}`;
+        }
+
+        function fmtBytes(b) {
+            if (b == null || b < 0) return '—';
+            if (b === 0) return '0 B';
+            if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
+            if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
+            if (b >= 1024) return (b/1024).toFixed(0)+' KB';
+            return b+' B';
+        }
+
+        function switchHistoryPeriod(period) {
+            _historyPeriod = period;
+            document.querySelectorAll('.hist-tab-btn').forEach(b => {
+                b.className = 'hist-tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-muted hover:bg-white/5 hover:text-white transition-colors';
             });
+            const active = document.getElementById(`hist-tab-${period}`);
+            if (active) active.className = 'hist-tab-btn active px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 text-white transition-colors';
+            loadUsageHistory();
         }
 
         async function loadUsageHistory() {
-            const card = document.getElementById('usage-history-card');
             const loadingEl = document.getElementById('history-loading');
-            const tableContainer = document.getElementById('history-table-container');
             const tbody = document.getElementById('history-tbody');
             const emptyEl = document.getElementById('history-empty');
             const renewalContainer = document.getElementById('renewal-events-container');
 
-            card.style.display = '';
+            if (loadingEl) { loadingEl.textContent = IS_FA ? 'در حال بارگزاری...' : 'Loading...'; loadingEl.style.display = ''; }
+            if (emptyEl) emptyEl.classList.add('hidden');
+            if (tbody) tbody.innerHTML = '';
+            if (renewalContainer) renewalContainer.classList.add('hidden');
+
             try {
-                const resp = await fetch(`/sub/history/${HISTORY_SERVER_ID}/${encodeURIComponent(HISTORY_SUB_ID)}`);
+                const resp = await fetch(`/sub/history/${HISTORY_SERVER_ID}/${encodeURIComponent(HISTORY_SUB_ID)}?period=${_historyPeriod}`);
                 const data = await resp.json();
-                loadingEl.style.display = 'none';
-                tableContainer.classList.remove('hidden');
+                if (loadingEl) loadingEl.style.display = 'none';
 
                 if (!data.success) {
-                    emptyEl.textContent = IS_FA ? 'خطا در بارگزاری.' : 'Failed to load history.';
-                    emptyEl.classList.remove('hidden');
+                    if (emptyEl) { emptyEl.textContent = IS_FA ? 'خطا در بارگزاری.' : 'Failed to load history.'; emptyEl.classList.remove('hidden'); }
                     return;
                 }
 
                 // Renewal events
-                if (data.renewals && data.renewals.length > 0) {
+                if (data.renewals && data.renewals.length > 0 && renewalContainer) {
                     renewalContainer.classList.remove('hidden');
                     renewalContainer.innerHTML = data.renewals.map(r => {
-                        const volText = r.is_unlimited_volume
-                            ? (IS_FA ? 'نامحدود' : 'Unlimited')
-                            : fmtBytes(r.volume_bytes);
-                        const timeText = r.is_unlimited_time
-                            ? (IS_FA ? 'نامحدود' : 'Unlimited')
-                            : (r.days != null ? (IS_FA ? `${r.days} روز` : `${r.days} days`) : '—');
-                        return `<div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-success/10 border border-success/20 text-sm">
+                        const volText = r.is_unlimited_volume ? (IS_FA?'نامحدود':'Unlimited') : fmtBytes(r.volume_bytes);
+                        const timeText = r.is_unlimited_time ? (IS_FA?'نامحدود':'Unlimited') : (r.days!=null?(IS_FA?`${r.days} روز`:`${r.days} days`):'—');
+                        return `<div class="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-success/10 border border-success/20 text-sm">
                             <svg class="w-4 h-4 text-success shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                             <div>
-                                <div class="font-semibold text-success">${IS_FA ? 'تمدید شد' : 'Renewed'} — ${fmtDatetime(r.renewed_at)}</div>
-                                <div class="text-xs text-muted mt-0.5">${IS_FA ? 'حجم' : 'Volume'}: ${volText} &nbsp;·&nbsp; ${IS_FA ? 'مدت' : 'Duration'}: ${timeText}</div>
+                                <div class="font-semibold text-success">${IS_FA?'تمدید شد':'Renewed'} — ${fmtJalali(r.renewed_at, 'day')}</div>
+                                <div class="text-xs text-muted mt-0.5">${IS_FA?'حجم':'Vol'}: ${volText} · ${IS_FA?'مدت':'Duration'}: ${timeText}</div>
                             </div>
                         </div>`;
                     }).join('');
                 }
 
-                // History rows (most recent first for display)
-                const rows = [...(data.history || [])].reverse();
+                const rows = data.history || [];
                 if (rows.length === 0) {
-                    emptyEl.classList.remove('hidden');
+                    if (emptyEl) emptyEl.classList.remove('hidden');
                     return;
                 }
 
-                tbody.innerHTML = rows.map(row => {
-                    const leftColor = (row.remaining != null && row.volume_limit && row.remaining / row.volume_limit < 0.1)
-                        ? 'text-red-400' : 'text-success';
-                    return `<tr class="hover:bg-white/5 transition-colors">
-                        <td class="px-3 py-2 text-muted whitespace-nowrap">${fmtDatetime(row.recorded_at)}</td>
-                        <td class="px-3 py-2 text-right text-blue-400">${fmtBytes(row.delta_download)}</td>
-                        <td class="px-3 py-2 text-right text-purple-400">${fmtBytes(row.delta_upload)}</td>
-                        <td class="px-3 py-2 text-right text-white font-medium">${fmtBytes(row.delta_total)}</td>
-                        <td class="px-3 py-2 text-right ${leftColor}">${fmtBytes(row.remaining)}</td>
-                    </tr>`;
-                }).join('');
+                if (tbody) {
+                    tbody.innerHTML = rows.map(row => {
+                        const leftColor = (row.remaining!=null && row.volume_limit && (row.remaining/row.volume_limit)<0.1)
+                            ? 'text-red-400' : 'text-success';
+                        const usedColor = row.delta_total > 0 ? 'text-white font-medium' : 'text-muted';
+                        return `<tr class="hover:bg-white/5 transition-colors" style="direction:rtl;">
+                            <td class="px-3 py-2 text-muted whitespace-nowrap text-right">${fmtJalali(row.recorded_at, _historyPeriod)}</td>
+                            <td class="px-3 py-2 text-right text-blue-400">${fmtBytes(row.delta_download)}</td>
+                            <td class="px-3 py-2 text-right text-purple-400">${fmtBytes(row.delta_upload)}</td>
+                            <td class="px-3 py-2 text-right ${usedColor}">${fmtBytes(row.delta_total)}</td>
+                            <td class="px-3 py-2 text-right ${leftColor}">${fmtBytes(row.remaining)}</td>
+                        </tr>`;
+                    }).join('');
+                }
             } catch (e) {
-                loadingEl.style.display = 'none';
-                tableContainer.classList.remove('hidden');
-                emptyEl.textContent = IS_FA ? 'خطا در بارگزاری.' : 'Failed to load history.';
-                emptyEl.classList.remove('hidden');
+                if (loadingEl) loadingEl.style.display = 'none';
+                if (emptyEl) { emptyEl.textContent = IS_FA ? 'خطا در بارگزاری.' : 'Failed to load history.'; emptyEl.classList.remove('hidden'); }
             }
         }
 
