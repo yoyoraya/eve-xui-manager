@@ -120,6 +120,19 @@ BULK_JOBS = {}  # job_id -> job dict
 BULK_JOBS_LOCK = threading.Lock()
 BULK_MAX_JOBS = 50
 
+# Manual snapshot progress tracking
+_SNAPSHOT_PROGRESS = {
+    'status': 'idle',   # idle | running | done | error
+    'step': 0,
+    'total': 0,
+    'current_server': '',
+    'message': '',
+    'message_fa': '',
+    'inbound_count': 0,
+    'fetched_fresh': False,
+    'error': None,
+}
+
 # Telegram backup job tracking (in-memory; per-process)
 TELEGRAM_BACKUP_JOBS = {}  # job_id -> job dict
 TELEGRAM_BACKUP_JOBS_LOCK = threading.Lock()
@@ -10153,20 +10166,33 @@ def sub_usage_history(server_id, sub_id):
 
     # Compute per-snapshot deltas
     delta_rows = []
-    for i in range(1, len(snapshots)):
-        prev = snapshots[i - 1]
-        curr = snapshots[i]
-        delta_up = max(curr.upload_bytes - prev.upload_bytes, 0)
-        delta_down = max(curr.download_bytes - prev.download_bytes, 0)
+    if len(snapshots) == 1:
+        # Only one snapshot (no baseline before the window) — show cumulative totals
+        snap = snapshots[0]
         delta_rows.append({
-            'ts': curr.recorded_at,
-            'delta_upload': delta_up,
-            'delta_download': delta_down,
-            'delta_total': delta_up + delta_down,
-            'remaining': curr.remaining_bytes,
-            'volume_limit': curr.volume_limit_bytes,
-            'cumulative': curr.total_bytes,
+            'ts': snap.recorded_at,
+            'delta_upload': snap.upload_bytes,
+            'delta_download': snap.download_bytes,
+            'delta_total': snap.total_bytes,
+            'remaining': snap.remaining_bytes,
+            'volume_limit': snap.volume_limit_bytes,
+            'cumulative': snap.total_bytes,
         })
+    else:
+        for i in range(1, len(snapshots)):
+            prev = snapshots[i - 1]
+            curr = snapshots[i]
+            delta_up = max(curr.upload_bytes - prev.upload_bytes, 0)
+            delta_down = max(curr.download_bytes - prev.download_bytes, 0)
+            delta_rows.append({
+                'ts': curr.recorded_at,
+                'delta_upload': delta_up,
+                'delta_download': delta_down,
+                'delta_total': delta_up + delta_down,
+                'remaining': curr.remaining_bytes,
+                'volume_limit': curr.volume_limit_bytes,
+                'cumulative': curr.total_bytes,
+            })
 
     # Aggregate by period using Tehran timezone label (UTC+3:30)
     _TEHRAN_OFFSET = timedelta(hours=3, minutes=30)
@@ -12370,30 +12396,125 @@ def get_settings_overview():
     return jsonify({'success': True, **result})
 
 
+def _run_snapshot_with_progress():
+    """Background thread: fetch servers one-by-one with progress, then snapshot."""
+    global _SNAPSHOT_PROGRESS
+    is_fa = False
+    try:
+        with app.app_context():
+            is_fa = _get_panel_ui_lang() == 'fa'
+    except Exception:
+        pass
+
+    def _msg(en, fa):
+        return fa if is_fa else en
+
+    try:
+        with app.app_context():
+            servers = Server.query.filter_by(enabled=True).all()
+            total = len(servers)
+            _SNAPSHOT_PROGRESS.update({
+                'step': 0, 'total': total,
+                'message': _msg(f'Fetching {total} server(s)…', f'در حال دریافت {total} سرور…'),
+                'message_fa': f'در حال دریافت {total} سرور…',
+                'fetched_fresh': False,
+            })
+
+            cache_was_empty = not bool(GLOBAL_SERVER_DATA.get('inbounds'))
+
+            admin_user = Admin.query.filter(
+                or_(Admin.is_superadmin == True, Admin.role == 'superadmin')
+            ).first()
+            if not admin_user:
+                admin_user = SimpleNamespace(role='superadmin', id=0, is_superadmin=True)
+
+            for i, srv in enumerate(servers, 1):
+                _SNAPSHOT_PROGRESS.update({
+                    'step': i,
+                    'current_server': srv.name,
+                    'message': _msg(
+                        f'Fetching server {i}/{total}: {srv.name}',
+                        f'دریافت سرور {i} از {total}: {srv.name}',
+                    ),
+                })
+                try:
+                    srv_dict = {
+                        'id': srv.id, 'name': srv.name, 'host': srv.host,
+                        'username': srv.username, 'password': get_server_password(srv),
+                        'panel_type': srv.panel_type, 'sub_port': srv.sub_port,
+                        'sub_path': srv.sub_path, 'json_path': srv.json_path,
+                    }
+                    srv_id, inbounds, online_index, status_payload, status_error, error, detected_type = fetch_worker(srv_dict)
+                    if not error and inbounds:
+                        processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {}, online_index=online_index)
+                        existing = GLOBAL_SERVER_DATA.get('inbounds') or []
+                        without = [ib for ib in existing if int(ib.get('server_id', -1)) != int(srv.id)]
+                        GLOBAL_SERVER_DATA['inbounds'] = without + list(processed or [])
+                        GLOBAL_SERVER_DATA['last_update'] = datetime.utcnow().isoformat()
+                except Exception:
+                    pass  # keep going for other servers
+
+            inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+            if not inbounds:
+                _SNAPSHOT_PROGRESS.update({
+                    'status': 'error',
+                    'error': _msg(
+                        'Fetched all servers but got no inbounds. Check that servers are online and enabled.',
+                        'همه سرورها بررسی شدند اما اینباندی یافت نشد. مطمئن شوید سرورها آنلاین و فعال هستند.',
+                    ),
+                })
+                return
+
+            _SNAPSHOT_PROGRESS.update({
+                'step': total,
+                'message': _msg('Taking usage snapshot…', 'در حال ثبت اسنپ‌شات مصرف…'),
+            })
+            _take_usage_snapshots()
+
+            inbound_count = len(inbounds)
+            _SNAPSHOT_PROGRESS.update({
+                'status': 'done',
+                'inbound_count': inbound_count,
+                'fetched_fresh': cache_was_empty,
+                'message': _msg(
+                    f'Done! Snapshot recorded for {inbound_count} inbound(s).{" (cache was empty — fetched fresh data first)" if cache_was_empty else ""}',
+                    f'انجام شد! اسنپ‌شات برای {inbound_count} اینباند ثبت شد.{" (کش خالی بود — ابتدا داده‌ها دریافت شدند)" if cache_was_empty else ""}',
+                ),
+                'error': None,
+            })
+    except Exception as exc:
+        _SNAPSHOT_PROGRESS.update({
+            'status': 'error',
+            'error': str(exc),
+        })
+
+
 @app.route('/api/usage-snapshot/trigger', methods=['POST'])
 @superadmin_required
 def trigger_usage_snapshot():
-    """Manually trigger a usage snapshot; auto-fetches server data if cache is empty."""
-    fetched_fresh = False
-    inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
-    if not inbounds:
-        # Cache is empty — run a forced fetch right now before snapshotting
-        try:
-            fetch_and_update_global_data(force=True)
-            fetched_fresh = True
-        except Exception as exc:
-            return jsonify({'success': False, 'error': f'Cache empty and fetch failed: {exc}'}), 500
-        inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
-        if not inbounds:
-            return jsonify({'success': False, 'error': 'Fetched server data but still got no inbounds. Check that servers are online and enabled.'}), 400
-    try:
-        _take_usage_snapshots()
-        msg = (f'Cache was empty — fetched fresh data, then took snapshot for {len(inbounds)} inbound(s).'
-               if fetched_fresh else
-               f'Snapshot taken for {len(inbounds)} inbound(s).')
-        return jsonify({'success': True, 'message': msg})
-    except Exception as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 500
+    """Start a background snapshot task and return immediately."""
+    global _SNAPSHOT_PROGRESS
+    if _SNAPSHOT_PROGRESS.get('status') == 'running':
+        return jsonify({'success': False, 'error': 'A snapshot task is already running.'}), 409
+    _SNAPSHOT_PROGRESS = {
+        'status': 'running',
+        'step': 0, 'total': 0,
+        'current_server': '',
+        'message': '',
+        'inbound_count': 0,
+        'fetched_fresh': False,
+        'error': None,
+    }
+    t = threading.Thread(target=_run_snapshot_with_progress, daemon=True)
+    t.start()
+    return jsonify({'success': True, 'status': 'started'})
+
+
+@app.route('/api/usage-snapshot/progress', methods=['GET'])
+@superadmin_required
+def snapshot_progress():
+    """Return current progress of the running/last snapshot task."""
+    return jsonify(_SNAPSHOT_PROGRESS)
 
 
 @app.route('/api/settings/ssl', methods=['GET'])
@@ -13287,11 +13408,8 @@ def _take_usage_snapshots():
                 up = int(client.get('up') or 0)
                 down = int(client.get('down') or 0)
                 total_used = up + down
-                try:
-                    vol_limit_gb = float(client.get('totalGB') or 0)
-                except Exception:
-                    vol_limit_gb = 0
-                volume_limit_bytes = int(vol_limit_gb * 1024 * 1024 * 1024) if vol_limit_gb > 0 else None
+                # totalGB in GLOBAL_SERVER_DATA is already in bytes (raw panel value)
+                volume_limit_bytes = int(client.get('totalGB') or 0) or None
                 remaining_bytes = max(volume_limit_bytes - total_used, 0) if volume_limit_bytes else None
 
                 # Renewal detection: compare with the most recent snapshot
