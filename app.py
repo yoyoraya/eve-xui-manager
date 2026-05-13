@@ -10399,6 +10399,40 @@ def client_subscription(server_id, sub_id):
     except Exception:
         found_in_cache = False
 
+    # === Stale-cache recovery: if client was found in cache but server is marked unreachable,
+    #     try a live fetch so quota/limit changes made in x-ui are reflected immediately ===
+    if found_in_cache and wants_html_view:
+        try:
+            _srv_statuses = GLOBAL_SERVER_DATA.get('servers_status') or []
+            _srv_status = next(
+                (s for s in _srv_statuses if int(s.get('server_id', -1)) == int(server_id)),
+                None
+            )
+            _server_unreachable = _srv_status is not None and not _srv_status.get('reachable', True)
+            if _server_unreachable:
+                _s_obj, _s_err = get_xui_session(server)
+                if not _s_err and _s_obj:
+                    _live_inbounds, _live_err, _live_type = fetch_inbounds(_s_obj, server.host, server.panel_type)
+                    if not _live_err and _live_inbounds:
+                        persist_detected_panel_type(server, _live_type)
+                        for _inb in _live_inbounds:
+                            try:
+                                _settings = json.loads(_inb.get('settings', '{}'))
+                            except Exception:
+                                continue
+                            for _cli in _settings.get('clients', []):
+                                _c_sub = str(_cli.get('subId') or '').strip()
+                                _c_uuid = str(_cli.get('id') or '').strip()
+                                if normalized_sub_id and (normalized_sub_id == _c_sub or (not _c_sub and normalized_sub_id == _c_uuid)):
+                                    target_client = _cli
+                                    target_inbound = _inb
+                                    found_in_cache = False
+                                    break
+                            if not found_in_cache:
+                                break
+        except Exception:
+            pass  # keep cached data on any error
+
     # === Fallback: if not found in cache, perform live fetch (legacy behavior) ===
     if not target_client:
         session_obj, login_error = get_xui_session(server)
