@@ -6157,6 +6157,17 @@ def get_general_settings():
         snapshot_interval = max(5, min(120, snapshot_interval))
     except Exception:
         snapshot_interval = _USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN
+    # Last snapshot timestamp (across all servers/subs)
+    try:
+        last_snap = (UsageSnapshot.query
+                     .order_by(UsageSnapshot.recorded_at.desc())
+                     .with_entities(UsageSnapshot.recorded_at)
+                     .first())
+        last_snapshot_at = (last_snap.recorded_at.isoformat() + 'Z') if last_snap else None
+        total_snapshots = UsageSnapshot.query.count()
+    except Exception:
+        last_snapshot_at = None
+        total_snapshots = 0
     return jsonify({
         'success': True,
         'timezone': _get_app_timezone_name(),
@@ -6166,6 +6177,8 @@ def get_general_settings():
         'near_expiry_hours': thresholds.get('near_expiry_hours', 0),
         'low_volume_gb': thresholds.get('low_volume_gb', 1.0),
         'snapshot_interval_minutes': snapshot_interval,
+        'last_snapshot_at': last_snapshot_at,
+        'total_snapshots': total_snapshots,
     })
 
 
@@ -13656,35 +13669,78 @@ def usage_snapshot_worker():
                 pass
 
 
+# File handles kept open so fcntl locks are held for the process lifetime.
+_SINGLETON_LOCK_FDS = {}
+
+def _claim_singleton(name):
+    """Try to claim exclusive ownership of a singleton background thread.
+    Uses a non-blocking fcntl exclusive lock on a /tmp file so:
+    - Only one gunicorn worker wins (returns True).
+    - If that worker dies, the OS releases the lock automatically.
+    - Other workers return False and skip starting the thread.
+    Gracefully falls back to True on non-Unix systems (Windows dev).
+    """
+    try:
+        import fcntl as _fcntl
+        lock_path = f'/tmp/eve_{name}.lock'
+        fh = open(lock_path, 'w')
+        _fcntl.flock(fh, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        fh.write(str(os.getpid()))
+        fh.flush()
+        _SINGLETON_LOCK_FDS[name] = fh  # keep open — releasing closes the lock
+        print(f"[Singleton] PID {os.getpid()} owns {name}")
+        return True
+    except (IOError, OSError):
+        # Another worker already holds the lock
+        return False
+    except ImportError:
+        # fcntl unavailable (Windows) — allow all threads (dev mode)
+        return True
+
+
 def ensure_background_threads_started():
-    """Start background threads (scheduler + fetcher + watchdog) once per process."""
+    """Start background threads once per process.
+
+    Singleton threads (scheduler, watchdog): only the gunicorn worker that
+    wins the fcntl lock runs them — prevents duplicate health logs, double
+    backups, and triple notifications.
+
+    Per-worker threads (data fetcher, snapshot): run in every worker because
+    they populate per-process memory caches; the snapshot worker has its own
+    jitter + DB dedup to avoid duplicate writes.
+    """
     global BACKGROUND_THREADS_STARTED
     if BACKGROUND_THREADS_STARTED:
         return
-
     BACKGROUND_THREADS_STARTED = True
 
-    try:
-        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-        scheduler_thread.start()
-    except Exception as e:
-        print(f"Failed to start scheduler thread: {e}")
+    # Singleton: only one worker runs the scheduler (auto-backup, etc.)
+    if _claim_singleton('scheduler'):
+        try:
+            threading.Thread(target=run_scheduler, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to start scheduler thread: {e}")
+    else:
+        print("[Singleton] scheduler already owned by another worker, skipping.")
 
+    # Per-worker: every worker fetches server data into its own memory cache
     try:
-        data_thread = threading.Thread(target=background_data_fetcher, daemon=True)
-        data_thread.start()
+        threading.Thread(target=background_data_fetcher, daemon=True).start()
     except Exception as e:
         print(f"Failed to start data fetcher thread: {e}")
 
-    try:
-        watchdog_thread = threading.Thread(target=health_watchdog, daemon=True)
-        watchdog_thread.start()
-    except Exception as e:
-        print(f"Failed to start health watchdog thread: {e}")
+    # Singleton: only one worker runs health watchdog (DB logs, notifications)
+    if _claim_singleton('health_watchdog'):
+        try:
+            threading.Thread(target=health_watchdog, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to start health watchdog thread: {e}")
+    else:
+        print("[Singleton] health_watchdog already owned by another worker, skipping.")
 
+    # Per-worker with jitter+dedup: each worker runs but only one writes per cycle
     try:
-        snapshot_thread = threading.Thread(target=usage_snapshot_worker, daemon=True)
-        snapshot_thread.start()
+        threading.Thread(target=usage_snapshot_worker, daemon=True).start()
     except Exception as e:
         print(f"Failed to start usage snapshot thread: {e}")
 

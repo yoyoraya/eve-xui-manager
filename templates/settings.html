@@ -148,6 +148,10 @@
                     </div>
                     <small class="text-secondary">Lower = more accurate history but higher DB load. Recommended: 15–30 min.</small>
                     <div id="snapshot-now-result" style="margin-top:8px;font-size:0.83rem;display:none; line-height:1.6;"></div>
+                    <div id="snapshot-last-info" style="margin-top:6px;font-size:0.8rem;color:#64748b;display:none;">
+                        Last snapshot: <span id="snapshot-last-time" style="color:#94a3b8;"></span>
+                        &nbsp;·&nbsp; Total records: <span id="snapshot-total-count" style="color:#94a3b8;"></span>
+                    </div>
                 </div>
 
                 <div class="form-group" style="margin-top: 16px; margin-bottom: 0;">
@@ -1656,6 +1660,23 @@
 
                 const snapshotInput = document.getElementById('general-snapshot-interval');
                 if (snapshotInput) snapshotInput.value = Number(data.snapshot_interval_minutes ?? 30);
+
+                // Show last snapshot info
+                const lastInfo = document.getElementById('snapshot-last-info');
+                const lastTimeEl = document.getElementById('snapshot-last-time');
+                const totalEl = document.getElementById('snapshot-total-count');
+                if (lastInfo && data.last_snapshot_at) {
+                    const d = new Date(data.last_snapshot_at);
+                    const ago = Math.round((Date.now() - d.getTime()) / 60000);
+                    const agoStr = ago < 1 ? 'just now' : ago < 60 ? `${ago}m ago` : `${Math.round(ago/60)}h ago`;
+                    lastTimeEl.textContent = `${d.toLocaleTimeString()} (${agoStr})`;
+                    totalEl.textContent = (data.total_snapshots || 0).toLocaleString() + ' rows';
+                    lastInfo.style.display = 'block';
+                } else if (lastInfo) {
+                    lastTimeEl.textContent = 'No snapshots yet';
+                    totalEl.textContent = '0 rows';
+                    lastInfo.style.display = 'block';
+                }
             }
         } catch (e) {
             console.error('Error loading general settings', e);
@@ -1727,9 +1748,12 @@
                         </div>`;
                 }
 
+                // Show elapsed time so user knows it's not frozen
+                const elapsed = Math.round((Date.now() - _snapPollStarted) / 1000);
+                const elapsedStr = elapsed > 5 ? ` <span style="color:#64748b;font-size:0.78rem;">(${elapsed}s)</span>` : '';
                 if (resultEl) {
                     resultEl.style.color = 'var(--text-secondary)';
-                    resultEl.innerHTML = `⏳ ${msg}${progressLine}`;
+                    resultEl.innerHTML = `⏳ ${msg || 'Working…'}${elapsedStr}${progressLine}`;
                 }
 
                 if (pdata.status === 'done') {
