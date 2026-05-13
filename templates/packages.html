@@ -4,221 +4,775 @@
 {% block page_title %}Package & Tariff Management{% endblock %}
 
 {% block content %}
-<div class="packages-layout">
-    
-    <div class="server-card">
-        <div class="server-header">
-            <div class="server-title">
-                <h3>⚙️ Base Tariffs (Custom Plans)</h3>
-            </div>
-        </div>
-        <div style="padding: 20px;">
-            <div class="form-group">
-                <label>Price per GB (Toman)</label>
-                <input type="text" id="conf-cost-gb" class="form-input" value="{{ '{:,}'.format(base_cost_gb) }}" oninput="formatNumberInput(this)">
-            </div>
-            <div class="form-group">
-                <label>Price per Day (Toman)</label>
-                <input type="text" id="conf-cost-day" class="form-input" value="{{ '{:,}'.format(base_cost_day) }}" oninput="formatNumberInput(this)">
-            </div>
-            <div class="form-actions">
-                <button type="button" class="btn btn-primary btn-block" onclick="saveConfig()">Save Tariffs</button>
-            </div>
-        </div>
+<div class="settings-layout">
+
+    <!-- Sidebar tabs -->
+    <div class="settings-sidebar">
+        <button class="settings-tab active" onclick="pkgSwitchTab('packages', event)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h5l3 3-3 3h-5"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="17.5" cy="18.5" r="2.5"/></svg>
+            General Packages
+        </button>
+        <button class="settings-tab" onclick="pkgSwitchTab('resellers', event)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Reseller Packages
+        </button>
+        <button class="settings-tab" onclick="pkgSwitchTab('tariffs', event)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            Base Tariffs
+        </button>
     </div>
 
-    <div class="server-card">
-        <div class="server-header">
-            <div class="server-title">
-                <h3>📦 Ready Packages</h3>
-            </div>
-            <div class="server-actions">
-                <button class="btn btn-success btn-full-mobile" type="button" onclick="openPackageModal()">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    <span>Add Package</span>
-                </button>
-            </div>
-        </div>
-        <div style="padding: 20px;">
-            <div id="packages-list" class="servers-grid" style="grid-template-columns: 1fr; gap: 10px;">
+    <!-- Content area -->
+    <div class="settings-content">
+
+        <!-- ═══ Tab 1: General Packages ═══ -->
+        <div id="tab-packages" class="tab-pane active">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Ready Packages</h2>
+                        <p class="text-secondary">Define packages for clients and resellers.</p>
+                    </div>
+                    <button class="btn btn-success" onclick="openPkgModal()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Add Package
+                    </button>
                 </div>
+                <div id="pkg-list-body" style="padding: 0 20px 20px;">
+                    <div class="loading-state">Loading packages…</div>
+                </div>
+            </div>
         </div>
-    </div>
-</div>
 
-<style nonce="{{ csp_nonce }}">
-    .packages-layout {
-        display: grid;
-        grid-template-columns: 1fr 2fr;
-        gap: 20px;
-    }
+        <!-- ═══ Tab 2: Reseller Packages ═══ -->
+        <div id="tab-resellers" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Reseller Package Assignment</h2>
+                        <p class="text-secondary">Select a reseller to manage their package access.</p>
+                    </div>
+                </div>
+                <div style="padding: 20px;">
+                    <div class="form-group">
+                        <label>Select Reseller</label>
+                        <select id="reseller-select" class="form-input" onchange="loadResellerPackages()">
+                            <option value="">— Choose a reseller —</option>
+                        </select>
+                    </div>
+                    <div id="reseller-pkg-body" style="margin-top: 16px;"></div>
+                </div>
+            </div>
+        </div>
 
-    @media (max-width: 768px) {
-        .packages-layout {
-            grid-template-columns: 1fr;
-        }
-    }
-</style>
+        <!-- ═══ Tab 3: Base Tariffs ═══ -->
+        <div id="tab-tariffs" class="tab-pane">
+            <!-- Base rates card -->
+            <div class="panel-card" style="margin-bottom: 20px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Base Tariffs</h2>
+                        <p class="text-secondary">Default pricing when no tier rule matches.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveBaseConfig()">Save</button>
+                </div>
+                <div style="padding: 0 20px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="form-group">
+                        <label>Price per GB (Toman)</label>
+                        <input type="text" id="conf-cost-gb" class="form-input" value="{{ '{:,}'.format(base_cost_gb) }}" oninput="formatNumberInput(this)">
+                    </div>
+                    <div class="form-group">
+                        <label>Price per Day (Toman)</label>
+                        <input type="text" id="conf-cost-day" class="form-input" value="{{ '{:,}'.format(base_cost_day) }}" oninput="formatNumberInput(this)">
+                    </div>
+                </div>
+            </div>
 
+            <!-- Price tier rules card -->
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Dynamic Pricing Tiers</h2>
+                        <p class="text-secondary">Override rates based on volume/day thresholds or per reseller.</p>
+                    </div>
+                    <button class="btn btn-success" onclick="openTierModal()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Add Tier
+                    </button>
+                </div>
+                <div style="padding: 0 20px 20px;">
+                    <div id="tier-list-body">
+                        <div class="loading-state">Loading tiers…</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /settings-content -->
+</div><!-- /settings-layout -->
+
+
+<!-- ═══════════════════════════════════════════════════════
+     Package Modal (Add / Edit)
+═══════════════════════════════════════════════════════ -->
 <div class="modal-overlay hidden" id="pkg-modal">
     <div class="modal modal-sm">
         <div class="modal-header">
             <h2 id="pkg-modal-title">Add New Package</h2>
-            <button class="modal-close" type="button" onclick="closePackageModal()">&times;</button>
+            <button class="modal-close" type="button" onclick="closePkgModal()">&times;</button>
         </div>
         <div class="modal-body">
-            <div class="form-group"><label>Package Name</label><input type="text" id="pkg-name" class="form-input" placeholder="e.g., 1 Month 30GB"></div>
-            <div class="form-group"><label>Duration (Days)</label><input type="number" id="pkg-days" class="form-input" placeholder="30"></div>
-            <div class="form-group"><label>Volume (GB)</label><input type="number" id="pkg-vol" class="form-input" placeholder="30"></div>
-            <div class="form-group"><label>Price (Toman)</label><input type="text" id="pkg-price" class="form-input" placeholder="100,000" oninput="formatNumberInput(this)"></div>
+            <div class="form-group">
+                <label>Package Name</label>
+                <input type="text" id="pkg-name" class="form-input" placeholder="e.g., 1 Month 30GB">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group">
+                    <label>Duration (Days)</label>
+                    <input type="number" id="pkg-days" class="form-input" placeholder="30" oninput="updateMinPriceHint()">
+                </div>
+                <div class="form-group">
+                    <label>Volume (GB)</label>
+                    <input type="number" id="pkg-vol" class="form-input" placeholder="30" oninput="updateMinPriceHint()">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Price (Toman)</label>
+                <input type="text" id="pkg-price" class="form-input" placeholder="100,000" oninput="formatNumberInput(this); checkPriceWarning()">
+                <div id="pkg-price-hint" style="margin-top:6px; font-size:0.82rem; color:var(--text-secondary); display:none;"></div>
+                <div id="pkg-price-warn" class="alert alert-warning" style="margin-top:6px; display:none; padding:8px 12px; font-size:0.84rem;">
+                    ⚠️ ضرر میکنی! قیمت پایین‌تر از حداقل هزینه محاسبه‌شده است.
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Scope</label>
+                <select id="pkg-scope" class="form-input" onchange="toggleScopeFields()">
+                    <option value="global">Global — all resellers</option>
+                    <option value="assigned">Assigned — specific resellers</option>
+                    <option value="personal">Personal — creator only</option>
+                </select>
+            </div>
+            <div id="pkg-assigned-section" style="display:none;" class="form-group">
+                <label>Assign to Resellers</label>
+                <div id="pkg-reseller-checkboxes" style="max-height:160px; overflow-y:auto; border:1px solid var(--border-color); border-radius:8px; padding:10px; display:flex; flex-direction:column; gap:6px;">
+                    <span class="text-muted" style="font-size:0.85rem;">Loading…</span>
+                </div>
+            </div>
             <div class="form-actions">
-                <button class="btn btn-secondary" type="button" onclick="closePackageModal()">Cancel</button>
+                <button class="btn btn-secondary" type="button" onclick="closePkgModal()">Cancel</button>
                 <button class="btn btn-primary" id="pkg-submit-btn" type="button" onclick="submitPackage()">Create Package</button>
             </div>
         </div>
     </div>
 </div>
+
+
+<!-- ═══════════════════════════════════════════════════════
+     Price Tier Modal (Add / Edit)
+═══════════════════════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="tier-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2 id="tier-modal-title">Add Price Tier</h2>
+            <button class="modal-close" type="button" onclick="closeTierModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Tier Name</label>
+                <input type="text" id="tier-name" class="form-input" placeholder="e.g., Bulk 100GB+">
+            </div>
+            <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 12px;">Volume &amp; Day conditions (leave blank = no limit)</p>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group">
+                    <label>Min Volume (GB)</label>
+                    <input type="number" id="tier-min-vol" class="form-input" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label>Max Volume (GB)</label>
+                    <input type="number" id="tier-max-vol" class="form-input" placeholder="∞">
+                </div>
+                <div class="form-group">
+                    <label>Min Days</label>
+                    <input type="number" id="tier-min-days" class="form-input" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label>Max Days</label>
+                    <input type="number" id="tier-max-days" class="form-input" placeholder="∞">
+                </div>
+            </div>
+            <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 12px;">Rate overrides (leave blank = use base tariff)</p>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group">
+                    <label>Cost per GB (Toman)</label>
+                    <input type="text" id="tier-cpg" class="form-input" placeholder="inherit" oninput="formatNumberInput(this)">
+                </div>
+                <div class="form-group">
+                    <label>Cost per Day (Toman)</label>
+                    <input type="text" id="tier-cpd" class="form-input" placeholder="inherit" oninput="formatNumberInput(this)">
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group">
+                    <label>Reseller (blank = global)</label>
+                    <select id="tier-reseller" class="form-input">
+                        <option value="">— Global —</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Priority (higher = preferred)</label>
+                    <input type="number" id="tier-priority" class="form-input" value="0" min="0">
+                </div>
+            </div>
+            <div class="form-group" style="display:flex; align-items:center; gap:10px;">
+                <input type="checkbox" id="tier-active" checked style="width:16px; height:16px; cursor:pointer;">
+                <label for="tier-active" style="margin:0; cursor:pointer;">Active</label>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-secondary" type="button" onclick="closeTierModal()">Cancel</button>
+                <button class="btn btn-primary" id="tier-submit-btn" type="button" onclick="submitTier()">Create Tier</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<style nonce="{{ csp_nonce }}">
+    .settings-layout {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 24px;
+        align-items: start;
+    }
+    @media (max-width: 768px) {
+        .settings-layout { grid-template-columns: 1fr; }
+    }
+    .settings-sidebar {
+        background: var(--bg-card);
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px solid var(--border-color);
+    }
+    .settings-tab {
+        display: flex; align-items: center; gap: 10px;
+        width: 100%; padding: 12px 16px;
+        background: transparent; border: none;
+        color: var(--text-secondary); border-radius: 8px;
+        cursor: pointer; transition: all 0.2s;
+        text-align: left; font-size: 0.9rem; margin-bottom: 6px;
+    }
+    .settings-tab:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+    .settings-tab.active { background: rgba(99,102,241,.15); color: var(--primary); font-weight: 500; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    .panel-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .panel-card-header {
+        display: flex; justify-content: space-between;
+        align-items: center; padding: 20px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .panel-card-header .header-content h2 { margin: 0; font-size: 1.1rem; }
+    .panel-card-header .header-content p  { margin: 4px 0 0; font-size: 0.85rem; }
+
+    /* Package cards */
+    .pkg-item {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 16px; border: 1px solid var(--border-color);
+        border-radius: 10px; margin-bottom: 10px;
+        background: var(--bg-card-hover);
+        transition: border-color 0.15s;
+    }
+    .pkg-item:hover { border-color: var(--primary); }
+    .pkg-info { display: flex; flex-direction: column; gap: 4px; }
+    .pkg-info strong { font-size: 0.95rem; }
+    .pkg-info span { font-size: 0.82rem; color: var(--text-secondary); }
+    .pkg-meta { display: flex; align-items: center; gap: 12px; }
+    .pkg-price { font-weight: 600; font-size: 0.95rem; color: var(--success); white-space: nowrap; }
+    .scope-badge {
+        font-size: 0.72rem; padding: 2px 8px; border-radius: 20px;
+        font-weight: 500; text-transform: uppercase; letter-spacing: .4px;
+    }
+    .scope-global   { background: rgba(99,102,241,.15); color: #818cf8; }
+    .scope-assigned { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .scope-personal { background: rgba(16,185,129,.15); color: #34d399; }
+
+    /* Tier table */
+    .tier-table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+    .tier-table th, .tier-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border-color); }
+    .tier-table th { color: var(--text-secondary); font-weight: 500; font-size: 0.8rem; }
+    .tier-table tr:last-child td { border-bottom: none; }
+    .tier-table tbody tr:hover td { background: var(--bg-card-hover); }
+    .tier-inactive { opacity: 0.45; }
+
+    /* Reseller assignment checkboxes */
+    .reseller-assign-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 14px; border: 1px solid var(--border-color);
+        border-radius: 8px; margin-bottom: 8px;
+        background: var(--bg-card-hover);
+    }
+    .reseller-assign-row .rar-left { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; }
+    .reseller-assign-row .rar-right { display: flex; gap: 6px; align-items: center; }
+    .pkg-toggle-btn {
+        font-size: 0.78rem; padding: 3px 10px; border-radius: 6px;
+        cursor: pointer; border: 1px solid var(--border-color);
+        background: transparent; color: var(--text-secondary); transition: all 0.15s;
+    }
+    .pkg-toggle-btn.assigned { background: rgba(99,102,241,.15); color: var(--primary); border-color: var(--primary); }
+
+    .loading-state { padding: 40px; text-align: center; color: var(--text-secondary); font-size: 0.9rem; }
+    .empty-state   { padding: 30px; text-align: center; color: var(--text-secondary); font-size: 0.9rem; }
+</style>
 {% endblock %}
+
 
 {% block scripts %}
 <script nonce="{{ csp_nonce }}">
-    let packageCache = [];
-    let editingPackageId = null;
+/* ─── State ────────────────────────────────────────────────── */
+let _pkgCache   = [];
+let _tierCache  = [];
+let _resellerCache = [];  // [{id, username}]
+let _editPkgId  = null;
+let _editTierId = null;
+let _minPriceDebounce = null;
 
-    document.addEventListener('DOMContentLoaded', loadPackages);
+/* ─── Tab switching ────────────────────────────────────────── */
+function pkgSwitchTab(name, evt) {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    if (evt && evt.currentTarget) evt.currentTarget.classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+    if (name === 'packages')  loadPackages();
+    if (name === 'resellers') loadResellerTab();
+    if (name === 'tariffs')   { loadTiers(); loadResellerList(); }
+}
 
-    async function loadPackages() {
-        try {
-            const res = await fetch('/api/packages');
-            const data = await res.json();
-            const container = document.getElementById('packages-list');
-            packageCache = data;
-            
-            if (data.length === 0) {
-                container.innerHTML = '<p class="text-muted text-center">No packages defined.</p>';
-                return;
-            }
+/* ─── Load helpers ─────────────────────────────────────────── */
+async function loadResellerList() {
+    if (_resellerCache.length) return;
+    try {
+        const res  = await fetch('/api/admins');
+        const data = await res.json();
+        _resellerCache = data.filter(a => a.role === 'reseller');
+    } catch(e) { console.error(e); }
+}
 
-            container.innerHTML = data.map(p => `
-                <div class="package-card">
-                    <div class="package-info">
-                        <strong>${p.name}</strong>
-                        <span>⏳ ${p.days} Days | 💾 ${p.volume} GB</span>
-                    </div>
-                    <div class="package-meta">
-                        <div class="package-price">${Number(p.price).toLocaleString()} T</div>
-                        <div class="package-actions">
-                            <button class="action-icon" type="button" title="Edit package" onclick="startEditPackage(${p.id})">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M12 20h9" />
-                                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                                </svg>
-                            </button>
-                            <button class="action-icon danger" type="button" title="Delete package" onclick="deletePackage(${p.id})">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <polyline points="3 6 5 6 21 6" />
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        } catch (e) { console.error(e); }
+async function loadPackages() {
+    const body = document.getElementById('pkg-list-body');
+    try {
+        const res  = await fetch('/api/packages');
+        _pkgCache  = await res.json();
+        renderPackages(body);
+    } catch(e) {
+        body.innerHTML = '<div class="empty-state">Failed to load packages.</div>';
     }
+}
 
-    function openPackageModal(pkg = null) {
-        editingPackageId = pkg ? pkg.id : null;
-        document.getElementById('pkg-modal-title').textContent = editingPackageId ? 'Edit Package' : 'Add New Package';
-        document.getElementById('pkg-submit-btn').textContent = editingPackageId ? 'Update Package' : 'Create Package';
-        document.getElementById('pkg-name').value = pkg ? pkg.name : '';
-        document.getElementById('pkg-days').value = pkg ? pkg.days : '';
-        document.getElementById('pkg-vol').value = pkg ? pkg.volume : '';
-        document.getElementById('pkg-price').value = pkg ? Number(pkg.price).toLocaleString() : '';
-        document.getElementById('pkg-modal').classList.remove('hidden');
+function renderPackages(body) {
+    if (!_pkgCache.length) {
+        body.innerHTML = '<div class="empty-state">No packages defined. Click "Add Package" to create one.</div>';
+        return;
     }
+    body.innerHTML = _pkgCache.map(p => {
+        const scopeClass = 'scope-' + (p.scope || 'global');
+        const scopeLabel = (p.scope || 'global').charAt(0).toUpperCase() + (p.scope||'global').slice(1);
+        return `
+        <div class="pkg-item">
+            <div class="pkg-info">
+                <strong>${escHtml(p.name)}</strong>
+                <span>⏳ ${p.days} Days &nbsp;|&nbsp; 💾 ${p.volume} GB</span>
+            </div>
+            <div class="pkg-meta">
+                <span class="scope-badge ${scopeClass}">${scopeLabel}</span>
+                <div class="pkg-price">${Number(p.price).toLocaleString()} T</div>
+                <button class="action-icon" title="Edit" onclick="startEditPackage(${p.id})">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                </button>
+                <button class="action-icon danger" title="Delete" onclick="deletePackage(${p.id})">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </div>
+        </div>`;
+    }).join('');
+}
 
-    function closePackageModal() {
-        editingPackageId = null;
-        document.getElementById('pkg-modal-title').textContent = 'Add New Package';
-        document.getElementById('pkg-submit-btn').textContent = 'Create Package';
-        document.getElementById('pkg-name').value = '';
-        document.getElementById('pkg-days').value = '';
-        document.getElementById('pkg-vol').value = '';
-        document.getElementById('pkg-price').value = '';
-        document.getElementById('pkg-modal').classList.add('hidden');
+/* ─── Package Modal ────────────────────────────────────────── */
+function openPkgModal(pkg) {
+    _editPkgId = pkg ? pkg.id : null;
+    document.getElementById('pkg-modal-title').textContent = _editPkgId ? 'Edit Package' : 'Add New Package';
+    document.getElementById('pkg-submit-btn').textContent  = _editPkgId ? 'Update Package' : 'Create Package';
+    document.getElementById('pkg-name').value  = pkg ? pkg.name   : '';
+    document.getElementById('pkg-days').value  = pkg ? pkg.days   : '';
+    document.getElementById('pkg-vol').value   = pkg ? pkg.volume : '';
+    document.getElementById('pkg-price').value = pkg ? Number(pkg.price).toLocaleString() : '';
+    document.getElementById('pkg-scope').value = pkg ? (pkg.scope || 'global') : 'global';
+    document.getElementById('pkg-price-hint').style.display = 'none';
+    document.getElementById('pkg-price-warn').style.display = 'none';
+    toggleScopeFields();
+    renderResellerCheckboxes(pkg ? (pkg.assigned_reseller_ids || []) : []);
+    document.getElementById('pkg-modal').classList.remove('hidden');
+    if (pkg) updateMinPriceHint();
+}
+
+function closePkgModal() {
+    _editPkgId = null;
+    document.getElementById('pkg-modal').classList.add('hidden');
+    document.getElementById('pkg-price-hint').style.display = 'none';
+    document.getElementById('pkg-price-warn').style.display = 'none';
+}
+
+function startEditPackage(id) {
+    const pkg = _pkgCache.find(p => p.id === id);
+    if (pkg) openPkgModal(pkg);
+}
+
+function toggleScopeFields() {
+    const scope = document.getElementById('pkg-scope').value;
+    const sec   = document.getElementById('pkg-assigned-section');
+    sec.style.display = scope === 'assigned' ? '' : 'none';
+}
+
+function renderResellerCheckboxes(selectedIds) {
+    const container = document.getElementById('pkg-reseller-checkboxes');
+    if (!_resellerCache.length) {
+        loadResellerList().then(() => renderResellerCheckboxes(selectedIds));
+        return;
     }
-
-    function startEditPackage(id) {
-        const pkg = packageCache.find(item => item.id === id);
-        if (!pkg) return;
-        openPackageModal(pkg);
+    if (!_resellerCache.length) {
+        container.innerHTML = '<span style="font-size:0.85rem; color:var(--text-secondary);">No resellers found.</span>';
+        return;
     }
+    container.innerHTML = _resellerCache.map(r => `
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem;">
+            <input type="checkbox" value="${r.id}" ${selectedIds.includes(r.id) ? 'checked' : ''} style="width:14px;height:14px;">
+            ${escHtml(r.username)}
+        </label>
+    `).join('');
+}
 
-    async function submitPackage() {
-        const data = {
-            name: document.getElementById('pkg-name').value,
-            days: document.getElementById('pkg-days').value,
-            volume: document.getElementById('pkg-vol').value,
-            price: unformatNumber(document.getElementById('pkg-price').value)
-        };
-        
-        if (!data.name || !data.days || !data.volume || !data.price) {
-            showToast('Please fill out all package fields', 'error');
-            return;
+/* Min price hint & warning */
+function updateMinPriceHint() {
+    clearTimeout(_minPriceDebounce);
+    _minPriceDebounce = setTimeout(_fetchMinPrice, 400);
+}
+
+async function _fetchMinPrice() {
+    const vol  = parseFloat(document.getElementById('pkg-vol').value)  || 0;
+    const days = parseInt(document.getElementById('pkg-days').value)    || 0;
+    const hint = document.getElementById('pkg-price-hint');
+    if (!vol && !days) { hint.style.display = 'none'; return; }
+    try {
+        const res  = await fetch(`/api/packages/min-price?volume_gb=${vol}&days=${days}`);
+        const data = await res.json();
+        if (data.success) {
+            hint.style.display = '';
+            hint.textContent   = `حداقل هزینه: ${Number(data.min_price).toLocaleString()} تومان`;
+            checkPriceWarning(data.min_price);
         }
-        
-        try {
-            const url = editingPackageId ? `/admin/packages/${editingPackageId}` : '/admin/packages';
-            const method = editingPackageId ? 'PUT' : 'POST';
-            const res = await fetch(url, {
-                method,
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            });
-            
-            if (res.ok) {
-                showToast(editingPackageId ? 'Package updated' : 'Package created successfully');
-                closePackageModal();
-                loadPackages();
-            } else {
-                showToast('Error saving package', 'error');
-            }
-        } catch (e) { showToast('Connection error', 'error'); }
+    } catch(e) {}
+}
+
+function checkPriceWarning(minPrice) {
+    const warn  = document.getElementById('pkg-price-warn');
+    const price = unformatNumber(document.getElementById('pkg-price').value);
+    if (!minPrice) return;
+    warn.style.display = (price > 0 && price < minPrice) ? '' : 'none';
+}
+
+async function submitPackage() {
+    const name  = document.getElementById('pkg-name').value.trim();
+    const days  = document.getElementById('pkg-days').value;
+    const vol   = document.getElementById('pkg-vol').value;
+    const price = unformatNumber(document.getElementById('pkg-price').value);
+    const scope = document.getElementById('pkg-scope').value;
+
+    if (!name || !days || !vol || !price) {
+        showToast('Please fill out all fields', 'error'); return;
     }
 
-    async function deletePackage(id) {
-        const pkg = packageCache.find(item => item.id === id);
-        if (!pkg) return;
-        const confirmed = confirm(`Delete package "${pkg.name}"?`);
-        if (!confirmed) return;
-        try {
-            const res = await fetch(`/admin/packages/${id}`, { method: 'DELETE' });
-            if (res.ok) {
-                showToast('Package deleted');
-                loadPackages();
-            } else {
-                showToast('Error deleting package', 'error');
-            }
-        } catch (e) { showToast('Connection error', 'error'); }
+    // Gather assigned reseller IDs if scope === assigned
+    let reseller_ids = [];
+    if (scope === 'assigned') {
+        document.querySelectorAll('#pkg-reseller-checkboxes input[type=checkbox]:checked')
+            .forEach(cb => reseller_ids.push(parseInt(cb.value)));
     }
 
-    async function saveConfig() {
-        const data = {
-            cost_per_gb: unformatNumber(document.getElementById('conf-cost-gb').value),
-            cost_per_day: unformatNumber(document.getElementById('conf-cost-day').value)
-        };
-        try {
-            await fetch('/admin/config', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            });
-            showToast('Configuration saved');
-        } catch (e) { showToast('Error saving config', 'error'); }
+    const body = { name, days: parseInt(days), volume: parseInt(vol), price, scope };
+
+    try {
+        // Save base package
+        const url    = _editPkgId ? `/admin/packages/${_editPkgId}` : '/admin/packages';
+        const method = _editPkgId ? 'PUT' : 'POST';
+        const res    = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        if (!res.ok) { showToast('Error saving package', 'error'); return; }
+        const saved = await res.json();
+
+        // Update scope/assignment
+        const pkgId = _editPkgId || saved.id;
+        await fetch(`/admin/packages/${pkgId}/assign`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ scope, reseller_ids })
+        });
+
+        showToast(_editPkgId ? 'Package updated' : 'Package created');
+        closePkgModal();
+        loadPackages();
+    } catch(e) { showToast('Connection error', 'error'); }
+}
+
+async function deletePackage(id) {
+    const pkg = _pkgCache.find(p => p.id === id);
+    if (!pkg || !confirm(`Delete package "${pkg.name}"?`)) return;
+    try {
+        const res = await fetch(`/admin/packages/${id}`, { method: 'DELETE' });
+        if (res.ok) { showToast('Package deleted'); loadPackages(); }
+        else showToast('Error deleting package', 'error');
+    } catch(e) { showToast('Connection error', 'error'); }
+}
+
+/* ─── Reseller Tab ─────────────────────────────────────────── */
+async function loadResellerTab() {
+    await loadResellerList();
+    await loadPackages();
+    const sel = document.getElementById('reseller-select');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— Choose a reseller —</option>' +
+        _resellerCache.map(r => `<option value="${r.id}">${escHtml(r.username)}</option>`).join('');
+    if (current) sel.value = current;
+    loadResellerPackages();
+}
+
+function loadResellerPackages() {
+    const resId = document.getElementById('reseller-select').value;
+    const body  = document.getElementById('reseller-pkg-body');
+    if (!resId) { body.innerHTML = ''; return; }
+
+    if (!_pkgCache.length) {
+        body.innerHTML = '<div class="empty-state">Loading packages…</div>';
+        return;
     }
+
+    body.innerHTML = _pkgCache.map(p => {
+        const ids = p.assigned_reseller_ids || [];
+        const isAssigned = (p.scope === 'global') || ids.includes(parseInt(resId));
+        const scopeLabel = p.scope === 'global' ? 'Global' : (ids.includes(parseInt(resId)) ? 'Assigned' : 'Not assigned');
+        return `
+        <div class="reseller-assign-row">
+            <div class="rar-left">
+                <div>
+                    <strong>${escHtml(p.name)}</strong>
+                    <span style="margin-left:8px; font-size:0.8rem; color:var(--text-secondary);">${p.days}d / ${p.volume}GB / ${Number(p.price).toLocaleString()}T</span>
+                </div>
+            </div>
+            <div class="rar-right">
+                <span style="font-size:0.78rem; color:var(--text-secondary);">${scopeLabel}</span>
+                ${p.scope !== 'global' ? `
+                <button class="pkg-toggle-btn ${isAssigned ? 'assigned' : ''}"
+                    onclick="toggleResellerPkg(${p.id}, ${resId}, ${isAssigned})"
+                >${isAssigned ? 'Remove' : 'Assign'}</button>` : ''}
+            </div>
+        </div>`;
+    }).join('') || '<div class="empty-state">No packages found.</div>';
+}
+
+async function toggleResellerPkg(pkgId, resId, currentlyAssigned) {
+    const pkg = _pkgCache.find(p => p.id === pkgId);
+    if (!pkg) return;
+    const ids = [...(pkg.assigned_reseller_ids || [])];
+    if (currentlyAssigned) {
+        const idx = ids.indexOf(resId);
+        if (idx > -1) ids.splice(idx, 1);
+    } else {
+        if (!ids.includes(resId)) ids.push(resId);
+    }
+    const newScope = ids.length ? 'assigned' : 'personal';
+    try {
+        const res = await fetch(`/admin/packages/${pkgId}/assign`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ scope: newScope, reseller_ids: ids })
+        });
+        if (res.ok) {
+            // Update local cache
+            pkg.assigned_reseller_ids = ids;
+            pkg.scope = newScope;
+            showToast(currentlyAssigned ? 'Package unassigned' : 'Package assigned');
+            loadResellerPackages();
+        } else showToast('Error updating assignment', 'error');
+    } catch(e) { showToast('Connection error', 'error'); }
+}
+
+/* ─── Base Config ──────────────────────────────────────────── */
+async function saveBaseConfig() {
+    const data = {
+        cost_per_gb:  unformatNumber(document.getElementById('conf-cost-gb').value),
+        cost_per_day: unformatNumber(document.getElementById('conf-cost-day').value)
+    };
+    try {
+        const res = await fetch('/admin/config', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(data)
+        });
+        if (res.ok) showToast('Base tariffs saved');
+        else showToast('Error saving config', 'error');
+    } catch(e) { showToast('Connection error', 'error'); }
+}
+
+/* ─── Price Tiers ──────────────────────────────────────────── */
+async function loadTiers() {
+    const body = document.getElementById('tier-list-body');
+    try {
+        const res   = await fetch('/api/price-tiers');
+        const data  = await res.json();
+        _tierCache  = data.tiers || [];
+        renderTiers(body);
+    } catch(e) {
+        body.innerHTML = '<div class="empty-state">Failed to load tiers.</div>';
+    }
+}
+
+function renderTiers(body) {
+    if (!_tierCache.length) {
+        body.innerHTML = '<div class="empty-state">No price tiers defined. Click "Add Tier" to create one.</div>';
+        return;
+    }
+
+    const resellerName = id => {
+        const r = _resellerCache.find(r => r.id === id);
+        return r ? r.username : (id ? `#${id}` : 'Global');
+    };
+
+    const fmtRange = (mn, mx, unit) => {
+        if (mn == null && mx == null) return 'Any';
+        if (mn != null && mx != null) return `${mn}–${mx} ${unit}`;
+        if (mn != null) return `≥ ${mn} ${unit}`;
+        return `< ${mx} ${unit}`;
+    };
+
+    body.innerHTML = `
+    <div style="overflow-x:auto;">
+    <table class="tier-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Volume</th>
+                <th>Days</th>
+                <th>Cost/GB</th>
+                <th>Cost/Day</th>
+                <th>Reseller</th>
+                <th>Priority</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        ${_tierCache.map(t => `
+            <tr class="${t.is_active ? '' : 'tier-inactive'}">
+                <td>${escHtml(t.name)}${!t.is_active ? ' <span style="font-size:0.72rem;color:var(--text-secondary);">(off)</span>' : ''}</td>
+                <td>${fmtRange(t.min_volume_gb, t.max_volume_gb, 'GB')}</td>
+                <td>${fmtRange(t.min_days, t.max_days, 'd')}</td>
+                <td>${t.cost_per_gb != null ? Number(t.cost_per_gb).toLocaleString() : '—'}</td>
+                <td>${t.cost_per_day != null ? Number(t.cost_per_day).toLocaleString() : '—'}</td>
+                <td>${escHtml(resellerName(t.reseller_id))}</td>
+                <td>${t.priority}</td>
+                <td style="white-space:nowrap;">
+                    <button class="action-icon" title="Edit" onclick="startEditTier(${t.id})">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    </button>
+                    <button class="action-icon danger" title="Delete" onclick="deleteTier(${t.id})">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </td>
+            </tr>`).join('')}
+        </tbody>
+    </table>
+    </div>`;
+}
+
+function openTierModal(tier) {
+    _editTierId = tier ? tier.id : null;
+    document.getElementById('tier-modal-title').textContent  = _editTierId ? 'Edit Price Tier' : 'Add Price Tier';
+    document.getElementById('tier-submit-btn').textContent   = _editTierId ? 'Update Tier' : 'Create Tier';
+    document.getElementById('tier-name').value      = tier ? tier.name : '';
+    document.getElementById('tier-min-vol').value   = tier && tier.min_volume_gb != null ? tier.min_volume_gb : '';
+    document.getElementById('tier-max-vol').value   = tier && tier.max_volume_gb != null ? tier.max_volume_gb : '';
+    document.getElementById('tier-min-days').value  = tier && tier.min_days != null ? tier.min_days : '';
+    document.getElementById('tier-max-days').value  = tier && tier.max_days != null ? tier.max_days : '';
+    document.getElementById('tier-cpg').value       = tier && tier.cost_per_gb != null ? Number(tier.cost_per_gb).toLocaleString() : '';
+    document.getElementById('tier-cpd').value       = tier && tier.cost_per_day != null ? Number(tier.cost_per_day).toLocaleString() : '';
+    document.getElementById('tier-priority').value  = tier ? tier.priority : 0;
+    document.getElementById('tier-active').checked  = tier ? tier.is_active : true;
+
+    // Populate reseller dropdown
+    const sel = document.getElementById('tier-reseller');
+    sel.innerHTML = '<option value="">— Global —</option>' +
+        _resellerCache.map(r => `<option value="${r.id}" ${tier && tier.reseller_id === r.id ? 'selected' : ''}>${escHtml(r.username)}</option>`).join('');
+    if (tier && tier.reseller_id) sel.value = tier.reseller_id;
+
+    document.getElementById('tier-modal').classList.remove('hidden');
+}
+
+function closeTierModal() {
+    _editTierId = null;
+    document.getElementById('tier-modal').classList.add('hidden');
+}
+
+function startEditTier(id) {
+    const tier = _tierCache.find(t => t.id === id);
+    if (tier) openTierModal(tier);
+}
+
+async function submitTier() {
+    const data = {
+        name:          document.getElementById('tier-name').value.trim() || 'Tier',
+        min_volume_gb: document.getElementById('tier-min-vol').value !== '' ? parseFloat(document.getElementById('tier-min-vol').value) : null,
+        max_volume_gb: document.getElementById('tier-max-vol').value !== '' ? parseFloat(document.getElementById('tier-max-vol').value) : null,
+        min_days:      document.getElementById('tier-min-days').value !== '' ? parseInt(document.getElementById('tier-min-days').value) : null,
+        max_days:      document.getElementById('tier-max-days').value !== '' ? parseInt(document.getElementById('tier-max-days').value) : null,
+        cost_per_gb:   document.getElementById('tier-cpg').value !== '' ? unformatNumber(document.getElementById('tier-cpg').value) : null,
+        cost_per_day:  document.getElementById('tier-cpd').value !== '' ? unformatNumber(document.getElementById('tier-cpd').value) : null,
+        reseller_id:   document.getElementById('tier-reseller').value || null,
+        priority:      parseInt(document.getElementById('tier-priority').value) || 0,
+        is_active:     document.getElementById('tier-active').checked,
+    };
+    try {
+        const url    = _editTierId ? `/api/price-tiers/${_editTierId}` : '/api/price-tiers';
+        const method = _editTierId ? 'PUT' : 'POST';
+        const res    = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+        const json   = await res.json();
+        if (json.success) {
+            showToast(_editTierId ? 'Tier updated' : 'Tier created');
+            closeTierModal();
+            loadTiers();
+        } else showToast(json.error || 'Error saving tier', 'error');
+    } catch(e) { showToast('Connection error', 'error'); }
+}
+
+async function deleteTier(id) {
+    const tier = _tierCache.find(t => t.id === id);
+    if (!tier || !confirm(`Delete tier "${tier.name}"?`)) return;
+    try {
+        const res = await fetch(`/api/price-tiers/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) { showToast('Tier deleted'); loadTiers(); }
+        else showToast('Error deleting tier', 'error');
+    } catch(e) { showToast('Connection error', 'error'); }
+}
+
+/* ─── Utils ────────────────────────────────────────────────── */
+function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ─── Init ─────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadResellerList();
+    loadPackages();
+});
 </script>
 {% endblock %}

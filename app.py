@@ -2050,8 +2050,19 @@ class Package(db.Model):
     price = db.Column(db.Integer, nullable=False)
     reseller_price = db.Column(db.Integer, nullable=True)
     enabled = db.Column(db.Boolean, default=True)
-    
+    # Extended columns (added via ALTER TABLE migration for existing DBs)
+    scope = db.Column(db.String(20), default='global')        # global | assigned | personal
+    assigned_reseller_ids = db.Column(db.Text, default='[]')  # JSON list of admin IDs
+    created_by = db.Column(db.Integer, nullable=True)
+    display_order = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
     def to_dict(self):
+        import json as _j
+        try:
+            assigned = _j.loads(self.assigned_reseller_ids or '[]')
+        except Exception:
+            assigned = []
         return {
             'id': self.id,
             'name': self.name,
@@ -2059,8 +2070,53 @@ class Package(db.Model):
             'volume': self.volume,
             'price': self.price,
             'reseller_price': self.reseller_price,
-            'enabled': self.enabled
+            'enabled': self.enabled,
+            'scope': self.scope or 'global',
+            'assigned_reseller_ids': assigned,
+            'created_by': self.created_by,
+            'display_order': self.display_order or 0,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class PriceTier(db.Model):
+    """Dynamic pricing rule: applies when volume_gb/days fall within the defined range."""
+    __tablename__ = 'price_tiers'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    # Conditions — None means no constraint on that dimension
+    min_volume_gb = db.Column(db.Float, nullable=True)   # volume >= this
+    max_volume_gb = db.Column(db.Float, nullable=True)   # volume < this (exclusive)
+    min_days = db.Column(db.Integer, nullable=True)
+    max_days = db.Column(db.Integer, nullable=True)
+    # Rate overrides (None = fall through to system default)
+    cost_per_gb = db.Column(db.Integer, nullable=True)
+    cost_per_day = db.Column(db.Integer, nullable=True)
+    # Scope: None = global; set reseller_id for reseller-specific override
+    reseller_id = db.Column(db.Integer, nullable=True, index=True)
+    server_id = db.Column(db.Integer, nullable=True, index=True)
+    priority = db.Column(db.Integer, default=0)  # higher = evaluated first
+    is_active = db.Column(db.Boolean, default=True)
+    created_by = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'min_volume_gb': self.min_volume_gb,
+            'max_volume_gb': self.max_volume_gb,
+            'min_days': self.min_days,
+            'max_days': self.max_days,
+            'cost_per_gb': self.cost_per_gb,
+            'cost_per_day': self.cost_per_day,
+            'reseller_id': self.reseller_id,
+            'server_id': self.server_id,
+            'priority': self.priority,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
 
 class SystemConfig(db.Model):
     __tablename__ = 'system_configs'
@@ -3354,6 +3410,26 @@ with app.app_context():
                 print(f"[startup] Auto-detected SSL paths: {_det_cert}")
     except Exception as _ssl_e:
         print(f"[startup] SSL auto-detect error: {_ssl_e}")
+
+    # Ensure packages table has extended columns (scope, assigned_reseller_ids, etc.)
+    try:
+        inspector = inspect(db.engine)
+        if 'packages' in set(inspector.get_table_names()):
+            _pkg_cols = [c['name'] for c in inspector.get_columns('packages')]
+            _pkg_new = [
+                ('scope', "VARCHAR(20) DEFAULT 'global'"),
+                ('assigned_reseller_ids', "TEXT DEFAULT '[]'"),
+                ('created_by', 'INTEGER'),
+                ('display_order', 'INTEGER DEFAULT 0'),
+                ('created_at', 'DATETIME'),
+            ]
+            for _cn, _cd in _pkg_new:
+                if _cn not in _pkg_cols:
+                    with db.engine.connect() as _conn:
+                        _conn.execute(text(f'ALTER TABLE packages ADD COLUMN {_cn} {_cd}'))
+                        _conn.commit()
+    except Exception as _pe:
+        print(f"Migration error (packages extended columns): {_pe}")
 
     # Initialize PanelAPI data
     if not PanelAPI.query.first():
@@ -8415,7 +8491,207 @@ def update_config():
         else:
             db.session.add(SystemConfig(key=key, value=str(value)))
     db.session.commit()
-    return jsonify({"success": True})
+    return jsonify({'success': True})
+
+
+# ── Package scope / reseller endpoints ───────────────────────────────────────
+
+@app.route('/admin/packages/<int:package_id>/assign', methods=['POST'])
+@superadmin_required
+def assign_package_to_resellers(package_id):
+    """Set which resellers can see this package (scope=assigned)."""
+    import json as _j
+    package = db.session.get(Package, package_id)
+    if not package:
+        return jsonify({'success': False, 'error': 'Package not found'}), 404
+    data = request.json or {}
+    scope = data.get('scope', 'global')
+    reseller_ids = data.get('reseller_ids', [])
+    package.scope = scope
+    package.assigned_reseller_ids = _j.dumps([int(r) for r in reseller_ids])
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+# ── PriceTier CRUD ────────────────────────────────────────────────────────────
+
+def _get_applicable_price_tier(volume_gb, days, reseller_id=None, server_id=None):
+    """Return the best matching PriceTier or None (falls back to SystemConfig defaults)."""
+    volume_gb = float(volume_gb or 0)
+    days = int(days or 0)
+
+    # Collect candidates: reseller-specific + global, ordered by priority desc, reseller first
+    tiers = (PriceTier.query
+             .filter_by(is_active=True)
+             .order_by(PriceTier.priority.desc(), PriceTier.reseller_id.desc())
+             .all())
+
+    for tier in tiers:
+        # Skip if this tier belongs to a different reseller
+        if tier.reseller_id is not None and tier.reseller_id != reseller_id:
+            continue
+        # Skip if reseller context given but tier belongs to no-one AND a reseller-specific one exists
+        # (handled naturally by sort order — reseller-specific come first)
+        if tier.server_id is not None and tier.server_id != server_id:
+            continue
+        # Check conditions
+        if tier.min_volume_gb is not None and volume_gb < tier.min_volume_gb:
+            continue
+        if tier.max_volume_gb is not None and volume_gb >= tier.max_volume_gb:
+            continue
+        if tier.min_days is not None and days < tier.min_days:
+            continue
+        if tier.max_days is not None and days >= tier.max_days:
+            continue
+        return tier
+    return None
+
+
+def _calculate_minimum_price(volume_gb, days, reseller_id=None, server_id=None):
+    """Returns (min_price, effective_cost_per_gb, effective_cost_per_day)."""
+    volume_gb = float(volume_gb or 0)
+    days = int(days or 0)
+
+    tier = _get_applicable_price_tier(volume_gb, days, reseller_id=reseller_id, server_id=server_id)
+
+    if tier:
+        cpg = tier.cost_per_gb
+        cpd = tier.cost_per_day
+    else:
+        cpg = cpd = None
+
+    if cpg is None:
+        try:
+            cpg = int((db.session.get(SystemConfig, 'cost_per_gb') or SystemConfig()).value or 0)
+        except Exception:
+            cpg = 0
+    if cpd is None:
+        try:
+            cpd = int((db.session.get(SystemConfig, 'cost_per_day') or SystemConfig()).value or 0)
+        except Exception:
+            cpd = 0
+
+    min_price = int(volume_gb * cpg + days * cpd)
+    return min_price, cpg, cpd
+
+
+@app.route('/api/packages/min-price')
+@login_required
+def package_min_price():
+    """Calculate minimum cost for a given volume+days (for price warning in UI)."""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({'success': False}), 401
+
+    try:
+        volume_gb = float(request.args.get('volume_gb', 0) or 0)
+        days = int(request.args.get('days', 0) or 0)
+        server_id = request.args.get('server_id')
+        server_id = int(server_id) if server_id else None
+    except Exception:
+        return jsonify({'success': False, 'error': 'Invalid params'}), 400
+
+    # For superadmin, also accept explicit reseller_id; otherwise use caller's ID
+    is_super = user.role == 'superadmin' or user.is_superadmin
+    if is_super:
+        try:
+            reseller_id = int(request.args.get('reseller_id', 0) or 0) or None
+        except Exception:
+            reseller_id = None
+    else:
+        reseller_id = user.id
+
+    min_price, cpg, cpd = _calculate_minimum_price(volume_gb, days, reseller_id=reseller_id, server_id=server_id)
+    return jsonify({
+        'success': True,
+        'min_price': min_price,
+        'cost_per_gb': cpg,
+        'cost_per_day': cpd,
+    })
+
+
+@app.route('/api/price-tiers', methods=['GET'])
+@superadmin_required
+def list_price_tiers():
+    reseller_id = request.args.get('reseller_id')
+    q = PriceTier.query
+    if reseller_id:
+        try:
+            q = q.filter(
+                db.or_(PriceTier.reseller_id.is_(None), PriceTier.reseller_id == int(reseller_id))
+            )
+        except Exception:
+            pass
+    tiers = q.order_by(PriceTier.priority.desc(), PriceTier.id).all()
+    return jsonify({'success': True, 'tiers': [t.to_dict() for t in tiers]})
+
+
+@app.route('/api/price-tiers', methods=['POST'])
+@superadmin_required
+def create_price_tier():
+    data = request.json or {}
+    admin_id = session.get('admin_id')
+    try:
+        tier = PriceTier(
+            name=str(data.get('name', '')).strip() or 'Tier',
+            min_volume_gb=float(data['min_volume_gb']) if data.get('min_volume_gb') not in (None, '') else None,
+            max_volume_gb=float(data['max_volume_gb']) if data.get('max_volume_gb') not in (None, '') else None,
+            min_days=int(data['min_days']) if data.get('min_days') not in (None, '') else None,
+            max_days=int(data['max_days']) if data.get('max_days') not in (None, '') else None,
+            cost_per_gb=int(data['cost_per_gb']) if data.get('cost_per_gb') not in (None, '') else None,
+            cost_per_day=int(data['cost_per_day']) if data.get('cost_per_day') not in (None, '') else None,
+            reseller_id=int(data['reseller_id']) if data.get('reseller_id') else None,
+            server_id=int(data['server_id']) if data.get('server_id') else None,
+            priority=int(data.get('priority') or 0),
+            is_active=bool(data.get('is_active', True)),
+            created_by=admin_id,
+        )
+        db.session.add(tier)
+        db.session.commit()
+        return jsonify({'success': True, 'id': tier.id, 'tier': tier.to_dict()})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/price-tiers/<int:tier_id>', methods=['PUT'])
+@superadmin_required
+def update_price_tier(tier_id):
+    tier = db.session.get(PriceTier, tier_id)
+    if not tier:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    data = request.json or {}
+    try:
+        if 'name' in data:
+            tier.name = str(data['name']).strip() or tier.name
+        for _field in ('min_volume_gb', 'max_volume_gb'):
+            if _field in data:
+                setattr(tier, _field, float(data[_field]) if data[_field] not in (None, '') else None)
+        for _field in ('min_days', 'max_days', 'cost_per_gb', 'cost_per_day', 'priority'):
+            if _field in data:
+                setattr(tier, _field, int(data[_field]) if data[_field] not in (None, '') else None)
+        if 'reseller_id' in data:
+            tier.reseller_id = int(data['reseller_id']) if data['reseller_id'] else None
+        if 'server_id' in data:
+            tier.server_id = int(data['server_id']) if data['server_id'] else None
+        if 'is_active' in data:
+            tier.is_active = bool(data['is_active'])
+        db.session.commit()
+        return jsonify({'success': True, 'tier': tier.to_dict()})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/price-tiers/<int:tier_id>', methods=['DELETE'])
+@superadmin_required
+def delete_price_tier(tier_id):
+    tier = db.session.get(PriceTier, tier_id)
+    if not tier:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    db.session.delete(tier)
+    db.session.commit()
+    return jsonify({'success': True})
 
 @app.route('/admin/charge', methods=['POST'])
 @superadmin_required
