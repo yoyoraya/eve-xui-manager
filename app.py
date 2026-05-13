@@ -13491,12 +13491,17 @@ def _take_usage_snapshots():
                 up = int(client.get('up') or 0)
                 down = int(client.get('down') or 0)
                 total_used = up + down
-                # totalGB in 3x-ui client settings is a GB float (e.g. 17.61); convert to bytes
+                # totalGB in 3x-ui API is stored in BYTES (the field name is a historical misnomer).
+                # All other code in this project (process_inbounds, renewal, etc.) treats it as bytes.
+                # DO NOT multiply by 1024^3 — that causes bigint overflow in PostgreSQL.
                 try:
-                    vol_limit_gb = float(client.get('totalGB') or 0)
+                    volume_limit_bytes = int(client.get('totalGB') or 0) or None
                 except Exception:
-                    vol_limit_gb = 0.0
-                volume_limit_bytes = int(vol_limit_gb * 1024 * 1024 * 1024) if vol_limit_gb > 0 else None
+                    volume_limit_bytes = None
+                # Cap at PostgreSQL bigint max to guard against any corrupt panel values
+                _PG_BIGINT_MAX = 9_223_372_036_854_775_807
+                if volume_limit_bytes and volume_limit_bytes > _PG_BIGINT_MAX:
+                    volume_limit_bytes = None
                 remaining_bytes = max(volume_limit_bytes - total_used, 0) if volume_limit_bytes else None
 
                 # Renewal detection: compare with the most recent snapshot
