@@ -1802,8 +1802,6 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
         )
 
         now = datetime.utcnow()
-        _set_system_setting_value('telegram_backup_last_run', now.isoformat())
-        db.session.commit()
 
         servers = Server.query.filter_by(enabled=True).all()
         if not servers:
@@ -1902,7 +1900,15 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
                     pass
 
         success_count = sum(1 for r in results if r.get('success'))
-        
+
+        # Only record last_run timestamp when at least one file was actually delivered
+        if success_count > 0:
+            try:
+                _set_system_setting_value('telegram_backup_last_run', now.isoformat())
+                db.session.commit()
+            except Exception:
+                pass
+
         # specific top-level error generation
         main_error = None
         if success_count == 0 and results:
