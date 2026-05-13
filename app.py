@@ -12373,13 +12373,25 @@ def get_settings_overview():
 @app.route('/api/usage-snapshot/trigger', methods=['POST'])
 @superadmin_required
 def trigger_usage_snapshot():
-    """Manually trigger a usage snapshot for testing."""
+    """Manually trigger a usage snapshot; auto-fetches server data if cache is empty."""
+    fetched_fresh = False
     inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
     if not inbounds:
-        return jsonify({'success': False, 'error': 'No server data in cache yet. Wait for the background fetcher to run first.'}), 400
+        # Cache is empty — run a forced fetch right now before snapshotting
+        try:
+            fetch_and_update_global_data(force=True)
+            fetched_fresh = True
+        except Exception as exc:
+            return jsonify({'success': False, 'error': f'Cache empty and fetch failed: {exc}'}), 500
+        inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+        if not inbounds:
+            return jsonify({'success': False, 'error': 'Fetched server data but still got no inbounds. Check that servers are online and enabled.'}), 400
     try:
         _take_usage_snapshots()
-        return jsonify({'success': True, 'message': f'Snapshot taken for {len(inbounds)} inbound(s).'})
+        msg = (f'Cache was empty — fetched fresh data, then took snapshot for {len(inbounds)} inbound(s).'
+               if fetched_fresh else
+               f'Snapshot taken for {len(inbounds)} inbound(s).')
+        return jsonify({'success': True, 'message': msg})
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
 
