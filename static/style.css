@@ -1946,9 +1946,9 @@ html[data-theme="light"] .package-price {
 }
 
 /* Mobile responsive: clients-table → card layout */
-@media (max-width: 640px) {
-    .clients-table thead,
-    .clients-table .select-cell {
+@media (max-width: 900px) {
+    /* Hide column headers — card layout replaces them with data-label */
+    .clients-table thead {
         display: none;
     }
 
@@ -1961,13 +1961,16 @@ html[data-theme="light"] .package-price {
         box-sizing: border-box;
     }
 
+    /* Each row becomes a card */
     .clients-table tbody tr {
         border: 1px solid var(--border-color);
         border-radius: 12px;
         background: var(--bg-card);
         margin-bottom: 12px;
         overflow: hidden;
-        padding: 14px 16px;
+        /* left padding makes room for the absolutely-positioned checkbox */
+        padding: 14px 16px 14px 46px;
+        position: relative;
     }
 
     .clients-table td {
@@ -1975,6 +1978,25 @@ html[data-theme="light"] .package-price {
         border-bottom: none !important;
     }
 
+    /* Checkbox: pinned to top-left of card */
+    .clients-table td.select-cell {
+        display: block !important;
+        position: absolute;
+        left: 14px;
+        top: 16px;
+        width: 24px;
+        height: 24px;
+        padding: 0 !important;
+    }
+
+    .clients-table td.select-cell .checkbox-label {
+        padding-left: 0 !important;
+        width: 20px !important;
+        height: 20px !important;
+        margin: 0 !important;
+    }
+
+    /* Email + comment: card header */
     .clients-table td.email-cell {
         padding-bottom: 10px;
         border-bottom: 1px solid rgba(148, 163, 184, 0.1) !important;
@@ -1987,6 +2009,7 @@ html[data-theme="light"] .package-price {
         font-weight: 600;
     }
 
+    /* Labeled data rows (Owner, Status, Expiry, Traffic, Volume) */
     .clients-table td[data-label] {
         display: flex;
         align-items: center;
@@ -2007,6 +2030,7 @@ html[data-theme="light"] .package-price {
         opacity: 0.75;
     }
 
+    /* Action buttons row: no label, full-width, left-aligned */
     .clients-table td.action-cell {
         padding-top: 10px;
         border-bottom: none !important;
@@ -2026,13 +2050,6 @@ html[data-theme="light"] .package-price {
         width: 38px;
         height: 38px;
         border-radius: 8px;
-    }
-
-    .clients-table td.owner-cell {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 5px 0;
     }
 }
 
