@@ -2880,7 +2880,10 @@
             try {
                 data = await response.json();
             } catch (e) {
-                data = { success: false, error: 'Invalid response from server (non-JSON)' };
+                let rawText = '';
+                try { rawText = await response.text(); } catch (_) {}
+                const preview = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+                data = { success: false, error: `Server error (HTTP ${response.status})${preview ? ': ' + preview : ''}` };
             }
             if (data.success) {
                 closeRenewModal();

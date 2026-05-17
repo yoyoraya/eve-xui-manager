@@ -103,7 +103,98 @@
 }
 
 /* ── Jalali picker label ─────────────────────────────────── */
-.tc-picker-label { font-size: 0.75rem; color: var(--text-secondary); }
+.tc-picker-label { font-size: 0.78rem; color: var(--text-secondary); font-weight: 500; }
+
+/* ── Custom date range box ───────────────────────────────── */
+.tc-custom-range-box {
+    border-radius: 10px;
+    border: 1px solid rgba(99,102,241,0.3);
+    background: rgba(99,102,241,0.05);
+    animation: tc-slide-down 0.2s ease-out;
+}
+@keyframes tc-slide-down {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.tc-custom-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 12px;
+    padding: 14px 16px;
+    align-items: end;
+}
+.tc-custom-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.tc-picker-input {
+    direction: ltr;
+    color: var(--text-primary);
+}
+@media (max-width: 640px) {
+    .tc-custom-inner { grid-template-columns: 1fr; }
+}
+
+/* ── Jalali datepicker overrides ─────────────────────────── */
+/* Root: force dark text so it's visible on white popup background */
+jdp-container {
+    font-family: Vazir, 'Vazir', tahoma, sans-serif !important;
+    color: rgba(0,0,0,0.85) !important;
+}
+/* All inner text elements inherit dark color + Vazir font */
+jdp-container .jdp-day,
+jdp-container .jdp-day-name,
+jdp-container .jdp-months,
+jdp-container .jdp-years,
+jdp-container .jdp-month,
+jdp-container .jdp-month input,
+jdp-container .jdp-month select,
+jdp-container .jdp-year,
+jdp-container .jdp-year input,
+jdp-container .jdp-year select,
+jdp-container .jdp-time,
+jdp-container .jdp-time input,
+jdp-container .jdp-time select,
+jdp-container .jdp-btn-today,
+jdp-container .jdp-btn-empty,
+jdp-container .jdp-btn-close {
+    font-family: Vazir, 'Vazir', tahoma, sans-serif !important;
+    color: rgba(0,0,0,0.85) !important;
+}
+/* Select dropdown background must stay white */
+jdp-container .jdp-time select,
+jdp-container .jdp-month select,
+jdp-container .jdp-year select {
+    background: rgba(0,0,0,0.05) !important;
+}
+
+/* ── Client list ─────────────────────────────────────────── */
+.tc-client-list {
+    display: none;
+    background: var(--bg-card);
+    border-top: 1px dashed var(--border-color);
+}
+.tc-client-list.open { display: block; }
+.tc-client-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 20px 7px 50px;
+    border-bottom: 1px solid rgba(148,163,184,0.08);
+    font-size: 0.8rem; gap: 10px; flex-wrap: wrap;
+    transition: background 0.12s;
+}
+.tc-client-row:last-child { border-bottom: none; }
+.tc-client-row:hover { background: var(--bg-card-hover); }
+.tc-client-email { color: var(--text-secondary); flex: 1; min-width: 120px; font-family: monospace; font-size: 0.78rem; }
+.tc-inbound-toggle {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-secondary); padding: 0 4px;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.75rem; transition: color 0.15s;
+}
+.tc-inbound-toggle:hover { color: var(--primary); }
+.tc-inbound-toggle svg { transition: transform 0.2s; }
+.tc-inbound-toggle.open svg { transform: rotate(180deg); }
 
 /* ── Filter section ──────────────────────────────────────── */
 .tc-filter-section { display: flex; flex-direction: column; gap: 14px; }
@@ -164,6 +255,7 @@
     border: 1px solid rgba(99,102,241,0.2);
     font-size: 0.82rem; color: var(--text-secondary);
     flex-wrap: wrap;
+    direction: rtl;
 }
 
 /* ── Server cards ────────────────────────────────────────── */
@@ -319,18 +411,20 @@
             </select>
         </div>
 
-        <!-- Custom Jalali datetime range (hidden by default) -->
-        <div id="tc-custom-range" style="display:none; flex-direction:column; gap:12px; padding:14px 16px; border-radius:10px; border:1px solid var(--border-color); background:var(--bg-card-hover);">
-            <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center;">
-                <span class="tc-picker-label" style="font-weight:500; white-space:nowrap;">از تاریخ</span>
-                <input type="text" id="picker-from" data-jdp class="tc-select" placeholder="1405/01/01 00:00">
-            </div>
-            <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center;">
-                <span class="tc-picker-label" style="font-weight:500; white-space:nowrap;">تا تاریخ</span>
-                <input type="text" id="picker-to" data-jdp class="tc-select" placeholder="1405/01/31 23:59">
-            </div>
-            <div>
-                <button class="btn btn-primary btn-icon" onclick="loadTrafficCheck()">
+        <!-- Custom Jalali datetime range (grid layout, slide-in) -->
+        <div id="tc-custom-range" class="tc-custom-range-box" style="display:none;">
+            <div class="tc-custom-inner">
+                <div class="tc-custom-row">
+                    <label class="tc-picker-label" for="picker-from">از تاریخ</label>
+                    <input type="text" id="picker-from" data-jdp class="tc-select tc-picker-input"
+                           placeholder="1405/01/01 00:00">
+                </div>
+                <div class="tc-custom-row">
+                    <label class="tc-picker-label" for="picker-to">تا تاریخ</label>
+                    <input type="text" id="picker-to" data-jdp class="tc-select tc-picker-input"
+                           placeholder="1405/01/31 23:59">
+                </div>
+                <button class="btn btn-primary" onclick="loadTrafficCheck()" style="align-self:end;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"/></svg>
                     بارگذاری بازه
                 </button>
@@ -341,6 +435,19 @@
         <div id="tc-period-label" class="tc-range-bar" style="display:none;"></div>
     </div>
 </div>
+
+{% if session.get('role') == 'reseller' and not session.get('is_superadmin') %}
+<!-- ── Reseller scope notice ──────────────────────────────────── -->
+<div style="display:flex; align-items:flex-start; gap:10px; padding:12px 16px; margin-bottom:16px;
+            border-radius:10px; border:1px solid rgba(251,191,36,0.3);
+            background:rgba(251,191,36,0.07); font-size:0.84rem; color:#fbbf24; line-height:1.5;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span>
+        شما در حالت <strong>رسلر</strong> هستید — فقط ترافیک اکانت‌های اسایین‌شده به شما نمایش داده می‌شود.
+        اگر اینباندی فقط بخشی از اکانت‌هایش به شما تعلق دارد، مجموع آن اینباند فقط سهم شما را نشان می‌دهد.
+    </span>
+</div>
+{% endif %}
 
 <!-- ── Results ────────────────────────────────────────────────── -->
 <div id="tc-results">
@@ -419,8 +526,9 @@ function pickerToUtcMs(inputId) {
     return Date.UTC(gy, gm-1, gd, parseInt(tp[0])||0, parseInt(tp[1])||0, 0) - 3.5*3600000;
 }
 
-// ── Period management ───────────────────────────────────────────
+// ── State ───────────────────────────────────────────────────────
 let _period = 'today';
+let _lastLoadedAt = null;
 
 function setPeriod(p) {
     _period = p;
@@ -508,14 +616,17 @@ async function loadTrafficCheck() {
             });
         }
 
-        // Period range label
+        // Period range label + loaded-at timestamp (RTL layout)
+        _lastLoadedAt = new Date();
         label.style.display = 'flex';
+        // RTL order: icon | from | ← | to | [email] | spacer | loaded-at (far left)
         label.innerHTML =
             `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>` +
             `<span>${jalaliFromUtcIso(d.from)}</span>` +
-            `<span style="opacity:0.5;">→</span>` +
+            `<span style="opacity:0.5;">←</span>` +
             `<span>${jalaliFromUtcIso(d.to)}</span>` +
-            (d.sub_email ? `<span style="color:#60a5fa;"> · ${esc(d.sub_email)}</span>` : '');
+            (d.sub_email ? `<span style="color:#60a5fa;"> · ${esc(d.sub_email)}</span>` : '') +
+            `<span style="margin-left:auto; color:var(--text-secondary); font-size:0.76rem; white-space:nowrap;" id="tc-loaded-at">⏱ بارگذاری: ${jalaliFromUtcIso(_lastLoadedAt.toISOString())}</span>`;
 
         tcRender();
     } catch(e) {
@@ -571,19 +682,39 @@ function tcRender() {
             ? `<span>اولین snapshot: ${jalaliFromUtcIso(srv.first_snapshot_at)}</span>`
             : '';
 
-        const ibRows = srv.inbounds.map(ib => {
-            const pct = srv.total > 0 ? ((ib.total / srv.total) * 100).toFixed(1) : '0.0';
+        const ibRows = srv.inbounds.map((ib, ibIdx) => {
+            const ibId  = `tc-ib-${si}-${ibIdx}`;
+            const pct   = srv.total > 0 ? ((ib.total / srv.total) * 100).toFixed(1) : '0.0';
             const isUnknown = !ib.inbound_tag || ib.inbound_tag === '(unknown)';
             let nameHtml;
             if (isUnknown) {
-                const portPart = ib.port ? `Port ${esc(String(ib.port))}` : 'unknown';
+                const portPart = ib.port ? `Port ${esc(String(ib.port))}` : 'Unknown';
                 const idPart   = ib.inbound_id ? ` / ID ${esc(String(ib.inbound_id))}` : '';
-                nameHtml = `<span style="color:var(--text-secondary);font-style:italic;">${portPart}${idPart}</span>`;
+                nameHtml = `<span style="color:var(--text-secondary);font-style:italic;" title="این inbound تگ ذخیره‌شده‌ای ندارد — احتمالاً snapshot قبل از ذخیره تگ گرفته شده">${portPart}${idPart} ⓘ</span>`;
             } else {
                 const portBadge = ib.port ? `<span style="color:var(--text-secondary);font-size:0.76rem;font-weight:400;">:${esc(String(ib.port))}</span>` : '';
                 nameHtml = `${esc(ib.inbound_tag)}${portBadge}`;
             }
-            return `<div class="tc-inbound-row">
+            const clients = ib.client_list || [];
+            const hasClients = clients.length > 0;
+            const toggleBtn = hasClients ? `
+                <button class="tc-inbound-toggle" id="${ibId}-toggle" onclick="tcToggleClients('${ibId}')" title="نمایش/پنهان کلاینت‌ها">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    ${ib.clients} کلاینت
+                </button>` : `<span style="color:var(--text-secondary);font-size:0.78rem;">${ib.clients} کلاینت</span>`;
+
+            const clientRows = hasClients ? clients.map(c => `
+                <div class="tc-client-row">
+                    <span class="tc-client-email">${esc(c.email)}</span>
+                    <div class="tc-inbound-stats">
+                        <span class="tc-badge-dl">↓ ${fmtBytes(c.download)}</span>
+                        <span class="tc-badge-ul">↑ ${fmtBytes(c.upload)}</span>
+                        <span style="color:#f59e0b;font-weight:600;">${fmtBytes(c.total)}</span>
+                    </div>
+                </div>`).join('') : '';
+
+            return `
+            <div class="tc-inbound-row">
                 <span class="tc-inbound-name">
                     <span class="tc-inbound-dot"></span>
                     ${nameHtml}
@@ -592,10 +723,11 @@ function tcRender() {
                     <span class="tc-badge-dl">↓ ${fmtBytes(ib.download)}</span>
                     <span class="tc-badge-ul">↑ ${fmtBytes(ib.upload)}</span>
                     <span style="color:#f59e0b;font-weight:600;">${fmtBytes(ib.total)}</span>
-                    <span class="tc-pct">${pct}% of server</span>
-                    <span style="color:var(--text-secondary);font-size:0.78rem;">${ib.clients} client${ib.clients!==1?'s':''}</span>
+                    <span class="tc-pct">${pct}%</span>
+                    ${toggleBtn}
                 </div>
-            </div>`;
+            </div>
+            <div class="tc-client-list" id="${ibId}-clients">${clientRows}</div>`;
         }).join('');
 
         return `<div class="tc-server-card">
@@ -638,6 +770,13 @@ function tcToggle(i) {
     const el = document.getElementById(`tc-ibs-${i}`);
     const ch = document.getElementById(`tc-chev-${i}`);
     if (el) { el.classList.toggle('open'); ch?.classList.toggle('open'); }
+}
+
+function tcToggleClients(ibId) {
+    const list = document.getElementById(`${ibId}-clients`);
+    const btn  = document.getElementById(`${ibId}-toggle`);
+    if (list) list.classList.toggle('open');
+    if (btn)  btn.classList.toggle('open');
 }
 
 // Auto-load today on page load

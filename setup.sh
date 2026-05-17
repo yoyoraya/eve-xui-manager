@@ -12,17 +12,21 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 print_header() {
-    echo -e "${BLUE}========================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}========================================${NC}"
+    echo
+    echo -e "${CYAN}${BOLD}  ── $1 ──${NC}"
+    echo
 }
 
-print_success() { echo -e "${GREEN}✓ $1${NC}"; }
-print_error() { echo -e "${RED}✗ $1${NC}"; }
-print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
+print_success() { echo -e "  ${GREEN}✓${NC} $1"; }
+print_error()   { echo -e "  ${RED}✗${NC} $1"; }
+print_warning() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 
 generate_secret() {
     local length="$1"
@@ -1206,96 +1210,377 @@ install_with_remote_migration() {
 }
 
 update_self() {
-    print_header "Updating Installer Script..."
-    curl -o "$0" -fsSL "${REPO_URL%.git}/raw/main/setup.sh"
-    chmod +x "$0"
-    print_success "Script updated! Please re-run."
+    print_header "Updating Script (Online)"
+    if curl -o "$0" -fsSL "${REPO_URL%.git}/raw/main/setup.sh"; then
+        chmod +x "$0"
+        if [ -f /usr/local/bin/eve ]; then
+            cp "$0" /usr/local/bin/eve
+            chmod +x /usr/local/bin/eve
+            print_success "eve CLI updated"
+        fi
+        print_success "Script updated — re-run 'eve' or 'bash setup.sh'"
+    else
+        print_error "Download failed. Check internet / GitHub access."
+        print_warning "If GitHub is blocked, use option [3] Offline Update instead."
+    fi
     exit 0
 }
 
-show_menu() {
-    echo
-    echo -e "${BLUE}Eve X-UI Manager Installer (Fixed)${NC}"
-    echo "1) Install / Re-install (Full)"
-    echo "2) Update Application Code"
-    echo "3) Configure SSL (Let's Encrypt / Certbot)"
-    echo "4) Update this script"
-    echo "5) Uninstall Project"
-    echo -e "${YELLOW}6) Install + Migrate from Remote Server (SSH)${NC}"
-    echo -e "${YELLOW}7) Migrate to PostgreSQL (Automatic)${NC}"
-    echo -e "${YELLOW}9) Import Remote PostgreSQL into This Server (SSH)${NC}"
-    echo -e "${YELLOW}10) Import SSL from Remote Server (SSH)${NC}"
-    echo -e "${YELLOW}11) Configure SSL (Self-Signed Certificate)${NC}"
-    echo "8) Exit"
-    read -rp "Select an option: " choice
-    case $choice in
-        1)
-            require_root
-            detect_os
-            ask_domain
-            prompt_admin_credentials
-            ask_database_type
-            update_system
-            ensure_python_pkg
-            install_dependencies
-            create_app_user
-            prepare_directories
-            clone_or_update_repo
-            [ "$DB_TYPE" = "postgres" ] && setup_postgresql_for_install
-            create_env_file
-            ensure_server_password_key
-            setup_python_env
-            setup_systemd
-            ensure_systemd_envfile_evemanager
-            setup_nginx
-            print_header "Installation Complete!"
-            echo -e "URL:      http://${DOMAIN}"
-            echo -e "Admin:    ${ADMIN_USERNAME}"
-            echo -e "Password: ${ADMIN_PASS}"
-            [ "$DB_TYPE" = "postgres" ] && echo -e "DB URL:   ${DATABASE_URL}"
-            echo -e "Logs:     journalctl -u ${SERVICE_NAME} -f"
-            ;;
-        2)
-            require_root
-            detect_os
-            install_dependencies
-            clone_or_update_repo
-            create_env_file
-            ensure_server_password_key
-            ensure_systemd_envfile_evemanager
-            setup_python_env
-            setup_nginx
-            systemctl restart ${SERVICE_NAME}
-            print_success "Updated, Gzip checked, and service restarted"
-            ;;
-        3) require_root; setup_certbot_ssl ;;
-        4) update_self ;;
-        5)
-            require_root
-            uninstall_project
-            ;;
-        6)
-            install_with_remote_migration
-            ;;
-        7)
-            require_root
-            migrate_to_postgres
-            ;;
-        9)
-            import_remote_db_only
-            ;;
-        10)
-            import_ssl_from_remote
-            ;;
-        11)
-            require_root
-            detect_os
-            setup_self_signed_ssl
-            ;;
-        8) exit 0 ;;
-        *) print_error "Invalid option" ;;
-    esac
+# ──────────────────────────────────────────────────────────────
+# Status helpers for the menu banner
+# ──────────────────────────────────────────────────────────────
+
+get_app_version() {
+    local ver=""
+    if [ -f "$APP_DIR/app.py" ]; then
+        ver=$(grep -m1 'APP_VERSION' "$APP_DIR/app.py" 2>/dev/null | grep -oP '"[^"]+"' | tr -d '"' || true)
+    fi
+    [ -z "$ver" ] && ver="not installed"
+    echo "$ver"
 }
+
+get_service_status() {
+    if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+        echo -e "${GREEN}● Running${NC}"
+    else
+        echo -e "${RED}● Stopped${NC}"
+    fi
+}
+
+get_db_type() {
+    if [ -f "$ENV_FILE" ]; then
+        if grep -q '^DATABASE_URL=postgresql' "$ENV_FILE" 2>/dev/null; then
+            echo "PostgreSQL"
+        elif grep -q '^DATABASE_URL=sqlite' "$ENV_FILE" 2>/dev/null; then
+            echo "SQLite"
+        elif grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
+            echo "Custom"
+        else
+            echo "SQLite (default)"
+        fi
+    else
+        echo "Not installed"
+    fi
+}
+
+show_banner() {
+    clear
+    echo -e "${CYAN}${BOLD}"
+    echo "   ███████╗██╗   ██╗███████╗"
+    echo "   ██╔════╝██║   ██║██╔════╝"
+    echo "   █████╗  ██║   ██║█████╗"
+    echo "   ██╔══╝  ╚██╗ ██╔╝██╔══╝"
+    echo "   ███████╗ ╚████╔╝ ███████╗"
+    printf "   ╚══════╝  ╚═══╝  ╚══════╝  %sX-UI Manager%s\n" "${NC}${BOLD}" "${NC}"
+    echo -e "${NC}"
+    echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    printf "  %-12s : %s\n"  "Version"  "$(get_app_version)"
+    printf "  %-12s : " "Status";   echo -e "$(get_service_status)"
+    printf "  %-12s : %s\n"  "Port"     "${APP_PORT}"
+    printf "  %-12s : %s\n"  "Database" "$(get_db_type)"
+    echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo
+}
+
+# ──────────────────────────────────────────────────────────────
+# Install the 'eve' CLI command to /usr/local/bin/eve
+# ──────────────────────────────────────────────────────────────
+
+install_eve_cli() {
+    local TARGET="/usr/local/bin/eve"
+    local SRC="$0"
+
+    # When piped through bash (e.g. curl | bash), $0 is /dev/stdin
+    if [ ! -f "$SRC" ] || [[ "$SRC" == /dev/std* ]] || [[ "$SRC" == /proc/* ]]; then
+        print_warning "Cannot copy piped script — downloading eve CLI from repo..."
+        if curl -o "$TARGET" -fsSL "${REPO_URL%.git}/raw/main/setup.sh"; then
+            chmod +x "$TARGET"
+            print_success "eve CLI installed — type 'eve' to manage your panel"
+        else
+            print_warning "Could not download (GitHub blocked?). Copy setup.sh to /usr/local/bin/eve manually."
+        fi
+        return
+    fi
+
+    if cp "$SRC" "$TARGET" && chmod +x "$TARGET"; then
+        print_success "eve CLI installed — type 'eve' to manage your panel"
+    else
+        print_warning "Could not install eve CLI (permission denied?)"
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────
+# Offline update — apply a ZIP file without touching GitHub
+# ──────────────────────────────────────────────────────────────
+
+offline_update() {
+    require_root
+    print_header "Offline Update (from ZIP)"
+
+    echo -e "  Upload the release ZIP to the server (SCP/SFTP), then choose this option."
+    echo -e "  ZIP must contain full project files (app.py, templates/, static/, ...)."
+    echo -e "  Optional: include a ${CYAN}wheels/${NC} folder (.whl files) for fully offline pip install."
+    echo
+
+    # Auto-detect ZIP in common locations
+    local ZIP_PATH=""
+    for _f in "/root/eve-update.zip" "/root/eve.zip" "$HOME/eve-update.zip" "$HOME/eve.zip" "/tmp/eve-update.zip"; do
+        if [ -f "$_f" ]; then
+            ZIP_PATH="$_f"
+            print_success "Auto-detected ZIP: $ZIP_PATH"
+            break
+        fi
+    done
+
+    if [ -z "$ZIP_PATH" ]; then
+        ZIP_PATH=$(find /root /tmp -maxdepth 1 -name "eve*.zip" 2>/dev/null | sort | head -1 || true)
+        [ -n "$ZIP_PATH" ] && print_success "Found ZIP: $ZIP_PATH"
+    fi
+
+    if [ -z "$ZIP_PATH" ]; then
+        read -rp "  Enter full path to ZIP file: " ZIP_PATH
+        ZIP_PATH="${ZIP_PATH// /}"
+    fi
+
+    if [ -z "$ZIP_PATH" ] || [ ! -f "$ZIP_PATH" ]; then
+        print_error "ZIP not found: ${ZIP_PATH:-<none>}"
+        echo
+        echo -e "  ${DIM}How to upload:   scp eve-update.zip root@YOUR_SERVER:/root/${NC}"
+        echo
+        return 1
+    fi
+
+    if ! command -v unzip >/dev/null 2>&1; then
+        print_warning "unzip not installed — installing..."
+        apt-get install -y -qq unzip
+    fi
+
+    local TMPDIR
+    TMPDIR=$(mktemp -d /tmp/eve-update-XXXXXX)
+    print_warning "Extracting $ZIP_PATH ..."
+    if ! unzip -q "$ZIP_PATH" -d "$TMPDIR"; then
+        print_error "Failed to extract ZIP"
+        rm -rf "$TMPDIR"
+        return 1
+    fi
+
+    # GitHub source ZIPs contain one sub-folder (e.g. eve-xui-manager-main/)
+    local EXTRACT_ROOT="$TMPDIR"
+    local _subdirs
+    _subdirs=$(find "$TMPDIR" -maxdepth 1 -mindepth 1 -type d | wc -l)
+    if [ "$_subdirs" -eq 1 ]; then
+        EXTRACT_ROOT=$(find "$TMPDIR" -maxdepth 1 -mindepth 1 -type d | head -1)
+    fi
+
+    if [ ! -f "$EXTRACT_ROOT/app.py" ]; then
+        print_error "Invalid ZIP — app.py not found inside archive"
+        rm -rf "$TMPDIR"
+        return 1
+    fi
+
+    # Backup (skip .env, database, venv)
+    local BAK_TS; BAK_TS="$(date +%s)"
+    print_warning "Backing up current installation..."
+    if rsync -a \
+        --exclude='.env' --exclude='instance/' --exclude='venv/' \
+        "$APP_DIR/" "${APP_DIR}.bak.${BAK_TS}/" 2>/dev/null; then
+        print_success "Backup saved to ${APP_DIR}.bak.${BAK_TS}"
+    else
+        print_warning "Backup failed (continuing)"
+    fi
+
+    print_warning "Stopping service..."
+    systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+
+    print_warning "Applying update files..."
+    rsync -a \
+        --exclude='.env' \
+        --exclude='instance/' \
+        --exclude='venv/' \
+        "$EXTRACT_ROOT/" "$APP_DIR/"
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+    print_success "Files synced"
+
+    # Python packages
+    if [ -d "$EXTRACT_ROOT/wheels" ]; then
+        print_warning "Installing Python packages from bundled wheels (offline)..."
+        sudo -u "$APP_USER" bash -c \
+            "source $APP_DIR/venv/bin/activate && \
+             pip install --quiet --no-index --find-links='$EXTRACT_ROOT/wheels' \
+             -r '$APP_DIR/requirements.txt'"
+        print_success "Python packages installed from wheels"
+    elif [ -f "$APP_DIR/requirements.txt" ]; then
+        print_warning "No wheels/ folder — attempting online pip install..."
+        sudo -u "$APP_USER" bash -c \
+            "source $APP_DIR/venv/bin/activate && \
+             pip install --quiet -r '$APP_DIR/requirements.txt'" ||
+        print_warning "pip install failed (PyPI unreachable?). Continuing with existing packages."
+    fi
+
+    # DB migrations
+    print_warning "Running database migrations..."
+    run_migrations
+
+    # Update eve CLI from the ZIP
+    if [ -f "$EXTRACT_ROOT/setup.sh" ]; then
+        print_warning "Updating eve CLI..."
+        cp "$EXTRACT_ROOT/setup.sh" /usr/local/bin/eve
+        chmod +x /usr/local/bin/eve
+        print_success "eve CLI updated"
+    fi
+
+    print_warning "Starting service..."
+    systemctl start "${SERVICE_NAME}"
+    sleep 2
+    if systemctl is-active --quiet "${SERVICE_NAME}"; then
+        print_success "Service is running"
+    else
+        print_error "Service failed to start"
+        print_warning "Logs: journalctl -u ${SERVICE_NAME} -n 50"
+    fi
+
+    rm -rf "$TMPDIR"
+    echo
+    print_success "Offline update complete!"
+    echo -e "  ${DIM}Backup : ${APP_DIR}.bak.${BAK_TS}${NC}"
+    echo -e "  ${DIM}Logs   : journalctl -u ${SERVICE_NAME} -f${NC}"
+}
+
+# ──────────────────────────────────────────────────────────────
+# Main interactive menu (loops until quit)
+# ──────────────────────────────────────────────────────────────
+
+show_menu() {
+    while true; do
+        show_banner
+        echo -e "  ${BOLD}Installation & Update${NC}"
+        echo -e "   ${GREEN}[1]${NC}  Install / Re-install (Full)"
+        echo -e "   ${GREEN}[2]${NC}  Update  (Online — from GitHub)"
+        echo -e "   ${YELLOW}[3]${NC}  Update  (Offline — from ZIP file)"
+        echo
+        echo -e "  ${BOLD}SSL & Domain${NC}"
+        echo -e "   ${BLUE}[4]${NC}  SSL — Let's Encrypt (Certbot)"
+        echo -e "   ${BLUE}[5]${NC}  SSL — Self-Signed Certificate"
+        echo
+        echo -e "  ${BOLD}Database & Migration${NC}"
+        echo -e "   ${CYAN}[6]${NC}  Migrate to PostgreSQL"
+        echo -e "   ${CYAN}[7]${NC}  Install + Migrate from Remote Server (SSH)"
+        echo -e "   ${CYAN}[8]${NC}  Import Remote DB only (SSH)"
+        echo -e "   ${CYAN}[9]${NC}  Import SSL from Remote Server (SSH)"
+        echo
+        echo -e "  ${BOLD}System${NC}"
+        echo -e "   ${DIM}[s]${NC}  Update this Script (Online — GitHub)"
+        echo -e "   ${RED}[u]${NC}  Uninstall"
+        echo -e "   ${DIM}[q]${NC}  Exit"
+        echo
+        echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        read -rp "  Select option: " choice
+        echo
+
+        case $choice in
+            1)
+                require_root
+                detect_os
+                ask_domain
+                prompt_admin_credentials
+                ask_database_type
+                update_system
+                ensure_python_pkg
+                install_dependencies
+                create_app_user
+                prepare_directories
+                clone_or_update_repo
+                [ "$DB_TYPE" = "postgres" ] && setup_postgresql_for_install
+                create_env_file
+                ensure_server_password_key
+                setup_python_env
+                setup_systemd
+                ensure_systemd_envfile_evemanager
+                setup_nginx
+                install_eve_cli
+                print_header "Installation Complete!"
+                echo -e "  URL      : http://${DOMAIN}"
+                echo -e "  Admin    : ${ADMIN_USERNAME}"
+                echo -e "  Password : ${ADMIN_PASS}"
+                [ "$DB_TYPE" = "postgres" ] && echo -e "  DB URL   : ${DATABASE_URL}"
+                echo -e "  Logs     : journalctl -u ${SERVICE_NAME} -f"
+                echo -e "  CLI      : type 'eve' to manage this panel"
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            2)
+                require_root
+                detect_os
+                install_dependencies
+                clone_or_update_repo
+                create_env_file
+                ensure_server_password_key
+                ensure_systemd_envfile_evemanager
+                setup_python_env
+                setup_nginx
+                systemctl restart ${SERVICE_NAME}
+                install_eve_cli
+                print_success "Updated and service restarted"
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            3)
+                offline_update
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            4)
+                require_root
+                setup_certbot_ssl
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            5)
+                require_root
+                detect_os
+                setup_self_signed_ssl
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            6)
+                require_root
+                migrate_to_postgres
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            7)
+                install_with_remote_migration
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            8)
+                import_remote_db_only
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            9)
+                import_ssl_from_remote
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            s|S)
+                update_self
+                ;;
+            u|U)
+                require_root
+                echo -e "  ${RED}${BOLD}WARNING:${NC} This removes all Eve files, configs, and the service."
+                read -rp "  Type YES to confirm: " _confirm
+                if [ "$_confirm" = "YES" ]; then
+                    uninstall_project
+                else
+                    print_warning "Uninstall cancelled"
+                fi
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            q|Q|0)
+                echo -e "  ${DIM}Bye!${NC}"
+                echo
+                exit 0
+                ;;
+            *)
+                print_error "Invalid option: $choice"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
 uninstall_project() {
     print_header "Uninstalling Eve X-UI Manager"
     systemctl stop ${SERVICE_NAME} || true
@@ -1306,10 +1591,15 @@ uninstall_project() {
     rm -rf "$LOG_DIR"
     rm -f /etc/nginx/sites-enabled/${SERVICE_NAME}
     rm -f /etc/nginx/sites-available/${SERVICE_NAME}
+    rm -f /usr/local/bin/eve
     nginx -t && systemctl restart nginx
     userdel -r ${APP_USER} 2>/dev/null || true
-    print_success "Eve X-UI Manager and related files removed."
+    print_success "Eve X-UI Manager and all related files removed."
 }
+
+# ──────────────────────────────────────────────────────────────
+# Entry point — non-interactive if args given, else show menu
+# ──────────────────────────────────────────────────────────────
 
 if [ $# -gt 0 ]; then
     require_root
@@ -1329,11 +1619,13 @@ if [ $# -gt 0 ]; then
     setup_systemd
     ensure_systemd_envfile_evemanager
     setup_nginx
+    install_eve_cli
     print_header "Installation Complete!"
-    echo -e "URL:      http://${DOMAIN}"
-    echo -e "Admin:    ${ADMIN_USERNAME}"
-    echo -e "Password: ${ADMIN_PASS}"
-    [ "$DB_TYPE" = "postgres" ] && echo -e "DB URL:   ${DATABASE_URL}"
+    echo -e "  URL      : http://${DOMAIN}"
+    echo -e "  Admin    : ${ADMIN_USERNAME}"
+    echo -e "  Password : ${ADMIN_PASS}"
+    [ "$DB_TYPE" = "postgres" ] && echo -e "  DB URL   : ${DATABASE_URL}"
+    echo -e "  CLI      : type 'eve' to manage this panel"
 else
     show_menu
 fi

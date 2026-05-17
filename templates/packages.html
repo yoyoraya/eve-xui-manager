@@ -128,12 +128,12 @@
             </div>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
                 <div class="form-group">
-                    <label>Duration (Days)</label>
-                    <input type="number" id="pkg-days" class="form-input" placeholder="30" oninput="updateMinPriceHint()">
+                    <label>Duration (Days) <span style="font-size:0.75rem; color:var(--text-secondary);">(0 = ∞)</span></label>
+                    <input type="number" id="pkg-days" class="form-input" placeholder="30" min="0" oninput="updateMinPriceHint()">
                 </div>
                 <div class="form-group">
-                    <label>Volume (GB)</label>
-                    <input type="number" id="pkg-vol" class="form-input" placeholder="30" oninput="updateMinPriceHint()">
+                    <label>Volume (GB) <span style="font-size:0.75rem; color:var(--text-secondary);">(0 = ∞)</span></label>
+                    <input type="number" id="pkg-vol" class="form-input" placeholder="30" min="0" oninput="updateMinPriceHint()">
                 </div>
             </div>
             <div class="form-group">
@@ -373,6 +373,13 @@ async function loadPackages() {
     }
 }
 
+function fmtPkgDate(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    return d.toLocaleDateString('fa-IR', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function renderPackages(body) {
     if (!_pkgCache.length) {
         body.innerHTML = '<div class="empty-state">No packages defined. Click "Add Package" to create one.</div>';
@@ -381,11 +388,20 @@ function renderPackages(body) {
     body.innerHTML = _pkgCache.map(p => {
         const scopeClass = 'scope-' + (p.scope || 'global');
         const scopeLabel = (p.scope || 'global').charAt(0).toUpperCase() + (p.scope||'global').slice(1);
+        const daysStr    = p.days   === 0 ? '∞' : p.days + ' روز';
+        const volStr     = p.volume === 0 ? '∞' : p.volume + ' GB';
+        const createdStr = p.created_by_username
+            ? `<span>👤 ${escHtml(p.created_by_username)}${p.created_at ? ' · ' + fmtPkgDate(p.created_at) : ''}</span>`
+            : (p.created_at ? `<span>📅 ${fmtPkgDate(p.created_at)}</span>` : '');
+        const updatedStr = p.updated_at
+            ? `<span style="color:var(--warning, #fbbf24);">✏️ ویرایش: ${fmtPkgDate(p.updated_at)}</span>`
+            : '';
         return `
         <div class="pkg-item">
             <div class="pkg-info">
                 <strong>${escHtml(p.name)}</strong>
-                <span>⏳ ${p.days} Days &nbsp;|&nbsp; 💾 ${p.volume} GB</span>
+                <span>⏳ ${daysStr} &nbsp;|&nbsp; 💾 ${volStr}</span>
+                ${createdStr || updatedStr ? `<span style="font-size:0.75rem; color:var(--text-secondary); display:flex; gap:10px; flex-wrap:wrap;">${createdStr}${updatedStr}</span>` : ''}
             </div>
             <div class="pkg-meta">
                 <span class="scope-badge ${scopeClass}">${scopeLabel}</span>
@@ -462,10 +478,14 @@ function updateMinPriceHint() {
 }
 
 async function _fetchMinPrice() {
-    const vol  = parseFloat(document.getElementById('pkg-vol').value)  || 0;
-    const days = parseInt(document.getElementById('pkg-days').value)    || 0;
-    const hint = document.getElementById('pkg-price-hint');
-    if (!vol && !days) { hint.style.display = 'none'; return; }
+    const volRaw  = document.getElementById('pkg-vol').value.trim();
+    const daysRaw = document.getElementById('pkg-days').value.trim();
+    const vol     = volRaw  !== '' ? parseFloat(volRaw)  : null;
+    const days    = daysRaw !== '' ? parseInt(daysRaw)   : null;
+    const hint    = document.getElementById('pkg-price-hint');
+    // Empty or unlimited (0) — hide hint
+    if (vol === null && days === null) { hint.style.display = 'none'; return; }
+    if (vol === 0 || days === 0)       { hint.style.display = 'none'; return; }
     try {
         const res  = await fetch(`/api/packages/min-price?volume_gb=${vol}&days=${days}`);
         const data = await res.json();
@@ -485,15 +505,18 @@ function checkPriceWarning(minPrice) {
 }
 
 async function submitPackage() {
-    const name  = document.getElementById('pkg-name').value.trim();
-    const days  = document.getElementById('pkg-days').value;
-    const vol   = document.getElementById('pkg-vol').value;
-    const price = unformatNumber(document.getElementById('pkg-price').value);
-    const scope = document.getElementById('pkg-scope').value;
+    const name    = document.getElementById('pkg-name').value.trim();
+    const daysStr = document.getElementById('pkg-days').value.trim();
+    const volStr  = document.getElementById('pkg-vol').value.trim();
+    const price   = unformatNumber(document.getElementById('pkg-price').value);
+    const scope   = document.getElementById('pkg-scope').value;
 
-    if (!name || !days || !vol || !price) {
+    if (!name || daysStr === '' || volStr === '' || !price) {
         showToast('Please fill out all fields', 'error'); return;
     }
+
+    const days = parseInt(daysStr);
+    const vol  = parseInt(volStr);
 
     // Gather assigned reseller IDs if scope === assigned
     let reseller_ids = [];
@@ -502,7 +525,7 @@ async function submitPackage() {
             .forEach(cb => reseller_ids.push(parseInt(cb.value)));
     }
 
-    const body = { name, days: parseInt(days), volume: parseInt(vol), price, scope };
+    const body = { name, days, volume: vol, price, scope };
 
     try {
         // Save base package
@@ -567,7 +590,7 @@ function loadResellerPackages() {
             <div class="rar-left">
                 <div>
                     <strong>${escHtml(p.name)}</strong>
-                    <span style="margin-left:8px; font-size:0.8rem; color:var(--text-secondary);">${p.days}d / ${p.volume}GB / ${Number(p.price).toLocaleString()}T</span>
+                    <span style="margin-left:8px; font-size:0.8rem; color:var(--text-secondary);">${p.days === 0 ? '∞' : p.days + 'd'} / ${p.volume === 0 ? '∞' : p.volume + 'GB'} / ${Number(p.price).toLocaleString()}T</span>
                 </div>
             </div>
             <div class="rar-right">

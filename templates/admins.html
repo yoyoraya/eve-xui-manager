@@ -496,8 +496,22 @@
             <div id="reseller-fields">
                 <div class="form-group">
                     <label>Credit (Amount)</label>
-                    <input type="text" id="admin-credit" placeholder="0" value="0" oninput="formatNumberInput(this)">
-                    <small style="color: var(--text-secondary);">Initial credit for new user</small>
+                    <input type="number" id="admin-credit" placeholder="0" value="0">
+                    <small style="color: var(--text-secondary);">Initial credit for new user (can be negative)</small>
+                </div>
+
+                <label class="form-group form-toggle-item" style="cursor: pointer; margin-bottom: 4px;">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="admin-allow-negative" onchange="toggleNegativeLimitField()">
+                        <span class="slider"></span>
+                    </div>
+                    <span>مجاز به اعتبار منفی (Allow Negative Credit)</span>
+                </label>
+
+                <div class="form-group" id="negative-limit-field" style="display:none;">
+                    <label>حداکثر بدهی مجاز — Max Debt Allowed (Toman)</label>
+                    <input type="text" id="admin-negative-limit" placeholder="e.g. 500,000" value="0" oninput="formatNumberInput(this)">
+                    <small style="color: var(--text-secondary);">عملیات تا زمانی که موجودی بالاتر از این مقدار منفی باشد مجاز است</small>
                 </div>
 
                 <div class="form-group">
@@ -597,7 +611,7 @@
             
             <div class="form-group">
                 <label>Amount (Toman)</label>
-                <input type="number" id="charge-amount" class="form-input" placeholder="e.g. 500000">
+                <input type="text" id="charge-amount" class="form-input" placeholder="e.g. 500,000" oninput="formatSignedNumberInput(this)" inputmode="numeric">
                 <small style="color: var(--text-secondary);">Use negative value to deduct.</small>
             </div>
             
@@ -618,6 +632,20 @@
 <script nonce="{{ csp_nonce }}">
     let admins = [];
     let allServers = [];
+
+    function formatSignedNumberInput(input) {
+        let val = input.value;
+        const isNeg = val.startsWith('-');
+        const digits = val.replace(/[^\d]/g, '');
+        if (!digits) { input.value = isNeg ? '-' : ''; return; }
+        input.value = (isNeg ? '-' : '') + parseInt(digits).toLocaleString('en-US');
+    }
+
+    function toggleNegativeLimitField() {
+        const checked = document.getElementById('admin-allow-negative').checked;
+        const field = document.getElementById('negative-limit-field');
+        if (field) field.style.display = checked ? '' : 'none';
+    }
 
     function validatePasswordUX(password) {
         const requirementsDiv = document.getElementById('password-requirements');
@@ -1080,10 +1108,11 @@
                                 <line x1="18" y1="12" x2="18" y2="12"></line>
                             </svg>
                             <div class="admin-credit-amount">
-                                <span>${admin.credit.toLocaleString()}</span>
+                                <span style="${admin.credit < 0 ? 'color:#f87171;' : ''}">${admin.credit.toLocaleString()}</span>
                                 <small>T</small>
                             </div>
                         </div>
+                        ${admin.allow_negative_credit ? `<span style="font-size:0.72rem; color:#fbbf24; background:rgba(251,191,36,0.12); border:1px solid rgba(251,191,36,0.3); border-radius:6px; padding:1px 6px; margin-top:3px; display:inline-block;" title="Max debt: ${(admin.negative_credit_limit||0).toLocaleString()} T">اعتبار منفی تا ${(admin.negative_credit_limit||0).toLocaleString()} T</span>` : ''}
                         <p class="admin-meta" style="margin-top: 5px;">
                             Last Login: ${formatJalaliDate(admin.last_login)}
                         </p>
@@ -1121,11 +1150,13 @@
 
     async function submitCharge() {
         const id = document.getElementById('charge-admin-id').value;
-        const amount = document.getElementById('charge-amount').value;
+        const rawAmount = document.getElementById('charge-amount').value.replace(/,/g, '').trim();
         const desc = document.getElementById('charge-desc').value;
-        
-        if (!amount) return showToast('Amount is required', 'error');
-        
+
+        if (!rawAmount || rawAmount === '-') return showToast('Amount is required', 'error');
+        const amount = parseInt(rawAmount);
+        if (isNaN(amount)) return showToast('Invalid amount', 'error');
+
         try {
             const res = await fetch('/admin/charge', {
                 method: 'POST',
@@ -1156,6 +1187,9 @@
         document.getElementById('admin-channel-telegram').value = '';
         document.getElementById('admin-channel-whatsapp').value = '';
         document.getElementById('admin-credit').value = '0';
+        document.getElementById('admin-allow-negative').checked = false;
+        document.getElementById('admin-negative-limit').value = '0';
+        toggleNegativeLimitField();
         document.getElementById('admin-allowed-servers').value = '*';
         document.getElementById('admin-discount').value = '0';
         document.getElementById('admin-cost-day').value = '';
@@ -1184,7 +1218,10 @@
         document.getElementById('admin-support-whatsapp').value = admin.support_whatsapp || '';
         document.getElementById('admin-channel-telegram').value = admin.channel_telegram || '';
         document.getElementById('admin-channel-whatsapp').value = admin.channel_whatsapp || '';
-        document.getElementById('admin-credit').value = (admin.credit || 0).toLocaleString();
+        document.getElementById('admin-credit').value = admin.credit || 0;
+        document.getElementById('admin-allow-negative').checked = !!admin.allow_negative_credit;
+        document.getElementById('admin-negative-limit').value = (admin.negative_credit_limit || 0).toLocaleString();
+        toggleNegativeLimitField();
         const normalizedAllowed = normalizeAllowedInput(admin.allowed_servers);
         applyAllowedServers(normalizedAllowed);
         const allowedHidden = document.getElementById('admin-allowed-servers');
@@ -1272,7 +1309,8 @@
             allowedServers = normalizeAllowedInput(allowedServers);
         }
 
-        const creditRaw = document.getElementById('admin-credit').value.replace(/,/g, '');
+        const creditRaw = document.getElementById('admin-credit').value;
+        const negLimitRaw = document.getElementById('admin-negative-limit').value.replace(/,/g, '');
         const costDayRaw = document.getElementById('admin-cost-day').value.replace(/,/g, '');
         const costGbRaw = document.getElementById('admin-cost-gb').value.replace(/,/g, '');
 
@@ -1299,6 +1337,8 @@
             channel_telegram: document.getElementById('admin-channel-telegram').value,
             channel_whatsapp: document.getElementById('admin-channel-whatsapp').value,
             credit: parseInt(creditRaw) || 0,
+            allow_negative_credit: document.getElementById('admin-allow-negative').checked,
+            negative_credit_limit: Math.max(0, parseInt(negLimitRaw) || 0),
             allowed_servers: allowedServers,
             enabled: document.getElementById('admin-enabled').checked,
             discount_percent: parseInt(document.getElementById('admin-discount').value) || 0,

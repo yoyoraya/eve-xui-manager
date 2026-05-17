@@ -83,10 +83,10 @@ from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 from urllib.parse import urlparse, quote, urlencode, unquote
 from jdatetime import datetime as jdatetime_class
-from sqlalchemy import or_, func, text, inspect, case
+from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "1.9.1"
+APP_VERSION = "1.9.2"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -1357,7 +1357,10 @@ def add_security_headers(response):
     return response
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_recycle': 1800,
-    'pool_pre_ping': True
+    'pool_pre_ping': True,
+    'pool_size': 15,
+    'max_overflow': 5,
+    'pool_timeout': 10,
 }
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
@@ -1959,6 +1962,8 @@ class Admin(db.Model):
     role = db.Column(db.String(20), default='admin')
     is_superadmin = db.Column(db.Boolean, default=False)
     credit = db.Column(db.Integer, default=0)
+    allow_negative_credit = db.Column(db.Boolean, default=False)
+    negative_credit_limit = db.Column(db.Integer, default=0)
     allowed_servers = db.Column(db.Text, default='[]')
     enabled = db.Column(db.Boolean, default=True)
     discount_percent = db.Column(db.Integer, default=0)
@@ -1987,6 +1992,8 @@ class Admin(db.Model):
             'role': self.role,
             'is_superadmin': self.is_superadmin,
             'credit': self.credit,
+            'allow_negative_credit': bool(self.allow_negative_credit),
+            'negative_credit_limit': self.negative_credit_limit or 0,
             'allowed_servers': parse_allowed_servers(self.allowed_servers),
             'enabled': self.enabled,
             'discount_percent': self.discount_percent,
@@ -2097,6 +2104,7 @@ class Package(db.Model):
     created_by = db.Column(db.Integer, nullable=True)
     display_order = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=True)
 
     def to_dict(self):
         import json as _j
@@ -2117,6 +2125,7 @@ class Package(db.Model):
             'created_by': self.created_by,
             'display_order': self.display_order or 0,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -2762,11 +2771,41 @@ def _get_system_config_bool(key: str, default: bool = False) -> bool:
     return _parse_bool(_get_system_config_text(key, 'true' if default else 'false'))
 
 
-def _get_whatsapp_runtime_settings() -> dict:
-    region = _normalize_whatsapp_region(_get_system_config_text(WHATSAPP_DEPLOYMENT_REGION_KEY, 'outside'))
-    provider = _normalize_whatsapp_provider(_get_system_config_text(WHATSAPP_PROVIDER_KEY, 'baileys'))
+def _get_system_configs_batch(keys: list) -> dict:
+    if not keys:
+        return {}
+    rows = SystemConfig.query.filter(SystemConfig.key.in_(keys)).all()
+    result = {r.key: r.value for r in rows}
+    for k in keys:
+        if k not in result:
+            result[k] = None
+    return result
 
-    enabled_requested = _get_system_config_bool(WHATSAPP_ENABLED_KEY, False)
+
+def _get_whatsapp_runtime_settings() -> dict:
+    _wa_keys = [
+        WHATSAPP_DEPLOYMENT_REGION_KEY, WHATSAPP_PROVIDER_KEY, WHATSAPP_ENABLED_KEY,
+        WHATSAPP_TRIGGER_RENEW_KEY, WHATSAPP_TRIGGER_WELCOME_KEY, WHATSAPP_TRIGGER_PRE_EXPIRY_KEY,
+        WHATSAPP_MIN_INTERVAL_SECONDS_KEY, WHATSAPP_DAILY_LIMIT_KEY, WHATSAPP_PRE_EXPIRY_HOURS_KEY,
+        WHATSAPP_RETRY_COUNT_KEY, WHATSAPP_BACKOFF_SECONDS_KEY, WHATSAPP_CIRCUIT_BREAKER_KEY,
+        WHATSAPP_TEMPLATE_RENEW_KEY, WHATSAPP_TEMPLATE_WELCOME_KEY, WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY,
+        WHATSAPP_GATEWAY_URL_KEY, WHATSAPP_GATEWAY_API_KEY, WHATSAPP_GATEWAY_TIMEOUT_KEY,
+    ]
+    _c = _get_system_configs_batch(_wa_keys)
+
+    def _txt(key, default=''):
+        v = _c.get(key)
+        return str(v) if v is not None else default
+
+    def _bool(key, default=False):
+        return _parse_bool(_txt(key, 'true' if default else 'false'))
+
+    def _int(key, default, min_value=None, max_value=None):
+        return _parse_int(_txt(key, str(default)), default, min_value=min_value, max_value=max_value)
+
+    region = _normalize_whatsapp_region(_txt(WHATSAPP_DEPLOYMENT_REGION_KEY, 'outside'))
+    provider = _normalize_whatsapp_provider(_txt(WHATSAPP_PROVIDER_KEY, 'baileys'))
+    enabled_requested = _bool(WHATSAPP_ENABLED_KEY, False)
     enabled = bool(enabled_requested and region != 'iran')
 
     config = {
@@ -2774,21 +2813,21 @@ def _get_whatsapp_runtime_settings() -> dict:
         'provider': provider,
         'enabled_requested': enabled_requested,
         'enabled': enabled,
-        'trigger_renew_success': _get_system_config_bool(WHATSAPP_TRIGGER_RENEW_KEY, True),
-        'trigger_welcome': _get_system_config_bool(WHATSAPP_TRIGGER_WELCOME_KEY, False),
-        'trigger_pre_expiry': _get_system_config_bool(WHATSAPP_TRIGGER_PRE_EXPIRY_KEY, False),
-        'min_interval_seconds': _get_system_config_int(WHATSAPP_MIN_INTERVAL_SECONDS_KEY, 45, min_value=45, max_value=3600),
-        'daily_limit': _get_system_config_int(WHATSAPP_DAILY_LIMIT_KEY, 100, min_value=1, max_value=50000),
-        'pre_expiry_hours': _get_system_config_int(WHATSAPP_PRE_EXPIRY_HOURS_KEY, 24, min_value=1, max_value=720),
-        'retry_count': _get_system_config_int(WHATSAPP_RETRY_COUNT_KEY, 3, min_value=0, max_value=10),
-        'backoff_seconds': _get_system_config_int(WHATSAPP_BACKOFF_SECONDS_KEY, 30, min_value=5, max_value=3600),
-        'circuit_breaker': _get_system_config_bool(WHATSAPP_CIRCUIT_BREAKER_KEY, True),
-        'template_renew': _get_system_config_text(WHATSAPP_TEMPLATE_RENEW_KEY, DEFAULT_WHATSAPP_TEMPLATE_RENEW).strip() or DEFAULT_WHATSAPP_TEMPLATE_RENEW,
-        'template_welcome': _get_system_config_text(WHATSAPP_TEMPLATE_WELCOME_KEY, DEFAULT_WHATSAPP_TEMPLATE_WELCOME).strip() or DEFAULT_WHATSAPP_TEMPLATE_WELCOME,
-        'template_pre_expiry': _get_system_config_text(WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY, DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY).strip() or DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY,
-        'gateway_url': _normalize_whatsapp_gateway_url(_get_system_config_text(WHATSAPP_GATEWAY_URL_KEY, '')),
-        'gateway_api_key': _get_system_config_text(WHATSAPP_GATEWAY_API_KEY, '').strip(),
-        'gateway_timeout_seconds': _get_system_config_int(WHATSAPP_GATEWAY_TIMEOUT_KEY, 10, min_value=3, max_value=60),
+        'trigger_renew_success': _bool(WHATSAPP_TRIGGER_RENEW_KEY, True),
+        'trigger_welcome': _bool(WHATSAPP_TRIGGER_WELCOME_KEY, False),
+        'trigger_pre_expiry': _bool(WHATSAPP_TRIGGER_PRE_EXPIRY_KEY, False),
+        'min_interval_seconds': _int(WHATSAPP_MIN_INTERVAL_SECONDS_KEY, 45, min_value=45, max_value=3600),
+        'daily_limit': _int(WHATSAPP_DAILY_LIMIT_KEY, 100, min_value=1, max_value=50000),
+        'pre_expiry_hours': _int(WHATSAPP_PRE_EXPIRY_HOURS_KEY, 24, min_value=1, max_value=720),
+        'retry_count': _int(WHATSAPP_RETRY_COUNT_KEY, 3, min_value=0, max_value=10),
+        'backoff_seconds': _int(WHATSAPP_BACKOFF_SECONDS_KEY, 30, min_value=5, max_value=3600),
+        'circuit_breaker': _bool(WHATSAPP_CIRCUIT_BREAKER_KEY, True),
+        'template_renew': _txt(WHATSAPP_TEMPLATE_RENEW_KEY, DEFAULT_WHATSAPP_TEMPLATE_RENEW).strip() or DEFAULT_WHATSAPP_TEMPLATE_RENEW,
+        'template_welcome': _txt(WHATSAPP_TEMPLATE_WELCOME_KEY, DEFAULT_WHATSAPP_TEMPLATE_WELCOME).strip() or DEFAULT_WHATSAPP_TEMPLATE_WELCOME,
+        'template_pre_expiry': _txt(WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY, DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY).strip() or DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY,
+        'gateway_url': _normalize_whatsapp_gateway_url(_txt(WHATSAPP_GATEWAY_URL_KEY, '')),
+        'gateway_api_key': _txt(WHATSAPP_GATEWAY_API_KEY, '').strip(),
+        'gateway_timeout_seconds': _int(WHATSAPP_GATEWAY_TIMEOUT_KEY, 10, min_value=3, max_value=60),
     }
 
     if region == 'iran':
@@ -3389,6 +3428,8 @@ with app.app_context():
             ('support_whatsapp', 'VARCHAR(64)'),
             ('channel_telegram', 'TEXT'),
             ('channel_whatsapp', 'TEXT'),
+            ('allow_negative_credit', 'BOOLEAN DEFAULT 0'),
+            ('negative_credit_limit', 'INTEGER DEFAULT 0'),
         ]
 
         for col_name, col_type in admin_missing_cols:
@@ -3467,6 +3508,7 @@ with app.app_context():
                 ('created_by', 'INTEGER'),
                 ('display_order', 'INTEGER DEFAULT 0'),
                 ('created_at', _ts_type),
+                ('updated_at', _ts_type),
             ]
             for _cn, _cd in _pkg_new:
                 if _cn not in _pkg_cols:
@@ -6137,7 +6179,7 @@ def settings_page():
 
 
 @app.route('/api/settings/subscription-page', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_subscription_page_settings():
     lang = (_get_or_create_system_setting('subscription_page_lang', 'en') or 'en').strip().lower()
     if lang not in ('fa', 'en'):
@@ -6146,7 +6188,7 @@ def get_subscription_page_settings():
 
 
 @app.route('/api/settings/subscription-page', methods=['POST'])
-@superadmin_required
+@user_management_required
 def save_subscription_page_settings():
     try:
         data = request.get_json() or {}
@@ -6169,7 +6211,7 @@ def save_subscription_page_settings():
 
 
 @app.route('/api/settings/general', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_general_settings():
     thresholds = _get_dashboard_status_thresholds()
     try:
@@ -6204,7 +6246,7 @@ def get_general_settings():
 
 
 @app.route('/api/settings/general', methods=['POST'])
-@superadmin_required
+@user_management_required
 def save_general_settings():
     try:
         data = request.get_json() or {}
@@ -6490,6 +6532,21 @@ def _get_cached_raw_client(server_id: int, inbound_id: int, email: str):
     return target_client
 
 
+def _user_can_afford(user, price: int) -> tuple[bool, str | None]:
+    """Check if user can afford price, respecting negative credit allowance.
+    Returns (ok, error_message_or_None).
+    """
+    if price <= 0:
+        return True, None
+    cur = getattr(user, 'credit', 0) or 0
+    allow_neg = getattr(user, 'allow_negative_credit', False) or False
+    neg_limit = getattr(user, 'negative_credit_limit', 0) or 0
+    min_bal = -(abs(neg_limit)) if allow_neg else 0
+    if cur - price < min_bal:
+        return False, f"Insufficient credit. Required: {price}, Available: {cur}"
+    return True, None
+
+
 def _has_client_access(user, server_id: int, email: str, inbound_id: int | None = None, client_uuid: str | None = None) -> bool:
     if not user:
         return False
@@ -6527,8 +6584,10 @@ def _toggle_client_core(user, server, inbound_id: int, email: str, enable: bool)
     if not _has_client_access(user, server.id, email, inbound_id=inbound_id):
         return False, "Access denied", 403
 
-    if user.role == 'reseller' and price > user.credit:
-        return False, f"Insufficient credit. Required: {price}, Available: {user.credit}", 402
+    if user.role == 'reseller':
+        ok, err = _user_can_afford(user, price)
+        if not ok:
+            return False, err, 402
 
     target_client = _get_cached_raw_client(server.id, inbound_id, email)
 
@@ -6638,12 +6697,13 @@ def reset_client_traffic(server_id, inbound_id):
             return jsonify({"success": False, "error": "Access denied"}), 403
         if not is_free and user_cost_gb > 0 and volume_gb <= 0:
             return jsonify({"success": False, "error": "Billable volume required"}), 400
-        if charge_amount > user.credit:
-            return jsonify({"success": False, "error": f"Insufficient credit. Required: {charge_amount}, Available: {user.credit}"}), 402
-    
+        ok, err = _user_can_afford(user, charge_amount)
+        if not ok:
+            return jsonify({"success": False, "error": err}), 402
+
     session_obj, error = get_xui_session(server)
     if error: return jsonify({"success": False, "error": error}), 400
-    
+
     try:
         templates = collect_endpoint_templates(server.panel_type, 'client_reset_traffic', CLIENT_RESET_FALLBACKS)
         replacements = {
@@ -7101,13 +7161,15 @@ def renew_client(server_id, inbound_id, email):
     user = db.session.get(Admin, session['admin_id'])
     if not user:
         return _finish({"success": False, "error": "User not found"}, 401)
-    
-    server = Server.query.get_or_404(server_id)
-    
+
+    server = db.session.get(Server, server_id)
+    if not server:
+        return _finish({"success": False, "error": "Server not found"}, 404)
+
     try:
         data = request.get_json() or {}
-    except:
-        return _finish({"success": False, "error": "Invalid data"}, 400)
+    except Exception:
+        return _finish({"success": False, "error": "Invalid request data"}, 400)
 
     start_after_first_use = bool(data.get('start_after_first_use', False))
     reset_traffic = bool(data.get('reset_traffic', False))
@@ -7133,8 +7195,8 @@ def renew_client(server_id, inbound_id, email):
             volume_provided = True
             price = calculate_reseller_price(user, package=package)
             description = f"Renew Package: {package.name} - {email}"
-            if days_to_add <= 0:
-                return _finish({"success": False, "error": "Package is misconfigured"}, 400)
+            if days_to_add < 0:
+                return _finish({"success": False, "error": "Package is misconfigured (negative days)"}, 400)
         else:
             days_to_add = int(data.get('days', 0))
             raw_volume = data.get('volume', None)
@@ -7166,18 +7228,26 @@ def renew_client(server_id, inbound_id, email):
             else:
                 vol_label = f"{volume_gb_to_add} GB" if volume_gb_to_add > 0 else "Unlimited Volume"
             description = f"Renew Custom: {days_label}, {vol_label} - {email}"
-    except (ValueError, TypeError):
-        return _finish({"success": False, "error": "Invalid data"}, 400)
+    except (ValueError, TypeError) as e:
+        return _finish({"success": False, "error": f"Invalid data: {e}"}, 400)
+    except Exception as e:
+        app.logger.error(f"Renew price-calc error (trace={renewal_trace_id}): {e}", exc_info=True)
+        return _finish({"success": False, "error": f"Server error during price calculation: {e}"}, 500)
 
     if is_free:
         price = 0
     
-    if user.role == 'reseller':
-        if not _has_client_access(user, server_id, email, inbound_id=inbound_id):
-            return _finish({"success": False, "error": "Access denied"}, 403)
-        if price > 0 and user.credit < price:
-            return _finish({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}, 402)
-    
+    try:
+        if user.role == 'reseller':
+            if not _has_client_access(user, server_id, email, inbound_id=inbound_id):
+                return _finish({"success": False, "error": "Access denied"}, 403)
+            ok, err = _user_can_afford(user, price)
+            if not ok:
+                return _finish({"success": False, "error": err}, 402)
+    except Exception as e:
+        app.logger.error(f"Renew access-check error (trace={renewal_trace_id}): {e}", exc_info=True)
+        return _finish({"success": False, "error": f"Server error during access check: {e}"}, 500)
+
     # Optimization: Try to find client in global cache first to avoid slow fetch_inbounds
     # NOTE: cached display rows include usage stats while `raw_client` often does not.
     target_client = None
@@ -7816,6 +7886,8 @@ def add_admin():
         role=data.get('role', 'reseller'),
         is_superadmin=(data.get('role') == 'superadmin'),
         credit=int(data.get('credit', 0)),
+        allow_negative_credit=bool(data.get('allow_negative_credit', False)),
+        negative_credit_limit=max(0, int(data.get('negative_credit_limit', 0) or 0)),
         allowed_servers=serialize_allowed_servers(data.get('allowed_servers', [])),
         enabled=data.get('enabled', True),
         discount_percent=int(data.get('discount_percent', 0)),
@@ -7897,6 +7969,8 @@ def update_admin(admin_id):
             admin.role = new_role
             admin.is_superadmin = (new_role == 'superadmin')
     if 'credit' in data: admin.credit = int(data['credit'])
+    if 'allow_negative_credit' in data: admin.allow_negative_credit = bool(data['allow_negative_credit'])
+    if 'negative_credit_limit' in data: admin.negative_credit_limit = max(0, int(data['negative_credit_limit'] or 0))
     if 'allowed_servers' in data: admin.allowed_servers = serialize_allowed_servers(data['allowed_servers'])
     if 'enabled' in data: admin.enabled = data['enabled']
     if 'discount_percent' in data: admin.discount_percent = int(data['discount_percent'])
@@ -8273,12 +8347,13 @@ def add_client(server_id, inbound_id):
         if not is_inbound_accessible(server_id, inbound_id, allowed_map, assignments):
             return jsonify({"success": False, "error": "Access to this inbound is denied"}), 403
         
-        if price > 0 and user.credit < price:
-            return jsonify({"success": False, "error": f"Insufficient credit. Required: {price}, Available: {user.credit}"}), 402
+        ok, err = _user_can_afford(user, price)
+        if not ok:
+            return jsonify({"success": False, "error": err}), 402
 
     session_obj, error = get_xui_session(server)
     if error: return jsonify({"success": False, "error": error})
-    
+
     try:
         client_uuid = str(uuid.uuid4())
         client_sub_id = ''.join(secrets.choice(string.ascii_letters + string.digits) for i in range(16))
@@ -8500,36 +8575,63 @@ def add_client(server_id, inbound_id):
 @app.route('/api/packages', methods=['GET'])
 @login_required
 def get_packages():
+    import json as _j
     user = db.session.get(Admin, session['admin_id'])
-    packages = Package.query.filter_by(enabled=True).all()
-    
+    packages = Package.query.filter_by(enabled=True).order_by(Package.display_order, Package.id).all()
+
+    # Build creator username lookup
+    creator_ids = {p.created_by for p in packages if p.created_by}
+    creator_map = {}
+    if creator_ids:
+        creators = Admin.query.filter(Admin.id.in_(list(creator_ids))).all()
+        creator_map = {a.id: a.username for a in creators}
+
     result = []
     for p in packages:
+        scope = p.scope or 'global'
+        # Resellers only see global or packages explicitly assigned to them
+        if user.role == 'reseller':
+            if scope == 'global':
+                pass
+            elif scope == 'assigned':
+                try:
+                    ids = _j.loads(p.assigned_reseller_ids or '[]')
+                except Exception:
+                    ids = []
+                if user.id not in ids:
+                    continue
+            else:  # personal — admin-only
+                continue
+        # Admins / superadmins see all scopes
+
         p_dict = p.to_dict()
-        # Calculate price for this user
         p_dict['price'] = calculate_reseller_price(user, package=p)
+        p_dict['created_by_username'] = creator_map.get(p.created_by)
         result.append(p_dict)
-        
+
     return jsonify(result)
 
 @app.route('/admin/packages', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_package():
     data = request.json
     package = Package(
         name=data.get('name'),
-        days=int(data.get('days')),
-        volume=int(data.get('volume')),
+        days=int(data.get('days', 0)),
+        volume=int(data.get('volume', 0)),
         price=int(data.get('price')),
         reseller_price=int(data.get('reseller_price')) if data.get('reseller_price') is not None else None,
-        enabled=data.get('enabled', True)
+        enabled=data.get('enabled', True),
+        scope=data.get('scope', 'global'),
+        created_by=session.get('admin_id'),
+        created_at=datetime.utcnow(),
     )
     db.session.add(package)
     db.session.commit()
     return jsonify({"success": True, "id": package.id})
 
 @app.route('/admin/packages/<int:package_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_package(package_id):
     package = Package.query.get_or_404(package_id)
     data = request.json or {}
@@ -8545,11 +8647,17 @@ def update_package(package_id):
         package.reseller_price = int(data['reseller_price']) if data['reseller_price'] is not None else None
     if 'enabled' in data:
         package.enabled = bool(data['enabled'])
+    if 'scope' in data:
+        package.scope = data['scope']
+    if 'assigned_reseller_ids' in data:
+        import json as _j
+        package.assigned_reseller_ids = _j.dumps(data['assigned_reseller_ids'] if isinstance(data['assigned_reseller_ids'], list) else [])
+    package.updated_at = datetime.utcnow()
     db.session.commit()
     return jsonify({"success": True})
 
 @app.route('/admin/packages/<int:package_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_package(package_id):
     package = Package.query.get_or_404(package_id)
     db.session.delete(package)
@@ -8557,7 +8665,7 @@ def delete_package(package_id):
     return jsonify({"success": True})
 
 @app.route('/admin/config', methods=['POST'])
-@superadmin_required
+@user_management_required
 def update_config():
     data = request.json
     for key, value in data.items():
@@ -8573,7 +8681,7 @@ def update_config():
 # ── Package scope / reseller endpoints ───────────────────────────────────────
 
 @app.route('/admin/packages/<int:package_id>/assign', methods=['POST'])
-@superadmin_required
+@user_management_required
 def assign_package_to_resellers(package_id):
     """Set which resellers can see this package (scope=assigned)."""
     import json as _j
@@ -8687,7 +8795,7 @@ def package_min_price():
 
 
 @app.route('/api/price-tiers', methods=['GET'])
-@superadmin_required
+@user_management_required
 def list_price_tiers():
     reseller_id = request.args.get('reseller_id')
     q = PriceTier.query
@@ -8703,7 +8811,7 @@ def list_price_tiers():
 
 
 @app.route('/api/price-tiers', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_price_tier():
     data = request.json or {}
     admin_id = session.get('admin_id')
@@ -8731,7 +8839,7 @@ def create_price_tier():
 
 
 @app.route('/api/price-tiers/<int:tier_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_price_tier(tier_id):
     tier = db.session.get(PriceTier, tier_id)
     if not tier:
@@ -8760,7 +8868,7 @@ def update_price_tier(tier_id):
 
 
 @app.route('/api/price-tiers/<int:tier_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_price_tier(tier_id):
     tier = db.session.get(PriceTier, tier_id)
     if not tier:
@@ -8770,7 +8878,7 @@ def delete_price_tier(tier_id):
     return jsonify({'success': True})
 
 @app.route('/admin/charge', methods=['POST'])
-@superadmin_required
+@user_management_required
 def charge_admin():
     data = request.json
     admin_id = int(data.get('admin_id'))
@@ -8953,7 +9061,7 @@ def _build_tx_delete_audit(deleter_username: str, at_jalali: str, deleted_tx_id:
 
 
 @app.route('/api/transactions/<int:tx_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_transaction(tx_id):
     editor = db.session.get(Admin, session.get('admin_id'))
     tx = Transaction.query.get_or_404(tx_id)
@@ -9051,7 +9159,7 @@ def update_transaction(tx_id):
 
 
 @app.route('/api/transactions/<int:tx_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_transaction(tx_id):
     deleter = db.session.get(Admin, session.get('admin_id'))
     tx = Transaction.query.get_or_404(tx_id)
@@ -11046,24 +11154,21 @@ def client_subscription(server_id, sub_id):
     )
 
 @app.route('/sub-manager')
-@superadmin_required
+@user_management_required
 def sub_manager_page():
     user = db.session.get(Admin, session['admin_id'])
     
-    support_telegram = db.session.get(SystemConfig, 'support_telegram')
-    support_whatsapp = db.session.get(SystemConfig, 'support_whatsapp')
-    channel_telegram = db.session.get(SystemConfig, 'channel_telegram')
-    channel_whatsapp = db.session.get(SystemConfig, 'channel_whatsapp')
+    _support_cfg = _get_system_configs_batch(['support_telegram', 'support_whatsapp', 'channel_telegram', 'channel_whatsapp'])
     whatsapp_cfg = _get_whatsapp_runtime_settings()
     
     return render_template('sub_manager.html',
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
                          role=session.get('role', 'admin'),
-                         support_telegram=support_telegram.value if support_telegram else '',
-                         support_whatsapp=support_whatsapp.value if support_whatsapp else '',
-                         channel_telegram=channel_telegram.value if channel_telegram else '',
-                         channel_whatsapp=channel_whatsapp.value if channel_whatsapp else '',
+                         support_telegram=_support_cfg.get('support_telegram') or '',
+                         support_whatsapp=_support_cfg.get('support_whatsapp') or '',
+                         channel_telegram=_support_cfg.get('channel_telegram') or '',
+                         channel_whatsapp=_support_cfg.get('channel_whatsapp') or '',
                          whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
                          whatsapp_enabled=whatsapp_cfg.get('enabled_requested', False),
                          whatsapp_provider=whatsapp_cfg.get('provider', 'baileys'),
@@ -11089,7 +11194,7 @@ def get_sub_apps():
     return jsonify([a.to_dict() for a in apps])
 
 @app.route('/api/sub-apps', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_sub_app():
     data = request.get_json()
     if not data:
@@ -11130,7 +11235,7 @@ def create_sub_app():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/sub-apps/<int:app_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_sub_app(app_id):
     app_config = db.session.get(SubAppConfig, app_id)
     if not app_config:
@@ -11168,7 +11273,7 @@ def update_sub_app(app_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/sub-apps/<int:app_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_sub_app(app_id):
     app_config = db.session.get(SubAppConfig, app_id)
     if not app_config:
@@ -11184,12 +11289,13 @@ def delete_sub_app(app_id):
 
 # FAQ APIs
 @app.route('/api/faqs', methods=['GET'])
+@user_management_required
 def get_faqs():
     faqs = FAQ.query.order_by(FAQ.created_at.desc()).all()
     return jsonify([f.to_dict() for f in faqs])
 
 @app.route('/api/faqs', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_faq():
     data = request.get_json()
     if not data:
@@ -11224,7 +11330,7 @@ def create_faq():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/faqs/<int:faq_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_faq(faq_id):
     faq = db.session.get(FAQ, faq_id)
     if not faq:
@@ -11256,7 +11362,7 @@ def update_faq(faq_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/faqs/<int:faq_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_faq(faq_id):
     faq = db.session.get(FAQ, faq_id)
     if not faq:
@@ -11273,7 +11379,7 @@ def delete_faq(faq_id):
 
 # Announcement APIs (Sub Manager)
 @app.route('/api/announcements', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_announcements():
     items = Announcement.query.order_by(Announcement.created_at.desc()).all()
     return jsonify([a.to_dict() for a in items])
@@ -11429,7 +11535,7 @@ def _parse_announcement_payload(data: dict) -> tuple[dict | None, str | None]:
 
 
 @app.route('/api/announcements', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_announcement():
     data = request.get_json() or {}
     payload, err = _parse_announcement_payload(data)
@@ -11462,7 +11568,7 @@ def create_announcement():
 
 
 @app.route('/api/announcements/<int:announcement_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_announcement(announcement_id):
     ann = db.session.get(Announcement, announcement_id)
     if not ann:
@@ -11494,7 +11600,7 @@ def update_announcement(announcement_id):
 
 
 @app.route('/api/announcements/<int:announcement_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_announcement(announcement_id):
     ann = db.session.get(Announcement, announcement_id)
     if not ann:
@@ -11533,14 +11639,14 @@ def _parse_online_chat_payload(data: dict) -> tuple[dict | None, str | None]:
 
 
 @app.route('/api/online-chat-scripts', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_online_chat_scripts():
     items = OnlineChatScript.query.order_by(OnlineChatScript.created_at.desc()).all()
     return jsonify([item.to_dict() for item in items])
 
 
 @app.route('/api/online-chat-scripts', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_online_chat_script():
     data = request.get_json() or {}
     payload, err = _parse_online_chat_payload(data)
@@ -11567,7 +11673,7 @@ def create_online_chat_script():
 
 
 @app.route('/api/online-chat-scripts/<int:item_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_online_chat_script(item_id):
     item = db.session.get(OnlineChatScript, item_id)
     if not item:
@@ -11590,7 +11696,7 @@ def update_online_chat_script(item_id):
 
 
 @app.route('/api/online-chat-scripts/<int:item_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_online_chat_script(item_id):
     item = db.session.get(OnlineChatScript, item_id)
     if not item:
@@ -11606,7 +11712,7 @@ def delete_online_chat_script(item_id):
 
 
 @app.route('/api/online-chat-scripts/<int:item_id>/activate', methods=['POST'])
-@superadmin_required
+@user_management_required
 def activate_online_chat_script(item_id):
     item = db.session.get(OnlineChatScript, item_id)
     if not item:
@@ -11622,7 +11728,7 @@ def activate_online_chat_script(item_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/upload', methods=['POST'])
-@superadmin_required
+@user_management_required
 def upload_file():
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'No file part'}), 400
@@ -11812,7 +11918,7 @@ def auto_configure_whatsapp_gateway():
     return jsonify(response_payload), 400
 
 @app.route('/packages')
-@superadmin_required
+@user_management_required
 def packages_page():
     cost_gb = db.session.get(SystemConfig, 'cost_per_gb')
     cost_day = db.session.get(SystemConfig, 'cost_per_day')
@@ -11825,7 +11931,7 @@ def packages_page():
                          role=session.get('role', 'admin'))
 
 @app.route('/bank-cards')
-@superadmin_required
+@user_management_required
 def bank_cards_page():
     return render_template('bank_cards.html',
                          admin_username=session.get('admin_username'),
@@ -11848,7 +11954,7 @@ def list_bank_cards():
     return jsonify({'success': True, 'cards': [card.to_dict() for card in cards]})
 
 @app.route('/api/bank-cards', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_bank_card():
     data = request.get_json() or {}
     label = (data.get('label') or '').strip()
@@ -11870,7 +11976,7 @@ def create_bank_card():
     return jsonify({'success': True, 'card': card.to_dict()})
 
 @app.route('/api/bank-cards/<int:card_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_bank_card(card_id):
     card = db.session.get(BankCard, card_id)
     if not card:
@@ -11888,7 +11994,7 @@ def update_bank_card(card_id):
     return jsonify({'success': True, 'card': card.to_dict()})
 
 @app.route('/api/bank-cards/<int:card_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_bank_card(card_id):
     card = db.session.get(BankCard, card_id)
     if not card:
@@ -12046,7 +12152,7 @@ def download_receipt_file(receipt_id):
     return send_file(full_path, as_attachment=False)
 
 @app.route('/api/receipts/<int:receipt_id>/approve', methods=['POST'])
-@superadmin_required
+@user_management_required
 def approve_receipt(receipt_id):
     trigger_auto_receipt_processing()
     receipt = db.session.get(ManualReceipt, receipt_id)
@@ -12070,7 +12176,7 @@ def approve_receipt(receipt_id):
     return jsonify({'success': True, 'receipt': data})
 
 @app.route('/api/receipts/<int:receipt_id>/reject', methods=['POST'])
-@superadmin_required
+@user_management_required
 def reject_receipt(receipt_id):
     trigger_auto_receipt_processing()
     receipt = db.session.get(ManualReceipt, receipt_id)
@@ -12094,13 +12200,13 @@ def reject_receipt(receipt_id):
     return jsonify({'success': True, 'receipt': data})
 
 @app.route('/api/receipts/auto-windows', methods=['GET'])
-@superadmin_required
+@user_management_required
 def list_auto_windows():
     windows = AutoApprovalWindow.query.order_by(AutoApprovalWindow.starts_at.desc()).all()
     return jsonify({'success': True, 'windows': [w.to_dict() for w in windows]})
 
 @app.route('/api/receipts/auto-windows', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_auto_window():
     data = request.get_json() or {}
     starts_at = parse_iso_datetime(data.get('starts_at')) or datetime.utcnow()
@@ -12122,7 +12228,7 @@ def create_auto_window():
     return jsonify({'success': True, 'window': window.to_dict()})
 
 @app.route('/api/receipts/auto-windows/<int:window_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def disable_auto_window(window_id):
     window = db.session.get(AutoApprovalWindow, window_id)
     if not window:
@@ -12132,13 +12238,13 @@ def disable_auto_window(window_id):
     return jsonify({'success': True})
 
 @app.route('/api/templates', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_templates():
     templates = NotificationTemplate.query.order_by(NotificationTemplate.created_at.desc()).all()
     return jsonify({'success': True, 'templates': [t.to_dict() for t in templates]})
 
 @app.route('/api/templates', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_template():
     data = request.get_json()
     name = data.get('name')
@@ -12159,7 +12265,7 @@ def create_template():
     return jsonify({'success': True, 'template': template.to_dict()})
 
 @app.route('/api/templates/<int:template_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_template(template_id):
     template = db.session.get(NotificationTemplate, template_id)
     if not template:
@@ -12172,7 +12278,7 @@ def update_template(template_id):
     return jsonify({'success': True, 'template': template.to_dict()})
 
 @app.route('/api/templates/<int:template_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_template(template_id):
     template = db.session.get(NotificationTemplate, template_id)
     if not template:
@@ -12185,7 +12291,7 @@ def delete_template(template_id):
     return jsonify({'success': True})
 
 @app.route('/api/templates/<int:template_id>/activate', methods=['POST'])
-@superadmin_required
+@user_management_required
 def activate_template(template_id):
     template = db.session.get(NotificationTemplate, template_id)
     if not template:
@@ -12304,14 +12410,14 @@ def save_backup_settings():
 
 
 @app.route('/api/settings/telegram-backup', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_telegram_backup_settings():
     settings = _get_telegram_backup_settings()
     return jsonify({'success': True, **settings})
 
 
 @app.route('/api/settings/telegram-backup', methods=['POST'])
-@superadmin_required
+@user_management_required
 def save_telegram_backup_settings():
     try:
         data = request.get_json() or {}
@@ -12360,7 +12466,7 @@ def save_telegram_backup_settings():
 
 
 @app.route('/api/settings/telegram-backup/test', methods=['POST'])
-@superadmin_required
+@user_management_required
 def test_telegram_backup_settings():
     settings = _get_telegram_backup_settings()
     token = (settings.get('bot_token') or '').strip()
@@ -12397,7 +12503,7 @@ def test_telegram_backup_settings():
 
 
 @app.route('/api/telegram-backup/now', methods=['POST'])
-@superadmin_required
+@user_management_required
 def telegram_backup_now():
     # Enqueue as an async job so UI can show stage/progress.
     job_id = secrets.token_hex(8)
@@ -12426,7 +12532,7 @@ def telegram_backup_now():
 
 
 @app.route('/api/telegram-backup/job/<job_id>', methods=['GET'])
-@superadmin_required
+@user_management_required
 def telegram_backup_job_status(job_id):
     with TELEGRAM_BACKUP_JOBS_LOCK:
         job = TELEGRAM_BACKUP_JOBS.get(job_id)
@@ -12639,7 +12745,7 @@ def _run_snapshot_with_progress():
 
 
 @app.route('/api/usage-snapshot/trigger', methods=['POST'])
-@superadmin_required
+@user_management_required
 def trigger_usage_snapshot():
     """Start a background snapshot task and return immediately."""
     current = _read_snap_progress()
@@ -12660,7 +12766,7 @@ def trigger_usage_snapshot():
 
 
 @app.route('/api/usage-snapshot/progress', methods=['GET'])
-@superadmin_required
+@user_management_required
 def snapshot_progress():
     """Return current progress of the running/last snapshot task (cross-worker via shared file)."""
     return jsonify(_read_snap_progress())
@@ -12811,52 +12917,131 @@ def traffic_check():
             q = q.filter(UsageSnapshot.server_id.in_(list(_rbac_server_ids)))
         active_subs = q.distinct().all()
 
-        # Aggregate per (server_id, inbound_tag)
+        if not active_subs:
+            return jsonify({'success': True, 'servers': [], 'period': period,
+                            'from': from_dt.isoformat() + 'Z', 'to': to_dt.isoformat() + 'Z',
+                            'sub_email': sub_email or None, 'email_resolved_name': email_resolved_name})
+
+        all_sub_ids = list({sub_id for _, _, sub_id in active_subs})
+
+        # ── Build lookups from live cache (memory reads, no SQL) ───────────────
+        # sub_id → email for client list display
+        sub_id_to_email = {}
+        # (server_id, sub_id) → inbound_tag: resolve unknown tags from live data
+        sub_id_to_live_tag = {}
+        for _inb in (GLOBAL_SERVER_DATA.get('inbounds') or []):
+            _srv_id = _inb.get('server_id')
+            _remark = (_inb.get('remark') or '').strip()
+            for _cli in _inb.get('clients', []):
+                _sid = str(_cli.get('subId') or _cli.get('id') or '').strip()
+                if not _sid:
+                    continue
+                _email = (_cli.get('email') or '').strip()
+                if _email:
+                    sub_id_to_email[_sid] = _email
+                if _srv_id is not None and _remark:
+                    sub_id_to_live_tag[(_srv_id, _sid)] = _remark
+
+        # ── BULK QUERY 1: endpoint — latest snapshot per (server_id, sub_id) ≤ to_dt ──
+        ep_max_sq = (db.session.query(
+                UsageSnapshot.server_id,
+                UsageSnapshot.sub_id,
+                func.max(UsageSnapshot.recorded_at).label('max_at')
+            )
+            .filter(UsageSnapshot.sub_id.in_(all_sub_ids))
+            .filter(UsageSnapshot.recorded_at <= to_dt)
+            .group_by(UsageSnapshot.server_id, UsageSnapshot.sub_id)
+            .subquery('ep_max')
+        )
+        endpoint_map = {
+            (s.server_id, s.sub_id): s
+            for s in db.session.query(UsageSnapshot).join(ep_max_sq, and_(
+                UsageSnapshot.server_id == ep_max_sq.c.server_id,
+                UsageSnapshot.sub_id   == ep_max_sq.c.sub_id,
+                UsageSnapshot.recorded_at == ep_max_sq.c.max_at
+            )).all()
+        }
+
+        # ── BULK QUERY 2: baseline — latest snapshot per (server_id, sub_id) ≤ from_dt ──
+        bl_max_sq = (db.session.query(
+                UsageSnapshot.server_id,
+                UsageSnapshot.sub_id,
+                func.max(UsageSnapshot.recorded_at).label('max_at')
+            )
+            .filter(UsageSnapshot.sub_id.in_(all_sub_ids))
+            .filter(UsageSnapshot.recorded_at <= from_dt)
+            .group_by(UsageSnapshot.server_id, UsageSnapshot.sub_id)
+            .subquery('bl_max')
+        )
+        baseline_map = {
+            (s.server_id, s.sub_id): s
+            for s in db.session.query(UsageSnapshot).join(bl_max_sq, and_(
+                UsageSnapshot.server_id == bl_max_sq.c.server_id,
+                UsageSnapshot.sub_id   == bl_max_sq.c.sub_id,
+                UsageSnapshot.recorded_at == bl_max_sq.c.max_at
+            )).all()
+        }
+
+        # ── BULK QUERY 3: first-in-range — for subs with no baseline before from_dt ──
+        no_bl_sub_ids = list({sub_id for server_id, _, sub_id in active_subs
+                               if (server_id, sub_id) not in baseline_map
+                               and (server_id, sub_id) in endpoint_map})
+        first_in_range_map = {}
+        if no_bl_sub_ids:
+            fir_min_sq = (db.session.query(
+                    UsageSnapshot.server_id,
+                    UsageSnapshot.sub_id,
+                    func.min(UsageSnapshot.recorded_at).label('min_at')
+                )
+                .filter(UsageSnapshot.sub_id.in_(no_bl_sub_ids))
+                .filter(UsageSnapshot.recorded_at >= from_dt, UsageSnapshot.recorded_at <= to_dt)
+                .group_by(UsageSnapshot.server_id, UsageSnapshot.sub_id)
+                .subquery('fir_min')
+            )
+            first_in_range_map = {
+                (s.server_id, s.sub_id): s
+                for s in db.session.query(UsageSnapshot).join(fir_min_sq, and_(
+                    UsageSnapshot.server_id == fir_min_sq.c.server_id,
+                    UsageSnapshot.sub_id   == fir_min_sq.c.sub_id,
+                    UsageSnapshot.recorded_at == fir_min_sq.c.min_at
+                )).all()
+            }
+
+        # ── BULK QUERY 4: first-ever snapshot per server ──────────────────────
+        server_first_snap = {
+            r[0]: r[1]
+            for r in db.session.query(
+                UsageSnapshot.server_id,
+                func.min(UsageSnapshot.recorded_at)
+            ).filter(UsageSnapshot.server_id.in_(list(servers_map.keys())))
+             .group_by(UsageSnapshot.server_id).all()
+        }
+
+        # ── Aggregation (pure Python, no SQL) ─────────────────────────────────
         result_map = {}
-        # Track first snapshot time per server (for Task 6 display)
-        server_first_snap = {}
-        # Track effective_from per server (may differ from from_dt if no baseline)
         server_effective_from = {}
 
         for server_id, inbound_tag, sub_id in active_subs:
-            tag = inbound_tag or '(unknown)'
+            # Resolve tag — fall back to live cache for old NULL tags
+            tag = inbound_tag or sub_id_to_live_tag.get((server_id, sub_id)) or '(unknown)'
 
-            # Latest snapshot strictly before the period (baseline)
-            baseline = (UsageSnapshot.query
-                .filter_by(server_id=server_id, sub_id=sub_id)
-                .filter(UsageSnapshot.recorded_at <= from_dt)
-                .order_by(UsageSnapshot.recorded_at.desc())
-                .first())
-
-            # Latest snapshot at or before to_dt (endpoint value)
-            endpoint = (UsageSnapshot.query
-                .filter_by(server_id=server_id, sub_id=sub_id)
-                .filter(UsageSnapshot.recorded_at <= to_dt)
-                .order_by(UsageSnapshot.recorded_at.desc())
-                .first())
-
+            endpoint = endpoint_map.get((server_id, sub_id))
             if not endpoint:
                 continue
 
-            # If no baseline before the period, use the earliest snapshot in the period as reference
-            # (so delta = usage since first snapshot, not since account creation)
+            baseline = baseline_map.get((server_id, sub_id))
             effective_baseline_at = from_dt
             if baseline is None:
-                first_in_range = (UsageSnapshot.query
-                    .filter_by(server_id=server_id, sub_id=sub_id)
-                    .filter(UsageSnapshot.recorded_at >= from_dt, UsageSnapshot.recorded_at <= to_dt)
-                    .order_by(UsageSnapshot.recorded_at.asc())
-                    .first())
-                if first_in_range:
-                    baseline = first_in_range
-                    effective_baseline_at = first_in_range.recorded_at
+                baseline = first_in_range_map.get((server_id, sub_id))
+                if baseline:
+                    effective_baseline_at = baseline.recorded_at
 
             base_dl = baseline.download_bytes if baseline else 0
             base_ul = baseline.upload_bytes if baseline else 0
             end_dl = endpoint.download_bytes
             end_ul = endpoint.upload_bytes
 
-            # Handle traffic reset (counter went backwards = renewal)
+            # Handle counter reset (renewal / counter went backwards)
             delta_dl = end_dl - base_dl if end_dl >= base_dl else end_dl
             delta_ul = end_ul - base_ul if end_ul >= base_ul else end_ul
             delta_total = delta_dl + delta_ul
@@ -12864,18 +13049,6 @@ def traffic_check():
             if delta_total <= 0:
                 continue
 
-            # Track first-ever snapshot for this server (for header display)
-            all_first = (UsageSnapshot.query
-                .filter_by(server_id=server_id, sub_id=sub_id)
-                .order_by(UsageSnapshot.recorded_at.asc())
-                .with_entities(UsageSnapshot.recorded_at)
-                .first())
-            if all_first:
-                cur = server_first_snap.get(server_id)
-                if cur is None or all_first.recorded_at < cur:
-                    server_first_snap[server_id] = all_first.recorded_at
-
-            # Track effective_from (earliest baseline used across all sub_ids in this server)
             cur_eff = server_effective_from.get(server_id)
             if cur_eff is None or effective_baseline_at < cur_eff:
                 server_effective_from[server_id] = effective_baseline_at
@@ -12883,23 +13056,26 @@ def traffic_check():
             if server_id not in result_map:
                 result_map[server_id] = {}
             if tag not in result_map[server_id]:
-                _port_info = _inbound_port_map.get(server_id, {}).get(inbound_tag or '', {})
+                _port_info = _inbound_port_map.get(server_id, {}).get(inbound_tag or tag, {})
                 result_map[server_id][tag] = {
                     'download': 0, 'upload': 0, 'total': 0, 'clients': 0,
-                    'first_snap_at': None,
                     'port': _port_info.get('port', ''),
                     'inbound_id': _port_info.get('id', ''),
+                    'client_list': [],
                 }
 
             result_map[server_id][tag]['download'] += delta_dl
             result_map[server_id][tag]['upload'] += delta_ul
             result_map[server_id][tag]['total'] += delta_total
             result_map[server_id][tag]['clients'] += 1
-            # Track earliest snapshot for this inbound
-            if baseline and baseline.recorded_at:
-                ib_first = result_map[server_id][tag]['first_snap_at']
-                if ib_first is None or baseline.recorded_at < ib_first:
-                    result_map[server_id][tag]['first_snap_at'] = baseline.recorded_at
+
+            client_email = sub_id_to_email.get(sub_id, '')
+            result_map[server_id][tag]['client_list'].append({
+                'email': client_email or sub_id[:8] + '…' if sub_id else '—',
+                'download': delta_dl,
+                'upload': delta_ul,
+                'total': delta_total,
+            })
 
         servers_out = []
         for server_id, inbounds_map in sorted(result_map.items(), key=lambda x: -sum(v['total'] for v in x[1].values())):
@@ -12912,7 +13088,7 @@ def traffic_check():
                     'upload': data['upload'],
                     'total': data['total'],
                     'clients': data['clients'],
-                    'first_snap_at': (data['first_snap_at'].isoformat() + 'Z') if data['first_snap_at'] else None,
+                    'client_list': sorted(data['client_list'], key=lambda c: -c['total']),
                 }
                 for tag, data in inbounds_map.items()
             ], key=lambda x: -x['total'])
@@ -13178,7 +13354,7 @@ def run_health_check_now():
 
 
 @app.route('/api/renew-templates', methods=['GET'])
-@superadmin_required
+@user_management_required
 def get_renew_templates():
     templates = RenewTemplate.query.order_by(RenewTemplate.created_at.desc()).all()
     return jsonify({
@@ -13190,7 +13366,7 @@ def get_renew_templates():
     })
 
 @app.route('/api/renew-templates', methods=['POST'])
-@superadmin_required
+@user_management_required
 def create_renew_template():
     data = request.get_json()
     name = data.get('name')
@@ -13209,7 +13385,7 @@ def create_renew_template():
     return jsonify({'success': True, 'template': template.to_dict()})
 
 @app.route('/api/renew-templates/<int:template_id>', methods=['PUT'])
-@superadmin_required
+@user_management_required
 def update_renew_template(template_id):
     template = db.session.get(RenewTemplate, template_id)
     if not template:
@@ -13222,7 +13398,7 @@ def update_renew_template(template_id):
     return jsonify({'success': True, 'template': template.to_dict()})
 
 @app.route('/api/renew-templates/<int:template_id>', methods=['DELETE'])
-@superadmin_required
+@user_management_required
 def delete_renew_template(template_id):
     template = db.session.get(RenewTemplate, template_id)
     if not template:
@@ -13235,7 +13411,7 @@ def delete_renew_template(template_id):
     return jsonify({'success': True})
 
 @app.route('/api/renew-templates/<int:template_id>/activate', methods=['POST'])
-@superadmin_required
+@user_management_required
 def activate_renew_template(template_id):
     template = db.session.get(RenewTemplate, template_id)
     if not template:
