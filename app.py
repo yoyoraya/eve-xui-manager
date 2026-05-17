@@ -3422,13 +3422,14 @@ with app.app_context():
         columns = [c['name'] for c in inspector.get_columns('admins')]
         print(f"Current columns in admins: {columns}")
 
+        _is_pg = db.engine.dialect.name == 'postgresql'
         admin_missing_cols = [
-            ('telegram_id', 'VARCHAR(100)'),
-            ('support_telegram', 'VARCHAR(100)'),
-            ('support_whatsapp', 'VARCHAR(64)'),
-            ('channel_telegram', 'TEXT'),
-            ('channel_whatsapp', 'TEXT'),
-            ('allow_negative_credit', 'BOOLEAN DEFAULT 0'),
+            ('telegram_id',           'VARCHAR(100)'),
+            ('support_telegram',      'VARCHAR(100)'),
+            ('support_whatsapp',      'VARCHAR(64)'),
+            ('channel_telegram',      'TEXT'),
+            ('channel_whatsapp',      'TEXT'),
+            ('allow_negative_credit', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
             ('negative_credit_limit', 'INTEGER DEFAULT 0'),
         ]
 
@@ -3436,10 +3437,13 @@ with app.app_context():
             if col_name in columns:
                 continue
             print(f"{col_name} column missing on admins, attempting to add...")
-            with db.engine.connect() as conn:
-                conn.execute(text(f'ALTER TABLE admins ADD COLUMN {col_name} {col_type}'))
-                conn.commit()
-            print(f"Added {col_name} column to admins table")
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE admins ADD COLUMN {col_name} {col_type}'))
+                    conn.commit()
+                print(f"Added {col_name} column to admins table")
+            except Exception as _col_err:
+                print(f"Migration error ({col_name}): {_col_err}")
     except Exception as e:
         print(f"Migration error: {e}")
 
