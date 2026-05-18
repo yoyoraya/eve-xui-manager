@@ -2841,14 +2841,40 @@ def _normalize_ascii_digits(value: str | None) -> str:
     return val.translate(table)
 
 
-def _extract_iran_mobile_from_text(value: str | None) -> str:
-    text_value = _normalize_ascii_digits(value)
-    if not text_value:
+def _extract_iran_mobile_from_text(value: str | None, *extra_sources: str | None) -> str:
+    """Extract first valid Iranian mobile from value, then extra_sources in order.
+
+    Rules:
+    - 09XXXXXXXXX  : '0' must NOT be preceded by a digit (e.g. '1097' never matches)
+    - +98XXXXXXXXX : literal '+' required before '98' (bare '98' prefix rejected)
+    - 0098XXXXXXXXX: double-zero form
+    - Spaces/dashes between digit groups are allowed (e.g. '0912 833 4643')
+    """
+    SEP = r'[\s\-]?'
+    _PATTERNS = [
+        r'(?<![0-9])\+98'  + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # +98...
+        r'(?<![0-9])0098'  + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # 0098...
+        r'(?<![0-9])0'     + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # 09...
+        r'(?<![0-9])'            + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # bare 9...
+    ]
+
+    def _try(text: str | None) -> str:
+        if not text:
+            return ''
+        t = _normalize_ascii_digits(text)
+        for pat in _PATTERNS:
+            m = re.search(pat, t)
+            if m:
+                digits = re.sub(r'[^\d]', '', m.group(1))
+                if len(digits) == 10 and digits.startswith('9'):
+                    return f"+98{digits}"
         return ''
-    match = re.search(r'(?:^|[^0-9])(?:\+?98|0098|0)?(9\d{9})(?=$|[^0-9])', text_value)
-    if not match:
-        return ''
-    return f"+98{match.group(1)}"
+
+    for src in (value, *extra_sources):
+        r = _try(src)
+        if r:
+            return r
+    return ''
 
 
 def _take_whatsapp_send_slot(recipient: str, runtime_cfg: dict) -> tuple[bool, str | None]:
@@ -2878,7 +2904,7 @@ def _take_whatsapp_send_slot(recipient: str, runtime_cfg: dict) -> tuple[bool, s
     return True, None
 
 
-def _send_whatsapp_message(event_name: str, recipient_source: str, message_text: str) -> dict:
+def _send_whatsapp_message(event_name: str, recipient_source: str, message_text: str, *, recipient_comment: str = '') -> dict:
     runtime_cfg = _get_whatsapp_runtime_settings()
     result = {
         'attempted': False,
@@ -2901,7 +2927,7 @@ def _send_whatsapp_message(event_name: str, recipient_source: str, message_text:
         result['reason'] = 'trigger_disabled'
         return result
 
-    recipient = _extract_iran_mobile_from_text(recipient_source)
+    recipient = _extract_iran_mobile_from_text(recipient_source, recipient_comment or None)
     if not recipient:
         result['reason'] = 'recipient_not_found'
         return result
@@ -7722,7 +7748,8 @@ def renew_client(server_id, inbound_id, email):
                 })
 
                 whatsapp_runtime = _get_whatsapp_runtime_settings()
-                whatsapp_delivery = _send_whatsapp_message('renew_success', email, copy_text)
+                _client_comment = (target_client.get('comment') or '') if target_client else ''
+                whatsapp_delivery = _send_whatsapp_message('renew_success', email, copy_text, recipient_comment=_client_comment)
                 whatsapp_meta = {
                     'enabled': whatsapp_runtime.get('enabled', False),
                     'deployment_region': whatsapp_runtime.get('deployment_region', 'outside'),
