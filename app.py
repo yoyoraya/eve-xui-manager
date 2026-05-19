@@ -1326,6 +1326,36 @@ def request_entity_too_large(e):
     return jsonify({'success': False, 'error': 'File too large. Maximum allowed size is 512 MB.'}), 413
 
 
+def _want_json() -> bool:
+    """True when the caller expects a JSON response (API path or Accept: application/json)."""
+    return (
+        request.path.startswith('/api/')
+        or 'application/json' in (request.headers.get('Accept') or '')
+        or request.is_json
+    )
+
+
+@app.errorhandler(404)
+def not_found(e):
+    if _want_json():
+        return jsonify({'success': False, 'error': f'Not found: {request.path}'}), 404
+    return e
+
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    if _want_json():
+        return jsonify({'success': False, 'error': f'Method not allowed: {request.method} {request.path}'}), 405
+    return e
+
+
+@app.errorhandler(500)
+def internal_server_error(e):
+    if _want_json():
+        return jsonify({'success': False, 'error': f'Internal server error: {e}'}), 500
+    return e
+
+
 @app.after_request
 def add_security_headers(response):
     # Baseline security headers (kept permissive to avoid breaking current inline scripts/styles)

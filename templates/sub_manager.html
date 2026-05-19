@@ -1320,7 +1320,7 @@
                 showToast('Error: ' + result.error, 'error');
             }
         } catch (error) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (e.message || 'Connection failed'), 'error');
         }
     }
 
@@ -1904,7 +1904,7 @@
                 showToast('Error: ' + (result.error || 'Unknown'), 'error');
             }
         } catch (e) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (e.message || 'Connection failed'), 'error');
         }
     }
 
@@ -2035,7 +2035,7 @@
                 showToast('Error: ' + (result.error || 'Unknown'), 'error');
             }
         } catch (e) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (e.message || 'Connection failed'), 'error');
         }
     }
 
@@ -2267,7 +2267,7 @@
                 showToast('Error: ' + result.error, 'error');
             }
         } catch (error) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (e.message || 'Connection failed'), 'error');
         }
     }
 
@@ -2283,7 +2283,7 @@
                 showToast('Error deleting FAQ', 'error');
             }
         } catch (error) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (e.message || 'Connection failed'), 'error');
         }
     }
 
@@ -2374,7 +2374,7 @@
                 showToast('Error saving contact info', 'error');
             }
         } catch (error) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (e.message || 'Connection failed'), 'error');
         }
     }
 
@@ -2399,7 +2399,7 @@
                 showToast(result.error || result.message || 'WhatsApp gateway test failed', 'error');
             }
         } catch (error) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (e.message || 'Connection failed'), 'error');
         }
     }
 

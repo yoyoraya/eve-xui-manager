@@ -557,7 +557,7 @@ async function submitPackage() {
         showToast(_editPkgId ? 'Package updated' : 'Package created');
         closePkgModal();
         loadPackages();
-    } catch(e) { showToast('Connection error', 'error'); }
+    } catch(e) { showToast('Error: ' + (e.message || 'Connection failed'), 'error'); }
 }
 
 async function deletePackage(id) {
@@ -567,7 +567,7 @@ async function deletePackage(id) {
         const res = await fetch(`/admin/packages/${id}`, { method: 'DELETE' });
         if (res.ok) { showToast('Package deleted'); loadPackages(); }
         else showToast('Error deleting package', 'error');
-    } catch(e) { showToast('Connection error', 'error'); }
+    } catch(e) { showToast('Error: ' + (e.message || 'Connection failed'), 'error'); }
 }
 
 /* ─── Reseller Tab ─────────────────────────────────────────── */
@@ -639,7 +639,7 @@ async function toggleResellerPkg(pkgId, resId, currentlyAssigned) {
             showToast(currentlyAssigned ? 'Package unassigned' : 'Package assigned');
             loadResellerPackages();
         } else showToast('Error updating assignment', 'error');
-    } catch(e) { showToast('Connection error', 'error'); }
+    } catch(e) { showToast('Error: ' + (e.message || 'Connection failed'), 'error'); }
 }
 
 /* ─── Base Config ──────────────────────────────────────────── */
@@ -656,7 +656,7 @@ async function saveBaseConfig() {
         });
         if (res.ok) showToast('Base tariffs saved');
         else showToast('Error saving config', 'error');
-    } catch(e) { showToast('Connection error', 'error'); }
+    } catch(e) { showToast('Error: ' + (e.message || 'Connection failed'), 'error'); }
 }
 
 /* ─── Price Tiers ──────────────────────────────────────────── */
@@ -786,7 +786,7 @@ async function submitTier() {
             closeTierModal();
             loadTiers();
         } else showToast(json.error || 'Error saving tier', 'error');
-    } catch(e) { showToast('Connection error', 'error'); }
+    } catch(e) { showToast('Error: ' + (e.message || 'Connection failed'), 'error'); }
 }
 
 async function deleteTier(id) {
@@ -797,7 +797,7 @@ async function deleteTier(id) {
         const json = await res.json();
         if (json.success) { showToast('Tier deleted'); loadTiers(); }
         else showToast('Error deleting tier', 'error');
-    } catch(e) { showToast('Connection error', 'error'); }
+    } catch(e) { showToast('Error: ' + (e.message || 'Connection failed'), 'error'); }
 }
 
 /* ─── Utils ────────────────────────────────────────────────── */

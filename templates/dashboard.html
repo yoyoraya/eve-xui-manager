@@ -3465,8 +3465,17 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            
-            const data = await response.json();
+
+            let data = null;
+            try {
+                data = await response.json();
+            } catch (_) {
+                let rawText = '';
+                try { rawText = await response.text(); } catch (__) {}
+                const preview = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+                data = { success: false, error: `Server error (HTTP ${response.status})${preview ? ': ' + preview : ''}` };
+            }
+
             if (data.success) {
                 showToast('Client created successfully');
 
@@ -3488,7 +3497,7 @@
                 showToast(data.error || 'Error creating client', 'error');
             }
         } catch (error) {
-            showToast('Connection error', 'error');
+            showToast('Error: ' + (error.message || 'Connection failed'), 'error');
         } finally {
             btn.disabled = false;
             btn.innerText = originalText;
