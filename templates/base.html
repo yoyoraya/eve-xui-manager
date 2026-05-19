@@ -224,12 +224,15 @@
             document.body.classList.toggle('sidebar-open');
         }
         
-        function showToast(message, type = 'success') {
+        function showToast(message, type = 'success', duration = null) {
             const toast = document.getElementById('toast');
             toast.textContent = message;
             toast.className = `toast ${type}`;
             toast.classList.remove('hidden');
-            setTimeout(() => toast.classList.add('hidden'), 3000);
+            // Errors stay longer; credit errors (402) stay until clicked
+            const ms = duration !== null ? duration : (type === 'error' ? 6000 : 3000);
+            if (toast._toastTimer) clearTimeout(toast._toastTimer);
+            toast._toastTimer = setTimeout(() => toast.classList.add('hidden'), ms);
         }
         
         function showLoading() {

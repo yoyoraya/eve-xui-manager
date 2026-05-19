@@ -3037,13 +3037,22 @@
                 }
                 queueSilentServerRefresh(serverId);
             } else {
-                showToast(data.error || 'Error renewing', 'error');
+                showCreditAwareError(data.error || 'Error renewing', response.status);
             }
         } catch (error) {
             showToast('Error: ' + error.message, 'error');
         } finally {
             btn.disabled = false;
             btn.innerText = originalText;
+        }
+    }
+
+    function showCreditAwareError(msg, httpStatus) {
+        if (httpStatus === 402) {
+            // Credit error — show prominently and stay 12 seconds
+            showToast('💳 ' + msg, 'error', 12000);
+        } else {
+            showToast(msg, 'error');
         }
     }
 
@@ -3494,7 +3503,7 @@
                     showNewClientModal(data.client);
                 }
             } else {
-                showToast(data.error || 'Error creating client', 'error');
+                showCreditAwareError(data.error || 'Error creating client', response.status);
             }
         } catch (error) {
             showToast('Error: ' + (error.message || 'Connection failed'), 'error');

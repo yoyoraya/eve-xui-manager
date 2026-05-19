@@ -6620,7 +6620,13 @@ def _user_can_afford(user, price: int) -> tuple[bool, str | None]:
     neg_limit = getattr(user, 'negative_credit_limit', 0) or 0
     min_bal = -(abs(neg_limit)) if allow_neg else 0
     if cur - price < min_bal:
-        return False, f"Insufficient credit. Required: {price}, Available: {cur}"
+        shortfall = (cur - price) - min_bal
+        return False, (
+            f"موجودی کافی نیست — اعتبار فعلی: {cur:,} T، "
+            f"هزینه: {price:,} T، "
+            f"کسری: {abs(shortfall):,} T"
+            f" (Insufficient credit: balance {cur:,} T, cost {price:,} T)"
+        )
     return True, None
 
 
