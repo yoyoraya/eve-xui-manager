@@ -290,9 +290,10 @@
 
                 <div id="telegram-backup-progress" style="display:none; margin-top: 10px;">
                     <div style="width: 100%; background: var(--panel-bg); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden;">
-                        <div id="telegram-backup-progress-bar" style="height: 8px; width: 0%; background: var(--primary);"></div>
+                        <div id="telegram-backup-progress-bar" style="height: 8px; width: 0%; background: var(--primary); transition: width .3s;"></div>
                     </div>
                     <div id="telegram-backup-progress-text" style="margin-top: 6px; font-size: 0.85rem; color: var(--text-secondary);">Waiting...</div>
+                    <div id="telegram-backup-server-results" style="margin-top: 8px; display:flex; flex-direction:column; gap:4px; font-size:0.82rem;"></div>
                 </div>
 
                 <div class="form-group">
@@ -2460,48 +2461,65 @@
         btn.innerHTML = 'Running...';
         btn.disabled = true;
 
-        const wrap = document.getElementById('telegram-backup-progress');
-        const bar = document.getElementById('telegram-backup-progress-bar');
-        const text = document.getElementById('telegram-backup-progress-text');
+        const wrap   = document.getElementById('telegram-backup-progress');
+        const bar    = document.getElementById('telegram-backup-progress-bar');
+        const text   = document.getElementById('telegram-backup-progress-text');
+        const srvBox = document.getElementById('telegram-backup-server-results');
 
         function setProgress(visible, processed = 0, total = 0, stageText = '') {
             if (wrap) wrap.style.display = visible ? '' : 'none';
-            const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : (visible ? 10 : 0);
+            const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : (visible ? 5 : 0);
             if (bar) bar.style.width = `${pct}%`;
             if (text) {
-                const t = total > 0 ? `${processed}/${total}` : '';
-                text.textContent = stageText ? (t ? `${stageText} (${t})` : stageText) : (t || '');
+                const t = total > 0 ? ` (${processed}/${total})` : '';
+                text.textContent = stageText ? `${stageText}${t}` : (t.trim() || '');
             }
+        }
+
+        function renderServerResults(results) {
+            if (!srvBox || !Array.isArray(results) || !results.length) return;
+            srvBox.innerHTML = results.map(r => {
+                const ok   = r.success;
+                const icon = ok ? '✅' : '❌';
+                const clr  = ok ? '#22c55e' : '#ef4444';
+                const err  = !ok && r.error ? `<span style="color:#94a3b8;font-size:.78rem;"> — ${r.error}</span>` : '';
+                return `<div style="display:flex;align-items:baseline;gap:5px;">
+                    <span>${icon}</span>
+                    <span style="color:${clr};font-weight:600;">${r.server_name || 'Server'}</span>${err}
+                </div>`;
+            }).join('');
         }
 
         function stageToHuman(stage) {
             const s = (stage || '').toString();
-            if (!s) return '🚀 Starting...';
-            if (s === 'queued') return '⏳ Queued...';
-            if (s === 'starting') return '🚀 Starting operation...';
-            if (s === 'loading_settings') return '⚙️ Loading settings...';
-            if (s === 'building_proxy') return '🔗 Connecting to Telegram...';
-            if (s === 'fetching_servers') return '📡 Fetching server list...';
-            if (s.startsWith('xui_login:')) return `🔐 Logging into: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('xui_download_backup:')) return `⬇️ Downloading backup from: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('telegram_upload:')) return `⬆️ Uploading to Telegram: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('server_done:')) return `✅ Finished: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('xui_failed:')) return `❌ Server error: ${s.split(':').slice(1).join(':')}`;
-            if (s.startsWith('telegram_failed:')) return `❌ Telegram error: ${s.split(':').slice(1).join(':')}`;
-            if (s === 'done') return '✅ Completed';
-            if (s === 'error') return '❌ Failed';
+            if (!s || s === 'starting') return 'Starting...';
+            if (s === 'queued')           return 'Queued, waiting to start...';
+            if (s === 'loading_settings') return 'Loading settings...';
+            if (s === 'building_proxy')   return 'Connecting to Telegram...';
+            if (s === 'fetching_servers') return 'Fetching server list...';
+            if (s.startsWith('xui_login:'))           return `Logging into ${s.split(':').slice(1).join(':')}...`;
+            if (s.startsWith('xui_download_backup:')) return `Downloading backup from ${s.split(':').slice(1).join(':')}...`;
+            if (s.startsWith('telegram_upload:'))     return `Uploading to Telegram: ${s.split(':').slice(1).join(':')}...`;
+            if (s.startsWith('server_done:'))         return `Done: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('xui_failed:'))          return `X-UI error: ${s.split(':').slice(1).join(':')}`;
+            if (s.startsWith('telegram_failed:'))     return `Telegram error: ${s.split(':').slice(1).join(':')}`;
+            if (s === 'done')  return 'Completed';
+            if (s === 'error') return 'Failed';
             return s;
         }
 
+        if (srvBox) srvBox.innerHTML = '';
         let pollTimer = null;
         let jobId = null;
+        let pollErrors = 0;
 
         try {
-            setProgress(true, 0, 0, '🚀 Starting backup...');
+            setProgress(true, 0, 0, 'Starting backup...');
             const startRes = await fetch('/api/telegram-backup/now', { method: 'POST' });
             const startData = await startRes.json();
             if (!startData.success || !startData.job_id) {
-                showToast(startData.error || 'Backup failed to start', 'error');
+                showToast(startData.error || 'Backup failed to start', 'error', 6000);
+                setProgress(false);
                 return;
             }
 
@@ -2509,54 +2527,79 @@
 
             async function poll() {
                 try {
-                    const res = await fetch(`/api/telegram-backup/job/${jobId}`, { method: 'GET' });
+                    const res  = await fetch(`/api/telegram-backup/job/${jobId}`);
                     const data = await res.json();
+                    pollErrors = 0;
+
                     if (!data.success || !data.job) {
-                        setProgress(true, 0, 0, '⏳ Waiting for status...');
+                        setProgress(true, 0, 0, 'Waiting for job...');
                         return;
                     }
 
-                    const job = data.job;
+                    const job      = data.job;
                     const progress = job.progress || {};
-                    const total = progress.total || job.total || 0;
+                    const total    = progress.total || job.total || 0;
                     const processed = progress.processed || 0;
-                    const stageText = stageToHuman(job.stage);
-                    setProgress(true, processed, total, stageText);
+                    setProgress(true, processed, total, stageToHuman(job.stage));
 
-                    if (job.state === 'done') {
-                        clearInterval(pollTimer);
-                        pollTimer = null;
-                        setProgress(false);
-                        const done = job.success_count || 0;
-                        const all = job.total || total || 0;
-                        showToast(`Backup sent (${done}/${all})`);
-                        loadTelegramBackupSettings();
+                    // Render per-server results as they come in
+                    if (Array.isArray(job.results) && job.results.length) {
+                        renderServerResults(job.results);
                     }
-                    if (job.state === 'error') {
+
+                    if (job.state === 'done' || job.state === 'error') {
                         clearInterval(pollTimer);
                         pollTimer = null;
-                        let message = job.error || 'Backup failed';
+
+                        const done = job.success_count || 0;
+                        const all  = job.total || total || 0;
+
                         if (Array.isArray(job.results) && job.results.length) {
-                            const details = job.results
-                                .filter(item => !item.success && item.error)
-                                .map(item => `${item.server_name || 'Server'}: ${item.error}`)
-                                .slice(0, 6)
-                                .join('\n');
-                            if (details) message = `${message}\n${details}`;
+                            renderServerResults(job.results);
                         }
-                        setProgress(false);
-                        showToast(message, 'error');
+
+                        if (job.state === 'done') {
+                            if (bar) bar.style.width = '100%';
+                            if (text) text.textContent = `Done — ${done}/${all} servers sent`;
+                            const hasFailures = Array.isArray(job.results) && job.results.some(r => !r.success);
+                            if (hasFailures && job.error) {
+                                showToast(`Backup partially done (${done}/${all})\nFailed: ${job.error}`, 'warning', 8000);
+                            } else {
+                                showToast(`Backup sent (${done}/${all})`);
+                            }
+                            loadTelegramBackupSettings();
+                        } else {
+                            if (bar) { bar.style.background = '#ef4444'; bar.style.width = '100%'; }
+                            if (text) text.textContent = `Failed — ${done}/${all} servers sent`;
+                            let message = job.error || 'Backup failed';
+                            if (Array.isArray(job.results) && job.results.length) {
+                                const details = job.results
+                                    .filter(r => !r.success && r.error)
+                                    .map(r => `${r.server_name || 'Server'}: ${r.error}`)
+                                    .slice(0, 6).join('\n');
+                                if (details) message += '\n' + details;
+                            }
+                            showToast(message, 'error', 10000);
+                        }
                     }
                 } catch (e) {
-                    // keep polling; transient error
-                    setProgress(true, 0, 0, '🔄 Checking status...');
+                    pollErrors++;
+                    if (pollErrors >= 5) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        setProgress(false);
+                        showToast(`Lost connection to backup job: ${e.message || e}`, 'error', 8000);
+                    } else {
+                        setProgress(true, 0, 0, 'Checking status...');
+                    }
                 }
             }
 
-            pollTimer = setInterval(poll, 1000);
+            pollTimer = setInterval(poll, 1500);
             await poll();
         } catch (e) {
-            showToast('Network error', 'error');
+            showToast('Network error: ' + (e.message || e), 'error', 6000);
+            setProgress(false);
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;

@@ -86,7 +86,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "1.9.9"
+APP_VERSION = "2.0.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -295,13 +295,13 @@ def _run_telegram_backup_job(job_id: str):
     def progress_cb(update: dict):
         if not isinstance(update, dict):
             return
-        stage = update.get('stage')
-        progress = update.get('progress')
         patch = {}
-        if stage is not None:
-            patch['stage'] = stage
-        if progress is not None:
-            patch['progress'] = progress
+        if update.get('stage') is not None:
+            patch['stage'] = update['stage']
+        if update.get('progress') is not None:
+            patch['progress'] = update['progress']
+        if update.get('results') is not None:
+            patch['results'] = update['results']
         if patch:
             _update_telegram_backup_job(job_id, **patch)
 
@@ -312,16 +312,25 @@ def _run_telegram_backup_job(job_id: str):
         _update_telegram_backup_job(job_id, state='error', finished_at=_utc_iso_now(), error=str(exc), stage='error')
         return
 
+    all_results = result.get('results') or []
+    success_count = int(result.get('success_count') or 0)
+    total_count = int(result.get('total') or 0)
+    failures = [r for r in all_results if not r.get('success')]
+
     if result.get('success'):
+        # Partial success: some servers failed — still mark done but include failure details
+        partial_error = None
+        if failures:
+            partial_error = '; '.join(f"{r.get('server_name','?')}: {r.get('error','?')}" for r in failures)
         _update_telegram_backup_job(
             job_id,
             state='done',
             finished_at=_utc_iso_now(),
             stage='done',
-            success_count=int(result.get('success_count') or 0),
-            total=int(result.get('total') or 0),
-            results=result.get('results') or [],
-            error=None,
+            success_count=success_count,
+            total=total_count,
+            results=all_results,
+            error=partial_error,
         )
     else:
         _update_telegram_backup_job(
@@ -329,9 +338,9 @@ def _run_telegram_backup_job(job_id: str):
             state='error',
             finished_at=_utc_iso_now(),
             stage='error',
-            success_count=int(result.get('success_count') or 0),
-            total=int(result.get('total') or 0),
-            results=result.get('results') or [],
+            success_count=success_count,
+            total=total_count,
+            results=all_results,
             error=result.get('error') or 'Backup failed',
         )
 
@@ -1923,7 +1932,7 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
                 processed_servers += 1
                 if progress_cb:
                     try:
-                        progress_cb({'stage': f"xui_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                        progress_cb({'stage': f"xui_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}, 'results': list(results)})
                     except Exception:
                         pass
                 continue
@@ -1940,7 +1949,7 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
                 processed_servers += 1
                 if progress_cb:
                     try:
-                        progress_cb({'stage': f"xui_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                        progress_cb({'stage': f"xui_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}, 'results': list(results)})
                     except Exception:
                         pass
                 continue
@@ -1966,7 +1975,7 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
                 processed_servers += 1
                 if progress_cb:
                     try:
-                        progress_cb({'stage': f"telegram_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                        progress_cb({'stage': f"telegram_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}, 'results': list(results)})
                     except Exception:
                         pass
                 continue
@@ -1974,8 +1983,16 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
             resp_json, resp_err = _safe_response_json(resp)
             if resp_err:
                 results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error': f"Telegram API Error: {resp_err}"})
+                processed_servers += 1
+                if progress_cb:
+                    try:
+                        progress_cb({'stage': f"telegram_failed:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}, 'results': list(results)})
+                    except Exception:
+                        pass
                 continue
-            if isinstance(resp_json, dict) and resp_json.get('ok'):
+
+            server_ok = isinstance(resp_json, dict) and resp_json.get('ok')
+            if server_ok:
                 results.append({'server_id': server.id, 'server_name': server.name, 'success': True})
             else:
                 msg = None
@@ -1986,7 +2003,8 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
             processed_servers += 1
             if progress_cb:
                 try:
-                    progress_cb({'stage': f"server_done:{server.name}", 'progress': {'total': total_servers, 'processed': processed_servers}})
+                    stage_name = f"server_done:{server.name}" if server_ok else f"telegram_failed:{server.name}"
+                    progress_cb({'stage': stage_name, 'progress': {'total': total_servers, 'processed': processed_servers}, 'results': list(results)})
                 except Exception:
                     pass
 
