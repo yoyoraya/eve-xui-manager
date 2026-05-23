@@ -2672,13 +2672,18 @@
                                 const stripped = xhr.responseText.replace(/<[^>]+>/g, '').trim();
                                 if (stripped) detail = stripped.substring(0, 120);
                             }
+                            const isCf = xhr.responseText.includes('ray-id') || xhr.responseText.includes('cloudflare') || xhr.responseText.includes('Cloudflare');
                             if (xhr.status === 413) {
-                                showToast(`File too large: "${file.name}". Add client_max_body_size 512m to Nginx config.`, 'error');
+                                showToast(`File too large: "${file.name}". Add client_max_body_size 512m to Nginx config.`, 'error', 8000);
                             } else if (xhr.status === 403 || xhr.status === 401) {
                                 showToast('Permission denied. Are you logged in as superadmin?', 'error');
+                            } else if (xhr.status === 402 && isCf) {
+                                showToast(`Cloudflare blocked the upload (402). Go to Cloudflare → your domain → Security → WAF and disable any rule that blocks file uploads. Or in Page Rules, disable "Security Level" for this path.`, 'error', 12000);
+                            } else if (isCf) {
+                                showToast(`Cloudflare blocked the upload (HTTP ${xhr.status}). Check Cloudflare WAF / Firewall Rules for your domain.`, 'error', 10000);
                             } else {
                                 const msg = detail || `HTTP ${xhr.status}`;
-                                showToast(`Upload failed (${xhr.status}): ${msg}`, 'error');
+                                showToast(`Upload failed (${xhr.status}): ${msg}`, 'error', 8000);
                             }
                         }
                         resolve();
