@@ -42,13 +42,13 @@
             --text-secondary: #64748b;
             --border-color: rgba(15, 23, 42, 0.12);
         }
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: 'Vazirmatn', 'Inter', -apple-system, sans-serif;
             background: var(--bg-dark);
@@ -59,24 +59,24 @@
             justify-content: center;
             padding: 20px;
         }
-        
+
         .login-container {
             width: 100%;
             max-width: 420px;
         }
-        
+
         .login-card {
             background: var(--bg-card);
             border-radius: 20px;
             padding: 40px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
-        
+
         .login-header {
             text-align: center;
             margin-bottom: 32px;
         }
-        
+
         .login-logo {
             width: 64px;
             height: 64px;
@@ -87,13 +87,13 @@
             justify-content: center;
             margin: 0 auto 20px;
         }
-        
+
         .login-logo svg {
             width: 32px;
             height: 32px;
             color: white;
         }
-        
+
         .login-header h1 {
             font-size: 1.75rem;
             font-weight: 700;
@@ -103,16 +103,16 @@
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
-        
+
         .login-header p {
             color: var(--text-secondary);
             font-size: 0.9rem;
         }
-        
+
         .form-group {
             margin-bottom: 20px;
         }
-        
+
         .form-group label {
             display: block;
             font-size: 0.875rem;
@@ -120,12 +120,12 @@
             margin-bottom: 8px;
             font-weight: 500;
         }
-        
+
         .input-wrapper {
             position: relative;
         }
-        
-        .input-wrapper svg {
+
+        .input-wrapper .field-icon {
             position: absolute;
             right: 14px;
             top: 50%;
@@ -133,30 +133,57 @@
             width: 20px;
             height: 20px;
             color: var(--text-secondary);
+            pointer-events: none;
         }
-        
+
+        .input-wrapper .toggle-pw {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 20px;
+            height: 20px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            background: none;
+            border: none;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .input-wrapper .toggle-pw:hover { color: var(--text-primary); }
+        .input-wrapper .toggle-pw:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
         .form-group input {
             width: 100%;
-            padding: 14px 16px;
-            padding-right: 48px;
+            padding: 14px 48px 14px 16px;
             border: 2px solid var(--border-color);
             border-radius: 12px;
             background: var(--bg-dark);
             color: var(--text-primary);
             font-size: 1rem;
+            font-family: inherit;
             transition: all 0.2s ease;
         }
-        
+        .form-group input.has-toggle {
+            padding-left: 44px;
+        }
+
         .form-group input:focus {
             outline: none;
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
         }
-        
+
         .form-group input::placeholder {
             color: var(--text-secondary);
         }
-        
+
         .error-message {
             background: rgba(239, 68, 68, 0.1);
             border: 1px solid var(--danger);
@@ -169,13 +196,13 @@
             align-items: center;
             gap: 10px;
         }
-        
+
         .error-message svg {
             width: 20px;
             height: 20px;
             flex-shrink: 0;
         }
-        
+
         .btn-login {
             width: 100%;
             padding: 16px;
@@ -191,23 +218,24 @@
             align-items: center;
             justify-content: center;
             gap: 10px;
+            font-family: inherit;
         }
-        
+
         .btn-login:hover {
             transform: translateY(-2px);
             box-shadow: 0 10px 20px rgba(99, 102, 241, 0.3);
         }
-        
+
         .btn-login:active {
             transform: translateY(0);
         }
-        
+
         .btn-login:disabled {
             opacity: 0.7;
             cursor: not-allowed;
             transform: none;
         }
-        
+
         .btn-login .spinner {
             width: 20px;
             height: 20px;
@@ -216,23 +244,23 @@
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
-        
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
-        
+
         .footer-text {
             text-align: center;
             margin-top: 24px;
             color: var(--text-secondary);
             font-size: 0.8rem;
         }
-        
+
         @media (max-width: 480px) {
             .login-card {
                 padding: 30px 24px;
             }
-            
+
             .login-header h1 {
                 font-size: 1.5rem;
             }
@@ -249,11 +277,11 @@
                     </svg>
                 </div>
                 <h1>Eve - Xui Manager</h1>
-                <p>Sign in to management panel</p>
+                <p>Sign in to continue</p>
             </div>
-            
+
             {% if error %}
-            <div class="error-message">
+            <div class="error-message" role="alert">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="12" y1="8" x2="12" y2="12"></line>
@@ -262,41 +290,73 @@
                 <span>{{ error }}</span>
             </div>
             {% endif %}
-            
-            <form method="POST" id="login-form">
+
+            <form method="POST" action="{{ url_for('login') }}" id="login-form" autocomplete="off" novalidate>
                 <div class="form-group">
-                    <label for="username">Username</label>
+                    <label for="username">Username / Mobile</label>
                     <div class="input-wrapper">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg class="field-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                             <circle cx="12" cy="7" r="4"></circle>
                         </svg>
-                        <input type="text" id="username" name="username" placeholder="admin" required autofocus oninput="this.value = this.value.toLowerCase().replace(/\s/g, '').replace(/[\u0600-\u06FF]/g, '')">
+                        <input type="text" id="username" name="username"
+                               placeholder="admin or 09xxxxxxxxx"
+                               required autofocus
+                               autocomplete="username"
+                               inputmode="text">
                     </div>
                 </div>
-                
+
                 <div class="form-group">
                     <label for="password">Password</label>
                     <div class="input-wrapper">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg class="field-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                         </svg>
-                        <input type="password" id="password" name="password" placeholder="••••••••" required>
+                        <button type="button" class="toggle-pw" onclick="togglePw()" aria-label="Show/hide password" tabindex="0">
+                            <svg id="eye-show" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                            </svg>
+                            <svg id="eye-hide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;display:none">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                                <line x1="1" y1="1" x2="23" y2="23"/>
+                            </svg>
+                        </button>
+                        <input type="password" id="password" name="password"
+                               placeholder="••••••••" required
+                               autocomplete="current-password"
+                               class="has-toggle">
                     </div>
                 </div>
-                
+
                 <button type="submit" class="btn-login" id="login-btn">
                     <span>Sign In</span>
                 </button>
             </form>
-            
+
             <p class="footer-text">Eve - Xui Manager</p>
         </div>
     </div>
-    
+
     <script nonce="{{ csp_nonce }}">
-        document.getElementById('login-form').addEventListener('submit', function(e) {
+        function togglePw() {
+            const input = document.getElementById('password');
+            const showIcon = document.getElementById('eye-show');
+            const hideIcon = document.getElementById('eye-hide');
+            if (input.type === 'password') {
+                input.type = 'text';
+                showIcon.style.display = 'none';
+                hideIcon.style.display = '';
+            } else {
+                input.type = 'password';
+                showIcon.style.display = '';
+                hideIcon.style.display = 'none';
+            }
+        }
+
+        document.getElementById('login-form').addEventListener('submit', function() {
             const btn = document.getElementById('login-btn');
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner"></div><span>Signing in...</span>';

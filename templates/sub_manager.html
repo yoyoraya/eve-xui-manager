@@ -912,6 +912,16 @@
             <p style="margin:4px 0 0;font-size:.75rem;color:var(--text-secondary);opacity:.7;">APK · EXE · DMG · DEB · RPM · ZIP · MP4 · WebM · PNG — max 500 MB</p>
         </div>
 
+        <!-- Setup error banner (shown when upload directory is missing / not writable) -->
+        <div id="fm-setup-banner" style="display:none;flex-shrink:0;margin:10px 20px 0;padding:12px 14px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:10px;font-size:.85rem;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <strong style="color:#ef4444;">Upload directory error</strong>
+                <button onclick="runFmSetup()" style="margin-left:auto;padding:4px 10px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:6px;color:#ef4444;cursor:pointer;font-size:.78rem;font-family:inherit;">Fix Setup</button>
+            </div>
+            <div id="fm-setup-error-text" style="color:#fca5a5;white-space:pre-wrap;word-break:break-all;line-height:1.5;"></div>
+        </div>
+
         <!-- Upload progress -->
         <div id="fm-progress-wrap" style="display:none;flex-shrink:0;margin:10px 20px 0;">
             <div style="display:flex;justify-content:space-between;font-size:.8rem;color:var(--text-secondary);margin-bottom:4px;">
@@ -2558,23 +2568,57 @@
                 } else {
                     showToast(data.error || 'Delete failed', 'error');
                 }
-            } catch (_) {
-                showToast('Delete failed', 'error');
+            } catch (e) {
+                showToast(`Delete failed: ${e.message || e}`, 'error');
             }
         }
 
         async function loadFmFiles() {
+            const banner = document.getElementById('fm-setup-banner');
+            const errText = document.getElementById('fm-setup-error-text');
             try {
                 const resp = await fetch('/api/app-files');
+                if (!resp.ok) {
+                    let errMsg = `HTTP ${resp.status}`;
+                    try { const d = await resp.json(); errMsg = d.error || errMsg; } catch (_) {}
+                    banner.style.display = 'block';
+                    errText.textContent = errMsg;
+                    return;
+                }
                 const data = await resp.json();
                 if (data.success) {
+                    banner.style.display = 'none';
                     _allFiles = data.files || [];
                     renderGrid();
                 } else {
-                    showToast(data.error || 'Could not load files', 'error');
+                    banner.style.display = 'block';
+                    errText.textContent = data.error || 'Could not load files';
                 }
-            } catch (_) {
-                showToast('Could not load files', 'error');
+            } catch (e) {
+                banner.style.display = 'block';
+                errText.textContent = `Network error: ${e.message || e}`;
+            }
+        }
+
+        async function runFmSetup() {
+            const banner = document.getElementById('fm-setup-banner');
+            const errText = document.getElementById('fm-setup-error-text');
+            errText.textContent = 'Running setup…';
+            try {
+                const resp = await fetch('/api/app-files/setup', { method: 'POST' });
+                const data = await resp.json();
+                const lines = (data.steps || []).map(s =>
+                    `${s.ok ? '✓' : '✗'} ${s.name}${s.detail ? ': ' + s.detail : ''}${!s.ok && s.fix ? '\n  Fix: ' + s.fix : ''}`
+                ).join('\n');
+                if (data.success) {
+                    banner.style.display = 'none';
+                    showToast('Setup complete — upload directory is ready', 'success');
+                    loadFmFiles();
+                } else {
+                    errText.textContent = (data.error ? data.error + '\n\n' : '') + lines;
+                }
+            } catch (e) {
+                errText.textContent = `Setup request failed: ${e.message || e}`;
             }
         }
 
@@ -2585,12 +2629,14 @@
             const progressWrap = document.getElementById('fm-progress-wrap');
             const progressBar  = document.getElementById('fm-progress-bar');
             const progressPct  = document.getElementById('fm-progress-pct');
+            const progressName = document.getElementById('fm-progress-name');
             progressWrap.style.display = 'block';
 
             let done = 0;
             const total = fileList.length;
 
             for (const file of fileList) {
+                progressName.textContent = total > 1 ? `(${done + 1}/${total}) ${file.name}` : file.name;
                 const fd = new FormData();
                 fd.append('file', file);
                 await new Promise((resolve) => {
@@ -2643,7 +2689,7 @@
             }
 
             _uploading = false;
-            setTimeout(() => { progressWrap.style.display = 'none'; progressBar.style.width = '0'; progressPct.textContent = '0%'; }, 1200);
+            setTimeout(() => { progressWrap.style.display = 'none'; progressBar.style.width = '0'; progressPct.textContent = '0%'; progressName.textContent = ''; }, 1200);
             await loadFmFiles();
         }
 

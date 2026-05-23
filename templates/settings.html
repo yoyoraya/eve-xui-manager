@@ -327,45 +327,47 @@
                     <label>Use SOCKS Proxy</label>
                     <div class="refresh-toggle" style="gap: 10px;">
                         <label class="toggle-switch" style="margin: 0;">
-                            <input type="checkbox" id="telegram-backup-use-proxy">
+                            <input type="checkbox" id="telegram-backup-use-proxy" onchange="updateTelegramProxyModeUI()">
                             <span class="slider"></span>
                         </label>
                         <span class="toggle-label">SOCKS</span>
                     </div>
-                    <small class="text-secondary">Use a SOCKS proxy for Telegram requests.</small>
+                    <small class="text-secondary">Route Telegram API calls through a SOCKS5 proxy. Useful when the server's IP is blocked by Telegram (e.g. Iranian servers).</small>
                 </div>
 
-                <div class="form-group">
-                    <label>SOCKS Proxy Mode</label>
-                    <select id="telegram-backup-proxy-mode" class="form-select" onchange="updateTelegramProxyModeUI()">
-                        <option value="url">URL</option>
-                        <option value="hostport">Host &amp; Port</option>
-                    </select>
-                </div>
+                <div id="telegram-proxy-fields" style="display:none;">
+                    <div class="form-group">
+                        <label>SOCKS Proxy Mode</label>
+                        <select id="telegram-backup-proxy-mode" class="form-select" onchange="updateTelegramProxyModeUI()">
+                            <option value="url">URL</option>
+                            <option value="hostport">Host &amp; Port</option>
+                        </select>
+                    </div>
 
-                <div class="form-group">
-                    <label>SOCKS Proxy URL</label>
-                    <input type="text" id="telegram-backup-proxy" class="form-control" placeholder="socks5h://127.0.0.1:1080" spellcheck="false" autocomplete="off" oninput="updateTelegramProxyModeUI()">
-                </div>
+                    <div class="form-group" id="tg-proxy-url-group">
+                        <label>SOCKS Proxy URL</label>
+                        <input type="text" id="telegram-backup-proxy" class="form-control" placeholder="socks5h://127.0.0.1:1080" spellcheck="false" autocomplete="off" oninput="updateTelegramProxyModeUI()">
+                    </div>
 
-                <div class="form-group">
-                    <label>SOCKS Host</label>
-                    <input type="text" id="telegram-backup-proxy-host" class="form-control" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
-                </div>
+                    <div class="form-group" id="tg-proxy-host-group">
+                        <label>SOCKS Host</label>
+                        <input type="text" id="telegram-backup-proxy-host" class="form-control" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
+                    </div>
 
-                <div class="form-group">
-                    <label>SOCKS Port</label>
-                    <input type="number" id="telegram-backup-proxy-port" class="form-control" placeholder="1080" min="1" max="65535">
-                </div>
+                    <div class="form-group" id="tg-proxy-port-group">
+                        <label>SOCKS Port</label>
+                        <input type="number" id="telegram-backup-proxy-port" class="form-control" placeholder="1080" min="1" max="65535">
+                    </div>
 
-                <div class="form-group">
-                    <label>SOCKS Username</label>
-                    <input type="text" id="telegram-backup-proxy-username" class="form-control" placeholder="username" spellcheck="false" autocomplete="off">
-                </div>
+                    <div class="form-group" id="tg-proxy-user-group">
+                        <label>SOCKS Username</label>
+                        <input type="text" id="telegram-backup-proxy-username" class="form-control" placeholder="username (optional)" spellcheck="false" autocomplete="off">
+                    </div>
 
-                <div class="form-group">
-                    <label>SOCKS Password</label>
-                    <input type="password" id="telegram-backup-proxy-password" class="form-control" placeholder="password" spellcheck="false" autocomplete="off">
+                    <div class="form-group" id="tg-proxy-pass-group">
+                        <label>SOCKS Password</label>
+                        <input type="password" id="telegram-backup-proxy-password" class="form-control" placeholder="password (optional)" spellcheck="false" autocomplete="off">
+                    </div>
                 </div>
 
                 <div class="form-group" style="margin-bottom: 0;">
@@ -2296,7 +2298,8 @@
             if (proxyMode) proxyMode.value = data.proxy_mode || 'url';
             if (proxy) proxy.value = data.proxy_url || '';
             if (proxyHost) proxyHost.value = data.proxy_host || '';
-            if (proxyPort) proxyPort.value = data.proxy_port || '';
+            // proxy_port is an integer from the server; 0 means "not set" so show empty
+            if (proxyPort) proxyPort.value = (data.proxy_port > 0) ? data.proxy_port : '';
             if (proxyUser) proxyUser.value = data.proxy_username || '';
             if (proxyPass) proxyPass.value = data.proxy_password || '';
             if (lastRun) lastRun.textContent = data.last_run_jalali || 'Never';
@@ -2308,65 +2311,49 @@
     }
 
     function updateTelegramProxyModeUI() {
+        const useProxy = document.getElementById('telegram-backup-use-proxy');
+        const proxyFields = document.getElementById('telegram-proxy-fields');
+        const enabled = useProxy && useProxy.checked;
+
+        // Show/hide the entire proxy config block based on toggle
+        if (proxyFields) proxyFields.style.display = enabled ? '' : 'none';
+        if (!enabled) return;
+
         const mode = (document.getElementById('telegram-backup-proxy-mode') || {}).value || 'url';
-        const urlGroup = document.getElementById('telegram-backup-proxy').closest('.form-group');
-        const hostGroup = document.getElementById('telegram-backup-proxy-host').closest('.form-group');
-        const portGroup = document.getElementById('telegram-backup-proxy-port').closest('.form-group');
-        const usernameGroup = document.getElementById('telegram-backup-proxy-username').closest('.form-group');
-        const passwordGroup = document.getElementById('telegram-backup-proxy-password').closest('.form-group');
+        const urlGroup  = document.getElementById('tg-proxy-url-group');
+        const hostGroup = document.getElementById('tg-proxy-host-group');
+        const portGroup = document.getElementById('tg-proxy-port-group');
+        const userGroup = document.getElementById('tg-proxy-user-group');
+        const passGroup = document.getElementById('tg-proxy-pass-group');
+        const userInput = document.getElementById('telegram-backup-proxy-username');
+        const passInput = document.getElementById('telegram-backup-proxy-password');
 
         if (mode === 'hostport') {
-            if (urlGroup) urlGroup.style.display = 'none';
+            if (urlGroup)  urlGroup.style.display  = 'none';
             if (hostGroup) hostGroup.style.display = '';
             if (portGroup) portGroup.style.display = '';
-            // Always show username/password in hostport mode
-            if (usernameGroup) usernameGroup.style.display = '';
-            if (passwordGroup) passwordGroup.style.display = '';
+            if (userGroup) userGroup.style.display = '';
+            if (passGroup) passGroup.style.display = '';
+            if (userInput) { userInput.disabled = false; userInput.placeholder = 'username (optional)'; }
+            if (passInput) { passInput.disabled = false; passInput.placeholder = 'password (optional)'; }
         } else {
-            if (urlGroup) urlGroup.style.display = '';
+            if (urlGroup)  urlGroup.style.display  = '';
             if (hostGroup) hostGroup.style.display = 'none';
             if (portGroup) portGroup.style.display = 'none';
-            
-            // In URL mode, check if URL already has credentials
-            const proxyUrl = document.getElementById('telegram-backup-proxy').value || '';
-            const hasCredentials = proxyUrl.includes('@');
-            
-            if (hasCredentials) {
-                // URL has credentials, disable username/password fields
-                if (usernameGroup) {
-                    usernameGroup.style.display = '';
-                    const input = document.getElementById('telegram-backup-proxy-username');
-                    if (input) {
-                        input.disabled = true;
-                        input.placeholder = 'Credentials already in URL';
-                        input.title = 'Username is already included in the proxy URL';
-                    }
-                }
-                if (passwordGroup) {
-                    passwordGroup.style.display = '';
-                    const input = document.getElementById('telegram-backup-proxy-password');
-                    if (input) {
-                        input.disabled = true;
-                        input.placeholder = 'Credentials already in URL';
-                        input.title = 'Password is already included in the proxy URL';
-                    }
-                }
-            } else {
-                // URL doesn't have credentials, enable username/password fields
-                if (usernameGroup) usernameGroup.style.display = '';
-                if (passwordGroup) passwordGroup.style.display = '';
-                const usernameInput = document.getElementById('telegram-backup-proxy-username');
-                const passwordInput = document.getElementById('telegram-backup-proxy-password');
-                if (usernameInput) {
-                    usernameInput.disabled = false;
-                    usernameInput.placeholder = 'Username (optional)';
-                    usernameInput.title = '';
-                }
-                if (passwordInput) {
-                    passwordInput.disabled = false;
-                    passwordInput.placeholder = 'Password (optional)';
-                    passwordInput.title = '';
-                }
+            // In URL mode: if URL already contains credentials, disable the separate fields
+            const proxyUrl = (document.getElementById('telegram-backup-proxy') || {}).value || '';
+            const urlHasCreds = proxyUrl.includes('@');
+            if (userGroup) userGroup.style.display = '';
+            if (passGroup) passGroup.style.display = '';
+            if (userInput) {
+                userInput.disabled = urlHasCreds;
+                userInput.placeholder = urlHasCreds ? 'Credentials already in URL' : 'username (optional)';
+                userInput.title = urlHasCreds ? 'Username is already included in the proxy URL' : '';
+            }
+            if (passInput) {
+                passInput.disabled = urlHasCreds;
+                passInput.placeholder = urlHasCreds ? 'Credentials already in URL' : 'password (optional)';
+                passInput.title = urlHasCreds ? 'Password is already included in the proxy URL' : '';
             }
         }
     }
@@ -2380,13 +2367,35 @@
         const proxyMode = document.getElementById('telegram-backup-proxy-mode').value;
         const proxyUrl = document.getElementById('telegram-backup-proxy').value.trim();
         const proxyHost = document.getElementById('telegram-backup-proxy-host').value.trim();
-        const proxyPort = parseInt(document.getElementById('telegram-backup-proxy-port').value, 10);
+        const proxyPortRaw = parseInt(document.getElementById('telegram-backup-proxy-port').value, 10);
+        // NaN (empty field) → send 0 so the backend treats it as "not set"
+        const proxyPort = Number.isNaN(proxyPortRaw) ? 0 : proxyPortRaw;
         const proxyUser = document.getElementById('telegram-backup-proxy-username').value.trim();
         const proxyPass = document.getElementById('telegram-backup-proxy-password').value.trim();
 
         if (!interval || interval < 1) {
             showToast('Interval must be at least 1 minute', 'error');
             return;
+        }
+
+        // Client-side validation when proxy is enabled
+        if (useProxy) {
+            if (proxyMode === 'hostport') {
+                if (!proxyHost) {
+                    showToast('SOCKS Host is required', 'error');
+                    document.getElementById('telegram-backup-proxy-host').focus();
+                    return;
+                }
+                if (!proxyPort || proxyPort < 1 || proxyPort > 65535) {
+                    showToast('SOCKS Port must be between 1 and 65535', 'error');
+                    document.getElementById('telegram-backup-proxy-port').focus();
+                    return;
+                }
+            } else if (!proxyUrl) {
+                showToast('SOCKS Proxy URL is required', 'error');
+                document.getElementById('telegram-backup-proxy').focus();
+                return;
+            }
         }
 
         try {
@@ -2410,7 +2419,11 @@
             const data = await res.json();
             if (data.success) {
                 showToast('Telegram backup settings saved');
-                loadTelegramBackupSettings();
+                // Don't reload all fields — just update last-run display if returned
+                if (data.last_run_jalali !== undefined) {
+                    const lr = document.getElementById('telegram-backup-last-run');
+                    if (lr) lr.textContent = data.last_run_jalali || 'Never';
+                }
             } else {
                 showToast(data.error || 'Error saving settings', 'error');
             }
@@ -2662,25 +2675,31 @@
     }
 
     async function restoreBackup(filename) {
-        if (!confirm('Are you sure you want to restore this backup? Current data will be overwritten and you will be logged out!')) return;
-        
+        if (!confirm(
+            'Restore backup: ' + filename + '\n\n' +
+            'This will OVERWRITE all current data and log you out.\n' +
+            'A safety backup will be created automatically.\n\n' +
+            'Continue?'
+        )) return;
+
+        // Show persistent toast while restore is running (can take 10–60s for large DBs)
+        showToast('Restoring database, please wait…', 'info', 60000);
+
         try {
-            const res = await fetch(`/api/backups/${filename}/restore`, { method: 'POST' });
+            const res = await fetch(`/api/backups/${filename}/restore`, {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' }
+            });
             const data = await res.json();
-            
+
             if (data.success) {
-                showToast(data.message || 'Database restored successfully');
-                // Redirect to login page if provided, otherwise reload
-                if (data.redirect) {
-                    setTimeout(() => window.location.href = data.redirect, 1500);
-                } else {
-                    setTimeout(() => window.location.reload(), 1500);
-                }
+                showToast(data.message || 'Restored successfully. Redirecting…', 'success', 4000);
+                setTimeout(() => window.location.href = data.redirect || '/login', 2000);
             } else {
-                showToast(data.error || 'Error restoring backup', 'error');
+                showToast(data.error || 'Restore failed', 'error', 10000);
             }
         } catch (e) {
-            showToast('Network error', 'error');
+            showToast('Network error: ' + (e.message || 'request failed'), 'error', 8000);
         }
     }
 

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>پورتال کاربری - Eve Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='fonts/fonts.css') }}">
+    <script nonce="{{ csp_nonce }}">
+        (function () {
+            try {
+                const saved = localStorage.getItem('eve_theme');
+                document.documentElement.dataset.theme =
+                    (saved === 'light' || saved === 'dark') ? saved : 'dark';
+            } catch (e) {}
+        })();
+    </script>
+    <style nonce="{{ csp_nonce }}">
+        :root {
+            --bg: #020617; --bg-card: #0f172a; --bg-item: #0a1628;
+            --border: #1e293b; --text: #f8fafc; --muted: #64748b;
+            --cta: #22c55e; --cta-dark: #16a34a; --cta-shadow: rgba(34,197,94,.3);
+            --danger: #ef4444;
+        }
+        html[data-theme="light"] {
+            --bg: #f1f5f9; --bg-card: #fff; --bg-item: #f8fafc;
+            --border: #e2e8f0; --text: #0f172a; --muted: #64748b;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Vazirmatn','Inter',-apple-system,sans-serif;
+            background: var(--bg); color: var(--text);
+            min-height: 100vh;
+        }
+        /* ── Navbar ── */
+        nav {
+            background: var(--bg-card); border-bottom: 1px solid var(--border);
+            padding: 0 20px; height: 60px;
+            display: flex; align-items: center; justify-content: space-between;
+            position: sticky; top: 0; z-index: 50;
+        }
+        .nav-brand {
+            display: flex; align-items: center; gap: 10px;
+            font-weight: 700; font-size: 1rem;
+        }
+        .nav-brand svg { width: 28px; height: 28px; }
+        .nav-brand .dot {
+            width: 8px; height: 8px; background: var(--cta);
+            border-radius: 50%; animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%,100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: .5; transform: scale(1.3); }
+        }
+        .nav-right { display: flex; align-items: center; gap: 12px; }
+        .nav-user {
+            font-size: .85rem; color: var(--muted);
+            direction: ltr; display: flex; align-items: center; gap: 6px;
+        }
+        .nav-user svg { width: 16px; height: 16px; }
+        .btn-logout {
+            padding: 7px 14px; border-radius: 8px;
+            background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.25);
+            color: var(--danger); font-size: .82rem; font-weight: 600;
+            cursor: pointer; text-decoration: none; font-family: inherit;
+            transition: background .2s;
+        }
+        .btn-logout:hover { background: rgba(239,68,68,.2); }
+        /* ── Content ── */
+        .container { max-width: 720px; margin: 0 auto; padding: 32px 20px; }
+        .welcome {
+            background: var(--bg-card); border-radius: 16px;
+            padding: 24px; margin-bottom: 24px;
+            border: 1px solid var(--border);
+            display: flex; align-items: center; gap: 16px;
+        }
+        .welcome-icon {
+            width: 52px; height: 52px; flex-shrink: 0;
+            background: rgba(34,197,94,.12); border: 1.5px solid rgba(34,197,94,.25);
+            border-radius: 14px; display: flex; align-items: center; justify-content: center;
+        }
+        .welcome-icon svg { width: 24px; height: 24px; color: var(--cta); }
+        .welcome-text h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; }
+        .welcome-text p { font-size: .875rem; color: var(--muted); line-height: 1.5; }
+        .mobile-tag {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.2);
+            border-radius: 20px; padding: 3px 10px; font-size: .78rem; color: #86efac;
+            direction: ltr; margin-top: 6px;
+        }
+        /* ── Info card ── */
+        .info-card {
+            background: var(--bg-card); border-radius: 16px;
+            border: 1px solid var(--border); overflow: hidden;
+            margin-bottom: 16px;
+        }
+        .info-card-header {
+            padding: 14px 20px; border-bottom: 1px solid var(--border);
+            font-weight: 600; font-size: .9rem;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .info-card-header svg { width: 18px; height: 18px; color: var(--cta); }
+        .info-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 13px 20px; border-bottom: 1px solid var(--border);
+            font-size: .875rem;
+        }
+        .info-row:last-child { border-bottom: none; }
+        .info-row .label { color: var(--muted); }
+        .info-row .val { font-weight: 600; direction: ltr; }
+        .badge {
+            padding: 3px 10px; border-radius: 20px; font-size: .78rem; font-weight: 600;
+        }
+        .badge-ok { background: rgba(34,197,94,.12); color: #86efac; border: 1px solid rgba(34,197,94,.25); }
+        .badge-off { background: rgba(239,68,68,.1); color: #fca5a5; border: 1px solid rgba(239,68,68,.25); }
+        /* ── Actions ── */
+        .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+        .action-btn {
+            padding: 13px 18px; border-radius: 12px;
+            background: var(--bg-item); border: 1px solid var(--border);
+            color: var(--text); font-size: .9rem; font-weight: 600;
+            cursor: pointer; text-decoration: none; font-family: inherit;
+            display: flex; align-items: center; gap: 10px;
+            transition: all .2s;
+        }
+        .action-btn:hover {
+            border-color: var(--cta); background: rgba(34,197,94,.06);
+            transform: translateX(-2px);
+        }
+        .action-btn svg { width: 18px; height: 18px; color: var(--cta); }
+        @media (max-width: 480px) {
+            .welcome { flex-direction: column; text-align: center; }
+            .mobile-tag { margin: 6px auto 0; }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav-brand">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            Eve Manager
+            <div class="dot"></div>
+        </div>
+        <div class="nav-right">
+            <span class="nav-user">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>
+                {{ user.mobile }}
+            </span>
+            <a href="{{ url_for('client_logout') }}" class="btn-logout">خروج</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Welcome -->
+        <div class="welcome">
+            <div class="welcome-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>
+            </div>
+            <div class="welcome-text">
+                <h2>خوش آمدید{% if user.display_name %} ، {{ user.display_name }}{% endif %}</h2>
+                <p>پورتال کاربری شما در Eve Manager</p>
+                <div class="mobile-tag">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                         style="width:13px;height:13px">
+                        <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                        <line x1="12" y1="18" x2="12.01" y2="18"/>
+                    </svg>
+                    {{ user.mobile }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Account info -->
+        <div class="info-card">
+            <div class="info-card-header">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                اطلاعات حساب
+            </div>
+            <div class="info-row">
+                <span class="label">وضعیت</span>
+                <span class="val">
+                    {% if user.enabled %}
+                    <span class="badge badge-ok">فعال</span>
+                    {% else %}
+                    <span class="badge badge-off">غیرفعال</span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="info-row">
+                <span class="label">شماره موبایل</span>
+                <span class="val">{{ user.mobile }}</span>
+            </div>
+            {% if user.display_name %}
+            <div class="info-row">
+                <span class="label">نام نمایشی</span>
+                <span class="val">{{ user.display_name }}</span>
+            </div>
+            {% endif %}
+            {% if user.last_login %}
+            <div class="info-row">
+                <span class="label">آخرین ورود</span>
+                <span class="val">{{ user.last_login.strftime('%Y-%m-%d %H:%M') }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+            <a href="{{ url_for('client_change_password') }}" class="action-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                تغییر رمز عبور
+            </a>
+        </div>
+    </div>
+</body>
+</html>

@@ -86,7 +86,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "1.9.7"
+APP_VERSION = "1.9.8"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -160,7 +160,8 @@ TELEGRAM_BACKUP_JOBS = {}  # job_id -> job dict
 TELEGRAM_BACKUP_JOBS_LOCK = threading.Lock()
 TELEGRAM_BACKUP_MAX_JOBS = 20
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 10 * 1024 * 1024        # 10 MB  — general file uploads
+BACKUP_UPLOAD_MAX_SIZE = 512 * 1024 * 1024  # 512 MB — DB backup uploads
 
 # Allowed HTML tags and attributes for FAQ content (XSS Prevention)
 ALLOWED_FAQ_TAGS = [
@@ -1459,6 +1460,55 @@ def _pg_dump_backup(dest_path: str) -> None:
         '--dbname', uri,
     ]
     subprocess.run(cmd, check=True, env=env)
+
+
+def _pg_restore_backup(backup_path: str) -> None:
+    """Restore a PostgreSQL database from a pg_dump file.
+
+    Supports:
+    - .dump  (pg_dump --format=custom)  → pg_restore
+    - .sql   (pg_dump --format=plain)   → psql
+    Requires postgresql-client tools (pg_restore / psql) on the server.
+    """
+    uri = _db_uri()
+    parsed = urlparse(uri)
+    env = os.environ.copy()
+    if parsed.password:
+        env['PGPASSWORD'] = parsed.password
+
+    ext = os.path.splitext(backup_path)[1].lower()
+
+    if ext == '.dump':
+        bin_ = shutil.which('pg_restore')
+        if not bin_:
+            raise RuntimeError(
+                "pg_restore not found in PATH. "
+                "Install postgresql-client:  apt install postgresql-client"
+            )
+        cmd = [
+            bin_,
+            '--clean', '--if-exists',
+            '--no-owner', '--no-acl',
+            '--dbname', uri,
+            backup_path,
+        ]
+    elif ext == '.sql':
+        bin_ = shutil.which('psql')
+        if not bin_:
+            raise RuntimeError(
+                "psql not found in PATH. "
+                "Install postgresql-client:  apt install postgresql-client"
+            )
+        cmd = [bin_, '--dbname', uri, '--file', backup_path]
+    else:
+        raise ValueError(f"Unsupported backup format for PostgreSQL restore: {ext!r}")
+
+    # Release all pooled connections so pg_restore can lock tables
+    db.engine.dispose()
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or 'Unknown error')[:1000].strip()
+        raise RuntimeError(f"Restore failed (exit {result.returncode}): {err}")
 
 
 def _create_database_backup_file(prefix: str) -> str:
@@ -2881,17 +2931,22 @@ def _extract_iran_mobile_from_text(value: str | None, *extra_sources: str | None
     """Extract first valid Iranian mobile from value, then extra_sources in order.
 
     Rules:
-    - 09XXXXXXXXX  : '0' must NOT be preceded by a digit (e.g. '1097' never matches)
-    - +98XXXXXXXXX : literal '+' required before '98' (bare '98' prefix rejected)
-    - 0098XXXXXXXXX: double-zero form
-    - Spaces/dashes between digit groups are allowed (e.g. '0912 833 4643')
+    - 09XXXXXXXXX  : must NOT be preceded by any letter or digit.
+                     '1097' → no match (digit before 0).
+                     'plus09...' → no match (letter before 0).
+                     'user_09...' → match (underscore/separator before 0 is OK).
+    - +98XXXXXXXXX : literal '+' required; '+' must not be preceded by a letter/digit.
+    - 0098XXXXXXXXX: double-zero form; same prefix rule.
+    - Spaces/dashes between digit groups are allowed (e.g. '0912 833 4643').
     """
     SEP = r'[\s\-]?'
+    # Lookbehind: reject if immediately preceded by any letter (ASCII or Persian/Arabic) or digit.
+    _LB = r'(?<![0-9A-Za-z؀-ۿ])'
     _PATTERNS = [
-        r'(?<![0-9])\+98'  + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # +98...
-        r'(?<![0-9])0098'  + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # 0098...
-        r'(?<![0-9])0'     + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # 09...
-        r'(?<![0-9])'            + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # bare 9...
+        _LB + r'\+98'  + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # +98...
+        _LB + r'0098'  + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # 0098...
+        _LB + r'0'     + SEP + r'(9(?:' + SEP + r'\d){9})(?!\d)',  # 09...
+        _LB +                  r'(9(?:' + SEP + r'\d){9})(?!\d)',  # bare 9...
     ]
 
     def _try(text: str | None) -> str:
@@ -3216,6 +3271,42 @@ class Transaction(db.Model):
             'date_jalali': format_jalali(self.created_at),
             'admin': admin_info
         }
+
+class ClientPortalUser(db.Model):
+    """End-user portal accounts — login with Iranian mobile + password."""
+    __tablename__ = 'client_portal_users'
+    id = db.Column(db.Integer, primary_key=True)
+    mobile = db.Column(db.String(20), unique=True, nullable=False)   # normalised: +989xxxxxxxxx
+    password_hash = db.Column(db.String(255), nullable=False)
+    must_change_password = db.Column(db.Boolean, default=True)
+    enabled = db.Column(db.Boolean, default=True)
+    linked_email = db.Column(db.String(255))                         # x-ui client email (optional)
+    display_name = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login = db.Column(db.DateTime)
+    failed_attempts = db.Column(db.Integer, default=0)
+    locked_until = db.Column(db.DateTime)
+
+    def set_password(self, raw: str):
+        self.password_hash = generate_password_hash(raw)
+
+    def check_password(self, raw: str) -> bool:
+        return check_password_hash(self.password_hash, raw)
+
+    def is_locked(self) -> bool:
+        if self.locked_until and self.locked_until > datetime.utcnow():
+            return True
+        return False
+
+    def record_failed(self):
+        self.failed_attempts = (self.failed_attempts or 0) + 1
+        if self.failed_attempts >= 5:
+            self.locked_until = datetime.utcnow() + timedelta(minutes=15)
+
+    def reset_failed(self):
+        self.failed_attempts = 0
+        self.locked_until = None
+
 
 class ClientOwnership(db.Model):
     __tablename__ = 'client_ownerships'
@@ -3691,6 +3782,15 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
+
+def client_portal_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'client_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 
 def superadmin_required(f):
     @wraps(f)
@@ -5358,35 +5458,144 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
 
 # --- ROUTES ---
 
+def _login_fail(msg: str):
+    """Return appropriate login failure response."""
+    if request.is_json:
+        return jsonify({"success": False, "error": msg})
+    return render_template('login.html', error=msg)
+
+
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("10 per minute")
 def login():
-    if 'admin_id' in session: return redirect(url_for('dashboard'))
+    if 'admin_id' in session:
+        return redirect(url_for('dashboard'))
+    if 'client_id' in session:
+        return redirect(url_for('client_portal'))
+
     if request.method == 'POST':
         data = request.form if request.form else request.json
-        username = data.get('username', '').strip().lower()
-        # Case-insensitive lookup to support legacy usernames stored with uppercase.
-        user = Admin.query.filter(
-            func.lower(Admin.username) == username,
-            Admin.enabled == True
-        ).first()
-        if user and user.check_password(data.get('password')):
-            session.permanent = True
-            session['admin_id'] = user.id
-            session['admin_username'] = user.username
-            session['role'] = user.role
-            session['is_superadmin'] = (user.role == 'superadmin' or user.is_superadmin)
-            user.last_login = datetime.utcnow()
+        raw_input = (data.get('username') or '').strip()
+        password = data.get('password') or ''
+
+        # Determine auth path: Iranian mobile → client portal, otherwise → admin
+        mobile = _extract_iran_mobile_from_text(raw_input)
+
+        if mobile:
+            # ── Client portal auth ─────────────────────────────
+            client = ClientPortalUser.query.filter_by(mobile=mobile, enabled=True).first()
+            if not client:
+                app.logger.warning(f"Login — unknown client mobile {mobile} from {request.remote_addr}")
+                return _login_fail("Invalid credentials")
+
+            if client.is_locked():
+                remaining = max(1, int((client.locked_until - datetime.utcnow()).total_seconds() / 60) + 1)
+                return _login_fail(f"Account locked. Try again in {remaining} minute(s).")
+
+            if not client.check_password(password):
+                client.record_failed()
+                db.session.commit()
+                app.logger.warning(f"Login — wrong password for client {mobile} from {request.remote_addr} (attempt {client.failed_attempts})")
+                if client.is_locked():
+                    return _login_fail("Account locked after 5 failed attempts. Try again in 15 minutes.")
+                left = 5 - (client.failed_attempts or 0)
+                return _login_fail(f"Invalid credentials ({left} attempts remaining)")
+
+            client.reset_failed()
+            client.last_login = datetime.utcnow()
             db.session.commit()
-            return jsonify({"success": True}) if request.is_json else redirect(url_for('dashboard'))
-        app.logger.warning(f"Failed login attempt for user: {data.get('username')} from IP: {request.remote_addr}")
-        return jsonify({"success": False, "error": "Invalid credentials"}) if request.is_json else render_template('login.html', error="Invalid credentials")
+            session.permanent = True
+            session['client_id'] = client.id
+            session['client_mobile'] = client.mobile
+            session['client_display_name'] = client.display_name or client.mobile
+
+            if client.must_change_password:
+                dest = url_for('client_change_password')
+            else:
+                dest = url_for('client_portal')
+            return jsonify({"success": True, "redirect": dest}) if request.is_json else redirect(dest)
+
+        else:
+            # ── Admin auth ─────────────────────────────────────
+            username = _normalize_username(raw_input)
+            admin = Admin.query.filter(
+                func.lower(Admin.username) == username,
+                Admin.enabled == True
+            ).first()
+            if admin and admin.check_password(password):
+                session.permanent = True
+                session['admin_id'] = admin.id
+                session['admin_username'] = admin.username
+                session['role'] = admin.role
+                session['is_superadmin'] = (admin.role == 'superadmin' or admin.is_superadmin)
+                admin.last_login = datetime.utcnow()
+                db.session.commit()
+                return jsonify({"success": True}) if request.is_json else redirect(url_for('dashboard'))
+
+            app.logger.warning(f"Failed login for '{raw_input}' from {request.remote_addr}")
+            return _login_fail("Invalid credentials")
+
     return render_template('login.html')
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+
+# ── Client Portal ─────────────────────────────────────────────────────────────
+
+@app.route('/client-login')
+def client_login_page():
+    return redirect(url_for('login'))
+
+
+@app.route('/client/logout')
+def client_logout():
+    session.pop('client_id', None)
+    session.pop('client_mobile', None)
+    session.pop('client_display_name', None)
+    return redirect(url_for('login'))
+
+
+@app.route('/client/change-password', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
+def client_change_password():
+    if 'client_id' not in session:
+        return redirect(url_for('login'))
+    user = db.session.get(ClientPortalUser, session['client_id'])
+    if not user or not user.enabled:
+        session.pop('client_id', None)
+        return redirect(url_for('login'))
+
+    error = None
+    if request.method == 'POST':
+        new_pw = request.form.get('new_password', '')
+        confirm_pw = request.form.get('confirm_password', '')
+        if len(new_pw) < 8:
+            error = 'رمز عبور باید حداقل ۸ کاراکتر باشد'
+        elif new_pw != confirm_pw:
+            error = 'تکرار رمز عبور مطابقت ندارد'
+        elif new_pw in (user.mobile, user.mobile.lstrip('+'), user.mobile[3:]):
+            error = 'رمز عبور نمی‌تواند همان شماره موبایل باشد'
+        else:
+            user.set_password(new_pw)
+            user.must_change_password = False
+            db.session.commit()
+            return redirect(url_for('client_portal'))
+
+    return render_template('change_password_client.html', error=error, mobile=user.mobile)
+
+
+@app.route('/client/portal')
+@client_portal_required
+def client_portal():
+    user = db.session.get(ClientPortalUser, session['client_id'])
+    if not user or not user.enabled:
+        session.pop('client_id', None)
+        return redirect(url_for('login'))
+    return render_template('client_portal.html', user=user)
+
 
 @app.route('/')
 @login_required
@@ -12026,6 +12235,61 @@ def app_files_health():
     return jsonify(info)
 
 
+@app.route('/api/app-files/setup', methods=['POST'])
+@superadmin_required
+def app_files_setup():
+    """Auto-create upload directory, fix permissions, run write test. Returns step-by-step diagnostics."""
+    static_folder = app.static_folder or ''
+    d = os.path.join(static_folder, _APP_FILES_DIR_NAME)
+    steps = []
+
+    def _step(name, ok, detail='', fix=''):
+        steps.append({'name': name, 'ok': ok, 'detail': detail, 'fix': fix})
+
+    if not os.path.isdir(static_folder):
+        _step('Static folder exists', False,
+              f"'{static_folder}' does not exist",
+              f"mkdir -p '{static_folder}'")
+        return jsonify({'success': False, 'steps': steps, 'error': 'Static folder missing'})
+    _step('Static folder exists', True, static_folder)
+
+    try:
+        os.makedirs(d, exist_ok=True)
+        _step('Create upload directory', True, d)
+    except OSError as e:
+        fix = f"mkdir -p '{d}' && chown $(whoami) '{d}' && chmod 755 '{d}'"
+        _step('Create upload directory', False, str(e), fix)
+        return jsonify({'success': False, 'steps': steps, 'error': str(e)})
+
+    if not os.access(d, os.W_OK):
+        try:
+            os.chmod(d, 0o755)
+        except OSError:
+            pass
+        if os.access(d, os.W_OK):
+            _step('Set permissions (755)', True, 'Applied successfully')
+        else:
+            fix = f"sudo chown $(whoami) '{d}' && sudo chmod 755 '{d}'"
+            _step('Set permissions (755)', False, 'Directory still not writable — manual fix required', fix)
+            return jsonify({'success': False, 'steps': steps, 'error': fix})
+    else:
+        _step('Directory writable', True)
+
+    test_path = os.path.join(d, f'.write_test_{uuid.uuid4().hex[:6]}')
+    try:
+        with open(test_path, 'w') as _t:
+            _t.write('ok')
+        os.remove(test_path)
+        _step('Write test', True, 'Temporary file written and removed')
+    except Exception as e:
+        fix = f"sudo chown -R $(whoami) '{d}'"
+        _step('Write test', False, str(e), fix)
+        return jsonify({'success': False, 'steps': steps, 'error': str(e)})
+
+    app.logger.info(f"app_files_setup by {session.get('admin_username', '?')}: {d}")
+    return jsonify({'success': True, 'steps': steps, 'directory': d})
+
+
 @app.route('/api/app-files', methods=['GET'])
 @superadmin_required
 def list_app_files():
@@ -12143,6 +12407,17 @@ def delete_app_file(filename):
     except Exception as e:
         app.logger.error(f'delete_app_file error: {e}')
         return jsonify({'success': False, 'error': 'Delete failed'}), 500
+
+
+# Startup: ensure app-files directory exists and is writable
+with app.app_context():
+    try:
+        _app_files_dir()
+        print("[startup] app-files upload directory is ready")
+    except RuntimeError as _appfiles_err:
+        print(f"[startup] WARNING: app-files directory not ready: {_appfiles_err}")
+        print("[startup] File uploads will fail. Use the 'Fix Setup' button in File Manager, or run:")
+        print(f"[startup]   mkdir -p '{os.path.join(app.static_folder or '', _APP_FILES_DIR_NAME)}' && chmod 755 <dir>")
 
 
 @app.route('/api/system-config', methods=['POST'])
@@ -12725,11 +13000,15 @@ def list_backups():
         files.sort(key=os.path.getmtime, reverse=True)
         for f in files:
             name = os.path.basename(f)
+            ext = os.path.splitext(name)[1].lower()
             size = os.path.getsize(f)
             date = datetime.fromtimestamp(os.path.getmtime(f)).strftime('%Y-%m-%d %H:%M:%S')
-            restore_supported = _is_sqlite_db() and name.lower().endswith('.db')
-            
-            # Determine type
+
+            if _is_sqlite_db():
+                restore_supported = ext == '.db'
+            else:
+                restore_supported = ext in ('.dump', '.sql')
+
             if name.startswith('upload_'):
                 b_type = 'Uploaded'
             elif name.startswith('auto_'):
@@ -12738,9 +13017,18 @@ def list_backups():
                 b_type = 'Safety'
             else:
                 b_type = 'System'
-                
-                backups.append({'name': name, 'size': size, 'date': date, 'type': b_type, 'restore_supported': restore_supported})
-            return jsonify({'success': True, 'backups': backups, 'restore_supported': _is_sqlite_db()})
+
+            backups.append({
+                'name': name, 'size': size, 'date': date,
+                'type': b_type, 'restore_supported': restore_supported
+            })
+
+    return jsonify({
+        'success': True,
+        'backups': backups,
+        'is_postgres': _is_postgres_db(),
+        'restore_supported': True,  # always true; per-file flag controls actual button
+    })
 
 @app.route('/api/backups', methods=['POST'])
 @login_required
@@ -12763,9 +13051,10 @@ def upload_backup():
     file.seek(0, os.SEEK_END)
     file_length = file.tell()
     file.seek(0)
-    if file_length > MAX_FILE_SIZE:
-        return jsonify({'success': False, 'error': 'File too large'}), 413
-    
+    if file_length > BACKUP_UPLOAD_MAX_SIZE:
+        mb = BACKUP_UPLOAD_MAX_SIZE // (1024 * 1024)
+        return jsonify({'success': False, 'error': f'File too large (max {mb} MB)'}), 413
+
     allowed_exts = {'.db', '.dump', '.sql'}
     _, ext = os.path.splitext(file.filename or '')
     ext = (ext or '').lower()
@@ -12837,7 +13126,7 @@ def save_telegram_backup_settings():
         proxy_mode = 'url'
     proxy_url = _normalize_proxy_url(data.get('proxy_url') or '')
     proxy_host = (data.get('proxy_host') or '').strip()
-    proxy_port = _parse_int(data.get('proxy_port'), 0, min_value=0, max_value=65535)
+    proxy_port = _parse_int(data.get('proxy_port'), 0, min_value=0, max_value=65535)  # 0 = not set
     proxy_username = (data.get('proxy_username') or '').strip()
     proxy_password = (data.get('proxy_password') or '').strip()
 
@@ -13837,34 +14126,46 @@ def restore_backup(filename):
     backup_path = os.path.join(BACKUP_DIR, filename)
     if not os.path.exists(backup_path):
         return jsonify({'success': False, 'error': 'Backup not found'}), 404
-        
-    try:
-        if not _is_sqlite_db():
-            return jsonify({
-                'success': False,
-                'error': 'Restore via web UI is only supported for SQLite. For PostgreSQL use pg_restore/psql on the server.'
-            }), 400
 
-        db_path = os.path.join(app.instance_path, 'servers.db')
-        # Create a safety backup before restore
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        safety_backup = os.path.join(BACKUP_DIR, f'pre_restore_{timestamp}.db')
-        if os.path.exists(db_path):
-            shutil.copy2(db_path, safety_backup)
-            
-        # 1. بازگردانی دیتابیس
-        shutil.copy2(backup_path, db_path)
-        
-        # 2. پاک کردن سشن برای امنیت (Log out current user)
+    ext = os.path.splitext(filename)[1].lower()
+
+    try:
+        if _is_sqlite_db():
+            if ext != '.db':
+                return jsonify({'success': False, 'error': 'SQLite databases require a .db backup file'}), 400
+            db_path = os.path.join(app.instance_path, 'servers.db')
+            # Safety backup before overwrite
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safety = os.path.join(BACKUP_DIR, f'pre_restore_{timestamp}.db')
+            if os.path.exists(db_path):
+                shutil.copy2(db_path, safety)
+            shutil.copy2(backup_path, db_path)
+
+        elif _is_postgres_db():
+            if ext not in ('.dump', '.sql'):
+                return jsonify({
+                    'success': False,
+                    'error': 'PostgreSQL restore requires a .dump or .sql backup file'
+                }), 400
+            # Safety backup of current DB before restore
+            try:
+                _create_database_backup_file('pre_restore')
+            except Exception as be:
+                app.logger.warning(f"Could not create pre-restore safety backup: {be}")
+            _pg_restore_backup(backup_path)
+
+        else:
+            return jsonify({'success': False, 'error': 'Unsupported database backend'}), 400
+
         session.clear()
-        
-        # 3. برگرداندن پاسخ موفقیت + ریدارکت سمت کلاینت
         return jsonify({
-            'success': True, 
-            'message': 'Database restored successfully. Please login again.',
+            'success': True,
+            'message': 'Database restored successfully. Please log in again.',
             'redirect': url_for('login')
         })
+
     except Exception as e:
+        app.logger.error(f"Restore failed for {filename}: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/backups/<filename>', methods=['DELETE'])
