@@ -504,7 +504,7 @@ WorkingDirectory=${APP_DIR}
 Environment="PATH=${APP_DIR}/venv/bin:/usr/local/bin:/usr/bin:/bin"
 EnvironmentFile=${ENV_FILE}
 # Recommended: increase workers if you have >1 CPU core
-ExecStart=${APP_DIR}/venv/bin/gunicorn --workers 3 --threads 4 --worker-class gthread --bind 0.0.0.0:${APP_PORT} app:app
+ExecStart=${APP_DIR}/venv/bin/gunicorn --workers 3 --threads 4 --worker-class gthread --timeout 120 --graceful-timeout 30 --bind 0.0.0.0:${APP_PORT} app:app
 Restart=always
 
 [Install]

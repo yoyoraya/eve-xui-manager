@@ -7804,10 +7804,11 @@ def renew_client(server_id, inbound_id, email):
             else:
                 new_volume = current_volume
         
-        # Update client
+        # Update client — always re-enable so disabled-due-to-traffic clients go active immediately
         target_client['expiryTime'] = new_expiry
         target_client['totalGB'] = new_volume
-        
+        target_client['enable'] = True
+
         client_id = target_client.get('id', target_client.get('password', email))
 
         update_payload = {
