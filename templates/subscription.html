@@ -264,7 +264,7 @@
             </div>
 
             <p id="app-instruction" class="text-xs text-muted mb-3" style="direction: {{ 'rtl' if is_fa else 'ltr' }}; text-align: {{ 'right' if is_fa else 'left' }};">{{ 'یکی از برنامه‌هایی که روی دستگاه خود دارید یا می‌توانید نصب کنید را انتخاب کنید' if is_fa else 'Select an app you have or can install on your device' }}</p>
-            <div id="app-cards-container" class="grid grid-cols-3 gap-3 mb-5"></div>
+            <div id="app-cards-container" style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px;"></div>
             <div id="app-content-container"></div>
         </div>
 
