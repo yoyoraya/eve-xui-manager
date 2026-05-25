@@ -13829,6 +13829,8 @@ def traffic_check():
         sub_id_to_live_tag = {}
         # sub_id → remaining_bytes (None = unlimited)
         sub_id_to_remaining = {}
+        # sub_id → 'active' | 'disabled' (absent = deleted — not in live cache)
+        sub_id_to_status = {}
         for _inb in (GLOBAL_SERVER_DATA.get('inbounds') or []):
             _srv_id = _inb.get('server_id')
             _remark = (_inb.get('remark') or '').strip()
@@ -13844,6 +13846,7 @@ def traffic_check():
                 _rem = _cli.get('remaining_bytes', -1)
                 if _rem is not None and _rem >= 0:
                     sub_id_to_remaining[_sid] = int(_rem)
+                sub_id_to_status[_sid] = 'disabled' if not _cli.get('enable', True) else 'active'
 
         # ── BULK QUERY 1: endpoint — latest snapshot per (server_id, sub_id) ≤ to_dt ──
         ep_max_sq = (db.session.query(
@@ -13977,12 +13980,14 @@ def traffic_check():
                 result_map[server_id][tag]['remaining_raw'] += _client_rem
 
             client_email = sub_id_to_email.get(sub_id, '')
+            _live_status = sub_id_to_status.get(sub_id)  # None = not in live cache = deleted
             result_map[server_id][tag]['client_list'].append({
-                'email': client_email or sub_id[:8] + '…' if sub_id else '—',
+                'email': client_email or (sub_id[:12] + '…') if sub_id else '—',
                 'download': delta_dl,
                 'upload': delta_ul,
                 'total': delta_total,
                 'remaining': _client_rem,
+                'status': 'deleted' if _live_status is None else ('disabled' if _live_status == 'disabled' else None),
             })
 
         servers_out = []

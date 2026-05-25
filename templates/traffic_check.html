@@ -710,16 +710,23 @@ function tcRender() {
                     ${ib.clients} کلاینت
                 </button>` : `<span style="color:var(--text-secondary);font-size:0.78rem;">${ib.clients} کلاینت</span>`;
 
-            const clientRows = hasClients ? clients.map(c => `
+            const clientRows = hasClients ? clients.map(c => {
+                const statusBadge = c.status === 'deleted'
+                    ? `<span style="font-size:.68rem;padding:1px 6px;border-radius:8px;background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.3);white-space:nowrap;">حذف شده</span>`
+                    : c.status === 'disabled'
+                    ? `<span style="font-size:.68rem;padding:1px 6px;border-radius:8px;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.25);white-space:nowrap;">غیرفعال</span>`
+                    : '';
+                return `
                 <div class="tc-client-row">
-                    <span class="tc-client-email">${esc(c.email)}</span>
+                    <span class="tc-client-email">${esc(c.email)} ${statusBadge}</span>
                     <div class="tc-inbound-stats">
                         <span class="tc-badge-dl">↓ ${fmtBytes(c.download)}</span>
                         <span class="tc-badge-ul">↑ ${fmtBytes(c.upload)}</span>
                         <span style="color:#f59e0b;font-weight:600;">${fmtBytes(c.total)}</span>
                         ${c.remaining != null && c.remaining >= 0 ? `<span style="color:#10b981;font-weight:600;" title="Remaining">⬇ ${fmtBytes(c.remaining)}</span>` : ''}
                     </div>
-                </div>`).join('') : '';
+                </div>`;
+            }).join('') : '';
 
             return `
             <div class="tc-inbound-row">
