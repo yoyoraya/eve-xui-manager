@@ -6395,6 +6395,76 @@ def api_servers_list():
         'panel_type': s.panel_type
     } for s in servers])
 
+@app.route('/api/traffic_check')
+@login_required
+def api_traffic_check():
+    user = db.session.get(Admin, session['admin_id'])
+    server_id_param = request.args.get('server_id', 'all')
+    end_date_param = request.args.get('end_date')  # YYYY-MM-DD
+
+    end_ts_ms = None
+    if end_date_param:
+        try:
+            dt = datetime.strptime(end_date_param, '%Y-%m-%d')
+            dt = dt.replace(hour=23, minute=59, second=59)
+            end_ts_ms = int(dt.timestamp() * 1000)
+        except Exception:
+            return jsonify({"success": False, "error": "Invalid end_date format"}), 400
+
+    accessible_servers = get_accessible_servers(user)
+    accessible_ids = {s.id for s in accessible_servers}
+    server_names = {s.id: s.name for s in accessible_servers}
+
+    inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    result_clients = []
+    total_remaining_bytes = 0
+
+    for client in inbounds:
+        try:
+            sid = int(client.get('server_id', -1))
+        except Exception:
+            continue
+        if sid not in accessible_ids:
+            continue
+        if server_id_param != 'all':
+            try:
+                if sid != int(server_id_param):
+                    continue
+            except Exception:
+                continue
+        if not client.get('enable', True):
+            continue
+        remaining_bytes = client.get('remaining_bytes', -1)
+        if remaining_bytes is None or remaining_bytes <= 0:
+            continue
+        expiry_ts = int(client.get('expiryTimestamp') or 0)
+        if end_ts_ms is not None:
+            if expiry_ts <= 0:
+                continue
+            if expiry_ts > end_ts_ms:
+                continue
+        total_remaining_bytes += remaining_bytes
+        result_clients.append({
+            "email": client.get('email', ''),
+            "server_id": sid,
+            "server_name": server_names.get(sid, f"Server {sid}"),
+            "expiry_text": client.get('expiryTime', ''),
+            "expiry_timestamp": expiry_ts,
+            "remaining": format_bytes(remaining_bytes),
+            "remaining_bytes": remaining_bytes,
+            "total": client.get('totalGB_formatted', ''),
+            "used": format_bytes(int(client.get('up', 0) or 0) + int(client.get('down', 0) or 0)),
+        })
+
+    result_clients.sort(key=lambda x: x['remaining_bytes'], reverse=True)
+    return jsonify({
+        "success": True,
+        "total_remaining_bytes": total_remaining_bytes,
+        "total_remaining": format_bytes(total_remaining_bytes),
+        "client_count": len(result_clients),
+        "clients": result_clients,
+    })
+
 @app.route('/api/server/<int:server_id>/refresh')
 @login_required
 def api_refresh_single_server(server_id):
