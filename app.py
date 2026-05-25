@@ -7827,6 +7827,9 @@ def renew_client(server_id, inbound_id, email):
             else:
                 new_volume = current_volume
         
+        # Check if client was disabled before we re-enable it (for notification)
+        _was_disabled = not target_client.get('enable', True)
+
         # Update client — always re-enable so disabled-due-to-traffic clients go active immediately
         target_client['expiryTime'] = new_expiry
         target_client['totalGB'] = new_volume
@@ -8073,7 +8076,7 @@ def renew_client(server_id, inbound_id, email):
                     'delivery': whatsapp_delivery,
                 }
 
-                return _finish({"success": True, "copy_text": copy_text, "verify": verify, "whatsapp": whatsapp_meta})
+                return _finish({"success": True, "copy_text": copy_text, "verify": verify, "whatsapp": whatsapp_meta, "was_reactivated": _was_disabled})
 
             errors.append(f"{template}: {resp.status_code}")
             timing["update_endpoint"] = template

@@ -1105,6 +1105,7 @@
     const refreshJobContext = new Map(); // jobId -> { serverId?: number|null }
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
     const lastUserCacheByServer = new Map(); // serverId -> { inboundId: email|null }
+    const _lastUserOverrides = new Map(); // key: "${sid}_${iid}" -> {email, until:timestamp} — protects freshly-created entries from stale server cache
 
     const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days | gt_days
     const expandedInboundKeys = new Set(); // `${server_id}:${inbound_id}` -> expanded client list
@@ -1428,18 +1429,31 @@
         return list.filter(i => i && i.server_id == sid);
     }
 
+    // Merge a raw {inboundId: email} map with active local overrides before writing to cache.
+    function _mergeWithOverrides(sid, rawMap) {
+        const now = Date.now();
+        const merged = Object.assign({}, rawMap);
+        for (const [key, ov] of _lastUserOverrides.entries()) {
+            if (!key.startsWith(sid + '_')) continue;
+            if (ov.until <= now) { _lastUserOverrides.delete(key); continue; }
+            const iid = key.slice(sid.length + 1);
+            merged[iid] = ov.email;
+        }
+        return merged;
+    }
+
     function updateLastUserCacheFromInbounds(serverId, serverInbounds) {
         const sid = String(serverId || '');
         if (!sid) return;
-        const map = {};
+        const raw = {};
         (serverInbounds || []).forEach(inbound => {
             const inboundId = inbound && inbound.id != null ? String(inbound.id) : null;
             if (!inboundId) return;
             const clients = Array.isArray(inbound.clients) ? inbound.clients : [];
             const lastClient = clients.length > 0 ? clients[clients.length - 1] : null;
-            map[inboundId] = lastClient && lastClient.email ? lastClient.email : null;
+            raw[inboundId] = lastClient && lastClient.email ? lastClient.email : null;
         });
-        lastUserCacheByServer.set(sid, map);
+        lastUserCacheByServer.set(sid, _mergeWithOverrides(sid, raw));
     }
 
     async function fetchLastUsersForServer(serverId) {
@@ -1451,7 +1465,8 @@
             const data = await resp.json();
             if (!data || !data.success || !data.last_users) return;
 
-            lastUserCacheByServer.set(String(data.server_id), data.last_users || {});
+            const sid = String(data.server_id);
+            lastUserCacheByServer.set(sid, _mergeWithOverrides(sid, data.last_users || {}));
 
             const serverSelect = document.getElementById('add-client-server-select');
             const inboundSelect = document.getElementById('add-client-inbound-select');
@@ -2960,9 +2975,12 @@
 
                 const fallbackVolLabel = (finalVolume === null) ? '—' : `${finalVolume}GB`;
                 const fallbackText = `🔰${email}\n⌛${finalDays} Days 📊${fallbackVolLabel}\nتمدید شد`;
-                const successText = (data && typeof data.copy_text === 'string' && data.copy_text.trim())
+                let successText = (data && typeof data.copy_text === 'string' && data.copy_text.trim())
                     ? data.copy_text
                     : fallbackText;
+                if (data && data.was_reactivated) {
+                    successText += '\n✅ کاربر از حالت غیرفعال خارج و اکتیو شد';
+                }
                 document.getElementById('renew-success-text').innerText = successText;
                 document.getElementById('renew-success-modal').classList.remove('hidden');
 
@@ -3490,11 +3508,13 @@
 
                 // Instantly update local last-user cache so the next
                 // inbound selection shows this new email without any fetch.
+                // Also store an override that survives background refreshes for 2 min.
                 const sid = String(inboundData.server_id);
                 const iid = String(inboundData.inbound_id);
                 const map = lastUserCacheByServer.get(sid) || {};
                 map[iid] = email;
                 lastUserCacheByServer.set(sid, map);
+                _lastUserOverrides.set(`${sid}_${iid}`, { email, until: Date.now() + 120000 });
 
                 closeAddClientModal();
                 // Always refresh only the affected server immediately
