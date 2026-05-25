@@ -13811,6 +13811,15 @@ def traffic_check():
                             'from': from_dt.isoformat() + 'Z', 'to': to_dt.isoformat() + 'Z',
                             'sub_email': sub_email or None, 'email_resolved_name': email_resolved_name})
 
+        # Deduplicate: same sub_id may appear under NULL tag (old snapshots) AND a real tag.
+        # Keep the non-null tag per (server_id, sub_id) to avoid double-counting.
+        _dedup: dict = {}
+        for _sid, _tag, _sub in active_subs:
+            _key = (_sid, _sub)
+            if _key not in _dedup or (_dedup[_key] is None and _tag):
+                _dedup[_key] = _tag
+        active_subs = [(_sid, _tag, _sub) for (_sid, _sub), _tag in _dedup.items()]
+
         all_sub_ids = list({sub_id for _, _, sub_id in active_subs})
 
         # ── Build lookups from live cache (memory reads, no SQL) ───────────────
