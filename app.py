@@ -13818,6 +13818,8 @@ def traffic_check():
         sub_id_to_email = {}
         # (server_id, sub_id) → inbound_tag: resolve unknown tags from live data
         sub_id_to_live_tag = {}
+        # sub_id → remaining_bytes (None = unlimited)
+        sub_id_to_remaining = {}
         for _inb in (GLOBAL_SERVER_DATA.get('inbounds') or []):
             _srv_id = _inb.get('server_id')
             _remark = (_inb.get('remark') or '').strip()
@@ -13830,6 +13832,9 @@ def traffic_check():
                     sub_id_to_email[_sid] = _email
                 if _srv_id is not None and _remark:
                     sub_id_to_live_tag[(_srv_id, _sid)] = _remark
+                _rem = _cli.get('remaining_bytes', -1)
+                if _rem is not None and _rem >= 0:
+                    sub_id_to_remaining[_sid] = int(_rem)
 
         # ── BULK QUERY 1: endpoint — latest snapshot per (server_id, sub_id) ≤ to_dt ──
         ep_max_sq = (db.session.query(
@@ -13948,6 +13953,7 @@ def traffic_check():
                 _port_info = _inbound_port_map.get(server_id, {}).get(inbound_tag or tag, {})
                 result_map[server_id][tag] = {
                     'download': 0, 'upload': 0, 'total': 0, 'clients': 0,
+                    'remaining_raw': 0,
                     'port': _port_info.get('port', ''),
                     'inbound_id': _port_info.get('id', ''),
                     'client_list': [],
@@ -13957,6 +13963,9 @@ def traffic_check():
             result_map[server_id][tag]['upload'] += delta_ul
             result_map[server_id][tag]['total'] += delta_total
             result_map[server_id][tag]['clients'] += 1
+            _client_rem = sub_id_to_remaining.get(sub_id)
+            if _client_rem is not None:
+                result_map[server_id][tag]['remaining_raw'] += _client_rem
 
             client_email = sub_id_to_email.get(sub_id, '')
             result_map[server_id][tag]['client_list'].append({
@@ -13964,6 +13973,7 @@ def traffic_check():
                 'download': delta_dl,
                 'upload': delta_ul,
                 'total': delta_total,
+                'remaining': _client_rem,
             })
 
         servers_out = []
@@ -13977,6 +13987,8 @@ def traffic_check():
                     'upload': data['upload'],
                     'total': data['total'],
                     'clients': data['clients'],
+                    'remaining_raw': data['remaining_raw'],
+                    'remaining': format_bytes(data['remaining_raw']) if data['remaining_raw'] > 0 else None,
                     'client_list': sorted(data['client_list'], key=lambda c: -c['total']),
                 }
                 for tag, data in inbounds_map.items()
@@ -13985,6 +13997,7 @@ def traffic_check():
             srv_total = sum(i['total'] for i in inbounds_out)
             srv_dl = sum(i['download'] for i in inbounds_out)
             srv_ul = sum(i['upload'] for i in inbounds_out)
+            srv_remaining_raw = sum(i['remaining_raw'] for i in inbounds_out)
             first_at = server_first_snap.get(server_id)
             eff_from = server_effective_from.get(server_id)
 
@@ -13994,6 +14007,8 @@ def traffic_check():
                 'total': srv_total,
                 'download': srv_dl,
                 'upload': srv_ul,
+                'remaining_raw': srv_remaining_raw,
+                'remaining': format_bytes(srv_remaining_raw) if srv_remaining_raw > 0 else None,
                 'inbounds': inbounds_out,
                 'first_snapshot_at': (first_at.isoformat() + 'Z') if first_at else None,
                 'effective_from': (eff_from.isoformat() + 'Z') if eff_from else None,

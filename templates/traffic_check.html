@@ -373,6 +373,10 @@ jdp-container .jdp-year select {
             <span class="label">Total Traffic</span>
             <span class="value" id="tc-stat-total">—</span>
         </div>
+        <div class="tc-hero-stat">
+            <span class="label">Total Remaining</span>
+            <span class="value" id="tc-stat-remaining" style="color:#10b981;">—</span>
+        </div>
     </div>
 </section>
 
@@ -597,10 +601,13 @@ async function loadTrafficCheck() {
 
         // Update hero stats
         const totalBytes = (d.servers || []).reduce((s, srv) => s + (srv.total || 0), 0);
+        const totalRem   = (d.servers || []).reduce((s, srv) => s + (srv.remaining_raw || 0), 0);
         const srvEl = document.getElementById('tc-stat-servers');
         const totEl = document.getElementById('tc-stat-total');
+        const remEl = document.getElementById('tc-stat-remaining');
         if (srvEl) srvEl.textContent = (d.servers || []).length;
         if (totEl) totEl.textContent = fmtBytes(totalBytes);
+        if (remEl) remEl.textContent = totalRem > 0 ? fmtBytes(totalRem) : '—';
 
         // Populate server dropdown
         const srvSel = document.getElementById('tc-server-filter');
@@ -710,6 +717,7 @@ function tcRender() {
                         <span class="tc-badge-dl">↓ ${fmtBytes(c.download)}</span>
                         <span class="tc-badge-ul">↑ ${fmtBytes(c.upload)}</span>
                         <span style="color:#f59e0b;font-weight:600;">${fmtBytes(c.total)}</span>
+                        ${c.remaining != null && c.remaining >= 0 ? `<span style="color:#10b981;font-weight:600;" title="Remaining">⬇ ${fmtBytes(c.remaining)}</span>` : ''}
                     </div>
                 </div>`).join('') : '';
 
@@ -723,6 +731,7 @@ function tcRender() {
                     <span class="tc-badge-dl">↓ ${fmtBytes(ib.download)}</span>
                     <span class="tc-badge-ul">↑ ${fmtBytes(ib.upload)}</span>
                     <span style="color:#f59e0b;font-weight:600;">${fmtBytes(ib.total)}</span>
+                    ${ib.remaining ? `<span style="color:#10b981;font-weight:600;" title="Remaining traffic">⬇ ${esc(ib.remaining)}</span>` : ''}
                     <span class="tc-pct">${pct}%</span>
                     ${toggleBtn}
                 </div>
@@ -757,6 +766,10 @@ function tcRender() {
                         <span class="tc-stat-label">Total</span>
                         <span class="tc-badge-tot">${fmtBytes(srv.total)}</span>
                     </div>
+                    ${srv.remaining ? `<div class="tc-stat-item">
+                        <span class="tc-stat-label">Remaining</span>
+                        <span style="color:#10b981;font-weight:700;font-size:1rem;">${esc(srv.remaining)}</span>
+                    </div>` : ''}
                 </div>
                 <svg class="tc-chevron open" id="tc-chev-${si}" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </div>

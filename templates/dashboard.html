@@ -249,10 +249,6 @@
             </label>
 
             <button class="btn btn-secondary" style="padding: 8px 12px;" onclick="selectAllVisibleClients()">Select All</button>
-            <button class="btn btn-secondary" style="padding: 8px 12px; display:flex; align-items:center; gap:6px;" onclick="openTrafficCheckModal()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
-                Traffic Check
-            </button>
         </div>
     </div>
     
@@ -1100,58 +1096,6 @@
                 <button class="btn btn-secondary" onclick="closeDeleteClientModal()">Cancel</button>
                 <button class="btn btn-danger" onclick="submitDeleteClient()">Delete Client</button>
             </div>
-        </div>
-    </div>
-</div>
-
-<!-- Traffic Check Modal -->
-<div class="modal-overlay hidden" id="traffic-check-modal" onclick="if(event.target===this)closeTrafficCheckModal()">
-    <div class="modal modal-lg">
-        <div class="modal-header">
-            <h2>Traffic Check</h2>
-            <button class="modal-close" onclick="closeTrafficCheckModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div style="display:flex; gap:12px; margin-bottom:20px; align-items:flex-end; flex-wrap:wrap;">
-                <div style="flex:1; min-width:140px;">
-                    <label class="form-label">Server</label>
-                    <select id="tc-server-select" class="form-select"></select>
-                </div>
-                <div style="flex:1; min-width:140px;">
-                    <label class="form-label">Expiry on or before</label>
-                    <input type="date" id="tc-end-date" class="form-input">
-                </div>
-                <button class="btn btn-primary" onclick="runTrafficCheck()">Check</button>
-            </div>
-            <div id="tc-result-summary" style="display:none; padding:14px 16px; background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); border-radius:10px; margin-bottom:16px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-                    <div>
-                        <div style="color:var(--text-secondary); font-size:.8rem; margin-bottom:2px;">Total Remaining</div>
-                        <div id="tc-total-remaining" style="font-size:1.7rem; font-weight:700; color:#10b981;">—</div>
-                    </div>
-                    <div>
-                        <div style="color:var(--text-secondary); font-size:.8rem; margin-bottom:2px;">Accounts matched</div>
-                        <div id="tc-count" style="font-size:1.4rem; font-weight:600; color:var(--text-primary);">—</div>
-                    </div>
-                </div>
-            </div>
-            <div id="tc-table-wrap" style="display:none; overflow-x:auto; max-height:400px; overflow-y:auto; border-radius:8px; border:1px solid var(--border);">
-                <table style="width:100%; border-collapse:collapse; font-size:.87rem;">
-                    <thead>
-                        <tr style="position:sticky; top:0; background:var(--card); z-index:1;">
-                            <th style="text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:500;">User</th>
-                            <th style="text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:500;">Server</th>
-                            <th style="text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:500;">Expires</th>
-                            <th style="text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:500;">Total</th>
-                            <th style="text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:500;">Used</th>
-                            <th style="text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:500;">Remaining</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tc-table-body"></tbody>
-                </table>
-            </div>
-            <div id="tc-empty" style="display:none; text-align:center; color:var(--text-secondary); padding:30px 0;">No matching accounts found.</div>
-            <div id="tc-loading" style="display:none; text-align:center; color:var(--text-secondary); padding:30px 0;">Loading...</div>
         </div>
     </div>
 </div>
@@ -5501,78 +5445,6 @@
 
     function closeDeleteClientModal() {
         document.getElementById('delete-client-modal').classList.add('hidden');
-    }
-
-    // --- Traffic Check ---
-    function openTrafficCheckModal() {
-        const sel = document.getElementById('tc-server-select');
-        sel.innerHTML = '<option value="all">All Servers</option>';
-        (allServers || []).forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s.id;
-            opt.textContent = s.name || ('Server ' + s.id);
-            sel.appendChild(opt);
-        });
-        const now = new Date();
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        document.getElementById('tc-end-date').value = endOfMonth.toISOString().slice(0, 10);
-        ['tc-result-summary', 'tc-table-wrap', 'tc-empty', 'tc-loading'].forEach(id => {
-            document.getElementById(id).style.display = 'none';
-        });
-        document.getElementById('traffic-check-modal').classList.remove('hidden');
-    }
-
-    function closeTrafficCheckModal() {
-        document.getElementById('traffic-check-modal').classList.add('hidden');
-    }
-
-    async function runTrafficCheck() {
-        const serverId = document.getElementById('tc-server-select').value;
-        const endDate = document.getElementById('tc-end-date').value;
-        ['tc-result-summary', 'tc-table-wrap', 'tc-empty'].forEach(id => {
-            document.getElementById(id).style.display = 'none';
-        });
-        document.getElementById('tc-loading').style.display = 'block';
-        const params = new URLSearchParams({ server_id: serverId });
-        if (endDate) params.set('end_date', endDate);
-        try {
-            const resp = await fetch('/api/traffic_check?' + params.toString());
-            const data = await resp.json();
-            document.getElementById('tc-loading').style.display = 'none';
-            if (!data.success) { showToast(data.error || 'Error', 'error'); return; }
-            document.getElementById('tc-total-remaining').textContent = data.total_remaining;
-            document.getElementById('tc-count').textContent = data.client_count;
-            document.getElementById('tc-result-summary').style.display = 'block';
-            if (data.clients.length === 0) {
-                document.getElementById('tc-empty').style.display = 'block';
-                return;
-            }
-            const tbody = document.getElementById('tc-table-body');
-            tbody.innerHTML = '';
-            data.clients.forEach(c => {
-                let expiryLabel = c.expiry_text || '—';
-                if (c.expiry_timestamp > 0) {
-                    expiryLabel = new Date(c.expiry_timestamp).toLocaleDateString();
-                }
-                const tr = document.createElement('tr');
-                tr.style.cssText = 'transition:background .15s';
-                tr.onmouseenter = () => tr.style.background = 'rgba(255,255,255,.04)';
-                tr.onmouseleave = () => tr.style.background = '';
-                tr.innerHTML = `
-                    <td style="padding:9px 12px; border-bottom:1px solid var(--border); font-weight:500;">${escHtml(c.email)}</td>
-                    <td style="padding:9px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-size:.82rem;">${escHtml(c.server_name)}</td>
-                    <td style="padding:9px 12px; border-bottom:1px solid var(--border); text-align:center; color:var(--text-secondary); font-size:.83rem;">${escHtml(expiryLabel)}</td>
-                    <td style="padding:9px 12px; border-bottom:1px solid var(--border); text-align:right; color:var(--text-secondary);">${escHtml(c.total)}</td>
-                    <td style="padding:9px 12px; border-bottom:1px solid var(--border); text-align:right; color:var(--text-secondary);">${escHtml(c.used)}</td>
-                    <td style="padding:9px 12px; border-bottom:1px solid var(--border); text-align:right; color:#10b981; font-weight:600;">${escHtml(c.remaining)}</td>
-                `;
-                tbody.appendChild(tr);
-            });
-            document.getElementById('tc-table-wrap').style.display = 'block';
-        } catch (e) {
-            document.getElementById('tc-loading').style.display = 'none';
-            showToast('Network error', 'error');
-        }
     }
 
     async function submitDeleteClient() {
