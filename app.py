@@ -4632,6 +4632,25 @@ def _safe_response_json(resp: requests.Response):
             snippet = '<no body>'
         return None, f"Non-JSON response (status {resp.status_code}, content-type {content_type}): {snippet}"
 
+
+def _format_panel_connection_error(server, exc=None):
+    """Return a short user-facing panel connection error.
+
+    Raw requests exceptions include noisy pool/socket internals that are useful
+    in logs but confusing in the UI.
+    """
+    try:
+        base, _ = extract_base_and_webpath(getattr(server, 'host', '') or '')
+    except Exception:
+        base = getattr(server, 'host', '') or 'panel host'
+
+    return (
+        f"Panel connection timed out for {base}. "
+        "The server panel is not reachable right now. "
+        "Check panel URL/IP, port, firewall, web path and panel type."
+    )
+
+
 def get_xui_session(server):
     # Try to reuse session from cache
     now = time.time()
@@ -4684,12 +4703,21 @@ def get_xui_session(server):
                 last_err = None
                 if isinstance(j, dict) and j.get('success'):
                     break
+            except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_err = _format_panel_connection_error(server, exc)
+                app.logger.warning(
+                    "Panel login connection failed for server %s (%s): %s",
+                    getattr(server, 'id', None),
+                    getattr(server, 'host', None),
+                    exc,
+                )
+                break
             except Exception as exc:
                 last_err = str(exc)
                 continue
 
         if login_resp is None:
-            return None, f"Login failed: {last_err}. Check Panel URL / webpath and panel type."
+            return None, last_err or _format_panel_connection_error(server)
 
         if login_resp.status_code == 200 and isinstance(login_json, dict) and login_json.get('success'):
             XUI_SESSION_CACHE[server.id] = {
