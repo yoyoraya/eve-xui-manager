@@ -1079,6 +1079,8 @@ def fetch_and_update_server_data(server_id: int):
     if persist_detected_panel_type(server, detected_type):
         app.logger.info(f"Detected panel type for server {server.id} as {detected_type}")
 
+    if not isinstance(inbounds, list):
+        inbounds = []
     processed, stats = process_inbounds(inbounds, server, admin_user, '*', {}, online_index=online_index)
 
     # Update cache atomically under lock
@@ -13789,7 +13791,9 @@ def _run_snapshot_with_progress():
                         'sub_path': srv.sub_path, 'json_path': srv.json_path,
                     }
                     srv_id, inbounds, online_index, status_payload, status_error, error, detected_type = fetch_worker(srv_dict)
-                    if not error and inbounds:
+                    if not error:
+                        if not isinstance(inbounds, list):
+                            inbounds = []
                         processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {}, online_index=online_index)
                         existing = GLOBAL_SERVER_DATA.get('inbounds') or []
                         without = [ib for ib in existing if int(ib.get('server_id', -1)) != int(srv.id)]
@@ -14854,6 +14858,8 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
             if persist_detected_panel_type(srv, detected_type):
                 app.logger.info(f"Detected panel type for server {srv.id} as {detected_type}")
 
+            if not isinstance(inbounds, list):
+                inbounds = []
             processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {}, online_index=online_index)
             new_by_server[sid] = list(processed or [])
 

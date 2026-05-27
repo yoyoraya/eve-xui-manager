@@ -2125,10 +2125,10 @@
                 const jobId = data.refresh_job && data.refresh_job.id;
                 const jobState = data.refresh_job && data.refresh_job.state;
                 const isAsyncJobPending = Boolean(jobId && (jobState === 'queued' || jobState === 'running'));
-                // Apply cached data immediately when available (avoid blank skeleton while job runs).
-                // Also apply when poll=false (post-job cache read) to clear skeleton for 0-inbound servers.
-                const hasCachedData = Array.isArray(data.inbounds) && data.inbounds.length > 0;
-                const shouldApplySnapshotNow = !isAsyncJobPending || !poll || hasCachedData;
+                // While a real refresh job is running, do not re-apply the stale cache.
+                // The post-job cache read must be the only update that lands, otherwise
+                // deleted panel inbounds can visually come back until another refresh.
+                const shouldApplySnapshotNow = !isAsyncJobPending || !poll;
 
                 if (shouldApplySnapshotNow) {
                     allInboundsData = data.inbounds;
