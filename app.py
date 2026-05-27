@@ -8549,10 +8549,43 @@ def update_server(server_id):
 def delete_server(server_id):
     if session.get('role') == 'reseller':
         return jsonify({"success": False, "error": "Only admins can delete servers"}), 403
-    
+
     server = Server.query.get_or_404(server_id)
-    db.session.delete(server)
-    db.session.commit()
+
+    try:
+        db.session.execute(
+            announcement_servers.delete().where(announcement_servers.c.server_id == server_id)
+        )
+        ClientOwnership.query.filter_by(server_id=server_id).delete(synchronize_session=False)
+        UsageSnapshot.query.filter_by(server_id=server_id).delete(synchronize_session=False)
+        RenewalEvent.query.filter_by(server_id=server_id).delete(synchronize_session=False)
+        PriceTier.query.filter_by(server_id=server_id).delete(synchronize_session=False)
+        Transaction.query.filter_by(server_id=server_id).update(
+            {Transaction.server_id: None},
+            synchronize_session=False
+        )
+
+        db.session.delete(server)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.exception("Failed to delete server %s", server_id)
+        return jsonify({
+            "success": False,
+            "error": "Server could not be deleted. Please check related records and try again.",
+            "details": str(exc)
+        }), 500
+
+    XUI_SESSION_CACHE.pop(server_id, None)
+    REFRESH_BACKOFF.pop(server_id, None)
+    GLOBAL_SERVER_DATA['inbounds'] = [
+        item for item in (GLOBAL_SERVER_DATA.get('inbounds') or [])
+        if str(item.get('server_id') or '') != str(server_id)
+    ]
+    GLOBAL_SERVER_DATA['servers_status'] = [
+        item for item in (GLOBAL_SERVER_DATA.get('servers_status') or [])
+        if str(item.get('id') or item.get('server_id') or '') != str(server_id)
+    ]
     return jsonify({"success": True})
 
 @app.route('/api/servers/<int:server_id>/test', methods=['POST'])

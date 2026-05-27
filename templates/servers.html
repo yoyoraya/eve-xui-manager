@@ -359,12 +359,15 @@
         
         try {
             const response = await fetch(`/api/servers/${id}`, { method: 'DELETE' });
-            if (!response.ok) throw new Error('Failed to delete server');
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || result.details || 'Failed to delete server');
+            }
             
             showToast('Server deleted', 'success');
             loadServers();
         } catch (error) {
-            showToast('Error deleting server', 'error');
+            showToast(error.message || 'Error deleting server', 'error');
         }
     }
     
