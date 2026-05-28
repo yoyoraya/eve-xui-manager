@@ -141,6 +141,10 @@ SELF_SIGNED_SSL_DIR="/etc/ssl/eve-manager"
 DOMAIN="${1:-}"
 ENVIRONMENT="${2:-production}"
 INSTALL_SOURCE="github"  # Can be "github" or "zip"
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd -P || pwd)"
+OFFLINE_MODE="${EVE_OFFLINE_MODE:-false}"
+OFFLINE_ROOT="${EVE_OFFLINE_ROOT:-}"
 
 DB_NAME="eve_manager_db"
 DB_USER="eve_manager"
@@ -267,11 +271,196 @@ ask_install_source() {
     echo
 }
 
+is_offline_mode() {
+    [ "${OFFLINE_MODE}" = "true" ] || [ "${OFFLINE_MODE}" = "1" ]
+}
+
+get_os_codename() {
+    local codename=""
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        codename="${VERSION_CODENAME:-}"
+        if [ -z "$codename" ] && [ -n "${UBUNTU_CODENAME:-}" ]; then
+            codename="$UBUNTU_CODENAME"
+        fi
+    fi
+    if [ -z "$codename" ] && command -v lsb_release >/dev/null 2>&1; then
+        codename="$(lsb_release -cs 2>/dev/null || true)"
+    fi
+    echo "$codename"
+}
+
+resolve_offline_root() {
+    local candidates=()
+    [ -n "${OFFLINE_ROOT:-}" ] && candidates+=("$OFFLINE_ROOT")
+    candidates+=("$SCRIPT_DIR/offline" "$PWD/offline" "$APP_DIR/offline")
+
+    for candidate in "${candidates[@]}"; do
+        if [ -d "$candidate" ]; then
+            OFFLINE_ROOT="$(cd "$candidate" && pwd -P)"
+            print_success "Offline bundle detected: $OFFLINE_ROOT"
+            return 0
+        fi
+    done
+
+    print_warning "Offline bundle folder not found automatically."
+    read -rp "  Enter full path to offline/ folder: " OFFLINE_ROOT
+    if [ -z "$OFFLINE_ROOT" ] || [ ! -d "$OFFLINE_ROOT" ]; then
+        print_error "Offline bundle not found: ${OFFLINE_ROOT:-<none>}"
+        return 1
+    fi
+    OFFLINE_ROOT="$(cd "$OFFLINE_ROOT" && pwd -P)"
+    print_success "Offline bundle: $OFFLINE_ROOT"
+}
+
+offline_deb_dir() {
+    local codename arch
+    codename="$(get_os_codename)"
+    arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+    for dir in \
+        "$OFFLINE_ROOT/apt/${codename}-${arch}" \
+        "$OFFLINE_ROOT/apt/${codename}" \
+        "$OFFLINE_ROOT/apt/ubuntu-${codename}-${arch}"; do
+        if [ -d "$dir" ]; then
+            echo "$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+install_offline_apt_dependencies() {
+    print_header "Installing Offline System Packages"
+    resolve_offline_root
+
+    local arch codename deb_dir
+    arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+    codename="$(get_os_codename)"
+    if [ "$arch" != "amd64" ]; then
+        print_error "Offline bundle supports Ubuntu amd64 only; detected: $arch"
+        return 1
+    fi
+
+    deb_dir="$(offline_deb_dir || true)"
+    if [ -z "$deb_dir" ] || ! ls "$deb_dir"/*.deb >/dev/null 2>&1; then
+        print_error "No .deb packages found for Ubuntu ${codename:-unknown} / $arch"
+        echo "  Expected: $OFFLINE_ROOT/apt/${codename}-${arch}/*.deb"
+        echo "  Build it on an online machine with: bash prepare-offline-bundle.sh"
+        return 1
+    fi
+
+    print_warning "Installing local .deb packages from $deb_dir"
+    export DEBIAN_FRONTEND=noninteractive
+    wait_for_apt
+
+    # Multiple passes let dpkg configure packages whose dependencies appear later in the folder.
+    local pass
+    for pass in 1 2 3; do
+        if dpkg -i "$deb_dir"/*.deb; then
+            print_success "System packages installed"
+            return 0
+        fi
+        print_warning "dpkg pass $pass needed another dependency pass..."
+    done
+
+    if apt-get --no-download -y -f install; then
+        print_success "System packages configured from local cache"
+        return 0
+    fi
+
+    print_error "Offline system package installation failed"
+    print_warning "The bundle may be incomplete for Ubuntu ${codename:-unknown} / $arch."
+    return 1
+}
+
+clone_or_update_repo_from_local_bundle() {
+    print_header "Step 6: Copy application from offline bundle"
+
+    local SOURCE_DIR="$SCRIPT_DIR"
+    if [ ! -f "$SOURCE_DIR/app.py" ]; then
+        SOURCE_DIR="$(cd "$OFFLINE_ROOT/.." >/dev/null 2>&1 && pwd -P || true)"
+    fi
+
+    if [ -z "$SOURCE_DIR" ] || [ ! -f "$SOURCE_DIR/app.py" ]; then
+        print_warning "Current folder is not a project bundle; falling back to ZIP extraction."
+        clone_or_update_repo_from_zip
+        return
+    fi
+
+    if [ -d "$APP_DIR" ] && [ "$(ls -A "$APP_DIR" 2>/dev/null)" ]; then
+        print_warning "Directory $APP_DIR exists. Backing up..."
+        mv "$APP_DIR" "${APP_DIR}.bak.$(date +%s)"
+    fi
+
+    mkdir -p "$APP_DIR"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a \
+            --exclude='.git/' \
+            --exclude='.venv/' \
+            --exclude='venv/' \
+            --exclude='env/' \
+            --exclude='__pycache__/' \
+            --exclude='instance/' \
+            --exclude='.env' \
+            "$SOURCE_DIR/" "$APP_DIR/"
+    else
+        cp -r "$SOURCE_DIR"/* "$APP_DIR/" 2>/dev/null || true
+        cp -r "$SOURCE_DIR"/.[!.]* "$APP_DIR/" 2>/dev/null || true
+        rm -rf "$APP_DIR/.git" "$APP_DIR/.venv" "$APP_DIR/venv" "$APP_DIR/env" "$APP_DIR/__pycache__" "$APP_DIR/instance"
+    fi
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+    print_success "Source code copied from offline bundle"
+}
+
+install_offline_python_runtime() {
+    resolve_offline_root
+
+    local runtime_dir="$APP_DIR/.python/runtime"
+    local py_bin=""
+    py_bin="$(find "$runtime_dir" -path '*/bin/python3.11' -type f 2>/dev/null | head -1 || true)"
+    if [ -n "$py_bin" ]; then
+        OFFLINE_PY_BIN="$py_bin"
+        return 0
+    fi
+
+    local archive=""
+    for candidate in \
+        "$APP_DIR/offline/python/python-3.11-linux-x86_64.tar.gz" \
+        "$OFFLINE_ROOT/python/python-3.11-linux-x86_64.tar.gz"; do
+        if [ -f "$candidate" ]; then
+            archive="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$archive" ]; then
+        print_error "Offline Python runtime not found"
+        echo "  Expected: offline/python/python-3.11-linux-x86_64.tar.gz"
+        return 1
+    fi
+
+    print_warning "Extracting bundled Python runtime..."
+    rm -rf "$runtime_dir"
+    mkdir -p "$runtime_dir"
+    tar -xzf "$archive" -C "$runtime_dir" --strip-components=1
+    py_bin="$(find "$runtime_dir" -path '*/bin/python3.11' -type f 2>/dev/null | head -1 || true)"
+    if [ -z "$py_bin" ]; then
+        print_error "Bundled Python runtime is invalid"
+        return 1
+    fi
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR/.python"
+    OFFLINE_PY_BIN="$py_bin"
+}
+
 
 setup_postgresql_for_install() {
     print_header "Installing & Configuring PostgreSQL"
-    wait_for_apt
-    apt-get install -y postgresql postgresql-contrib libpq-dev
+    if ! is_offline_mode; then
+        wait_for_apt
+        apt-get install -y postgresql postgresql-contrib libpq-dev
+    else
+        print_warning "Offline mode enabled; PostgreSQL packages must already be installed from bundle"
+    fi
 
     # Ensure service is running
     systemctl enable postgresql >/dev/null 2>&1 || true
@@ -310,6 +499,10 @@ detect_os() {
 }
 
 ensure_python_pkg() {
+    if is_offline_mode; then
+        print_warning "Offline mode enabled; using bundled Python runtime later."
+        return
+    fi
     if command -v "python${PYTHON_VERSION}" >/dev/null 2>&1; then
         return
     fi
@@ -370,6 +563,10 @@ wait_for_apt() {
 # -------------------- Installation Steps -------------------
 update_system() {
     print_header "Step 1: Update system"
+    if is_offline_mode; then
+        print_warning "Offline mode enabled; skipping apt-get update"
+        return
+    fi
     wait_for_apt
     apt-get update -qq
     print_success "Packages list updated"
@@ -377,6 +574,10 @@ update_system() {
 
 install_dependencies() {
     print_header "Step 2: Install dependencies"
+    if is_offline_mode; then
+        install_offline_apt_dependencies
+        return
+    fi
     wait_for_apt
     apt-get install -y -qq \
         python3-pip \
@@ -563,8 +764,11 @@ run_migrations() {
 
 setup_python_env() {
     print_header "Step 7: Python virtual environment"
-    PY_BIN="python${PYTHON_VERSION}"
-    if [ ! -x "$(command -v $PY_BIN)" ]; then
+    local PY_BIN="python${PYTHON_VERSION}"
+    if is_offline_mode; then
+        install_offline_python_runtime
+        PY_BIN="$OFFLINE_PY_BIN"
+    elif [ ! -x "$(command -v $PY_BIN)" ]; then
         PY_BIN="python3"
     fi
     
@@ -579,13 +783,13 @@ setup_python_env() {
         print_warning "Virtual environment already exists, updating..."
     fi
     
-    # Always upgrade pip first with extended timeout
-    print_warning "Upgrading pip, setuptools, wheel..."
-    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && \
-        pip install --upgrade --default-timeout=120 --retries 10 pip setuptools wheel 2>&1" | tail -5
-    
     # Check for offline wheels
     local WHEELS_DIR="$APP_DIR/wheels"
+    if [ ! -d "$WHEELS_DIR" ] && [ -d "$APP_DIR/offline/wheels/cp311-linux-x86_64" ]; then
+        WHEELS_DIR="$APP_DIR/offline/wheels/cp311-linux-x86_64"
+    elif [ ! -d "$WHEELS_DIR" ] && [ -n "${OFFLINE_ROOT:-}" ] && [ -d "$OFFLINE_ROOT/wheels/cp311-linux-x86_64" ]; then
+        WHEELS_DIR="$OFFLINE_ROOT/wheels/cp311-linux-x86_64"
+    fi
     local WHEELS_COUNT=0
     
     if [ -d "$WHEELS_DIR" ]; then
@@ -593,9 +797,35 @@ setup_python_env() {
     fi
     
     print_warning "Checking dependencies: requirements.txt"
+
+    if is_offline_mode; then
+        if [ $WHEELS_COUNT -le 10 ]; then
+            print_error "Offline Python wheelhouse not found or incomplete"
+            echo "  Expected: offline/wheels/cp311-linux-x86_64/*.whl"
+            echo "  Build it on an online machine with: bash prepare-offline-bundle.sh"
+            return 1
+        fi
+
+        print_success "Found $WHEELS_COUNT bundled Python packages"
+        print_warning "Installing Python packages from offline wheelhouse..."
+        sudo -u "$APP_USER" bash -c "cd '$APP_DIR' && source venv/bin/activate && \
+            pip install --no-index --find-links='$WHEELS_DIR' pip setuptools wheel && \
+            pip install --no-index --find-links='$WHEELS_DIR' -r requirements.txt && \
+            pip install --no-index --find-links='$WHEELS_DIR' gunicorn psycopg2-binary" || {
+            print_error "Offline Python package installation failed"
+            return 1
+        }
+        OFFLINE_SUCCESS=1
+    else
+        # Always upgrade pip first with extended timeout
+        print_warning "Upgrading pip, setuptools, wheel..."
+        sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && \
+            pip install --upgrade --default-timeout=120 --retries 10 pip setuptools wheel 2>&1" | tail -5
+        OFFLINE_SUCCESS=0
+    fi
     
     # Step 1: Try offline wheels (if available)
-    if [ $WHEELS_COUNT -gt 10 ]; then
+    if ! is_offline_mode && [ $WHEELS_COUNT -gt 10 ]; then
         print_success "Found $WHEELS_COUNT wheels — attempting offline installation"
         print_warning "Installing from wheels/ folder (no internet needed)..."
         
@@ -607,12 +837,12 @@ setup_python_env() {
             print_warning "Offline installation failed, trying online..."
             OFFLINE_SUCCESS=0
         fi
-    else
+    elif ! is_offline_mode; then
         OFFLINE_SUCCESS=0
     fi
     
     # Step 2: If offline failed (or no wheels), try online with retries
-    if [ $OFFLINE_SUCCESS -ne 1 ]; then
+    if ! is_offline_mode && [ $OFFLINE_SUCCESS -ne 1 ]; then
         print_warning "Attempting online installation with extended timeout (120s)..."
         
         # Try official PyPI first
@@ -654,11 +884,13 @@ setup_python_env() {
     fi
     
     # Step 3: Install additional packages
-    print_warning "Installing gunicorn and psycopg2..."
-    sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && \
-        pip install --default-timeout=120 --retries 10 gunicorn psycopg2-binary 2>&1" | tail -5 || {
-        print_warning "Warning: gunicorn/psycopg2 install failed (may retry later)"
-    }
+    if ! is_offline_mode; then
+        print_warning "Installing gunicorn and psycopg2..."
+        sudo -u "$APP_USER" bash -c "source $APP_DIR/venv/bin/activate && \
+            pip install --default-timeout=120 --retries 10 gunicorn psycopg2-binary 2>&1" | tail -5 || {
+            print_warning "Warning: gunicorn/psycopg2 install failed (may retry later)"
+        }
+    fi
     
     # Verify installation
     print_warning "Verifying installation..."
@@ -1089,9 +1321,13 @@ migrate_to_postgres() {
 
     # 1. Install PostgreSQL
     print_warning "Installing PostgreSQL packages..."
-    wait_for_apt
-    apt-get update -qq
-    apt-get install -y postgresql postgresql-contrib libpq-dev
+    if ! is_offline_mode; then
+        wait_for_apt
+        apt-get update -qq
+        apt-get install -y postgresql postgresql-contrib libpq-dev
+    else
+        install_offline_apt_dependencies
+    fi
 
     # 2. Fix app.py logic bug
     print_warning "Patching app.py to support DATABASE_URL..."
@@ -1162,9 +1398,13 @@ remote_db_migration() {
 
     # Ensure DB server available on new host
     print_warning "Installing PostgreSQL server/client..."
-    wait_for_apt
-    apt-get update -qq
-    apt-get install -y postgresql postgresql-contrib libpq-dev postgresql-client
+    if ! is_offline_mode; then
+        wait_for_apt
+        apt-get update -qq
+        apt-get install -y postgresql postgresql-contrib libpq-dev postgresql-client
+    else
+        install_offline_apt_dependencies
+    fi
 
     read -rp "Old server SSH (user@host): " OLD_SSH
     read -rp "Old server SSH port [22]: " OLD_SSH_PORT
@@ -1705,11 +1945,41 @@ offline_update() {
 # Main interactive menu (loops until quit)
 # ──────────────────────────────────────────────────────────────
 
+full_offline_install() {
+    require_root
+    OFFLINE_MODE=true
+    detect_os
+    resolve_offline_root
+    ask_domain
+    prompt_admin_credentials
+    ask_database_type
+    install_dependencies
+    create_app_user
+    prepare_directories
+    clone_or_update_repo_from_local_bundle
+    [ "$DB_TYPE" = "postgres" ] && setup_postgresql_for_install
+    create_env_file
+    ensure_server_password_key
+    setup_python_env
+    setup_systemd
+    ensure_systemd_envfile_evemanager
+    setup_nginx
+    install_eve_cli
+    print_header "Offline Installation Complete!"
+    echo -e "  URL      : http://${DOMAIN}"
+    echo -e "  Admin    : ${ADMIN_USERNAME}"
+    echo -e "  Password : ${ADMIN_PASS}"
+    [ "$DB_TYPE" = "postgres" ] && echo -e "  DB URL   : ${DATABASE_URL}"
+    echo -e "  Logs     : journalctl -u ${SERVICE_NAME} -f"
+    echo -e "  CLI      : type 'eve' to manage this panel"
+}
+
 show_menu() {
     while true; do
         show_banner
         echo -e "  ${BOLD}Installation & Update${NC}"
         echo -e "   ${GREEN}[1]${NC}  Install / Re-install (Full)"
+        echo -e "   ${YELLOW}[o]${NC}  Install (Fully Offline Bundle)"
         echo -e "   ${GREEN}[2]${NC}  Update  (Online — from GitHub)"
         echo -e "   ${YELLOW}[3]${NC}  Update  (Offline — from ZIP file)"
         echo
@@ -1784,6 +2054,10 @@ show_menu() {
                 ;;
             3)
                 offline_update
+                read -rp "  Press Enter to return to menu..." _dummy
+                ;;
+            o|O)
+                full_offline_install
                 read -rp "  Press Enter to return to menu..." _dummy
                 ;;
             4)

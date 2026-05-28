@@ -29,7 +29,58 @@ bash setup.sh
 - Aliyun (China): `https://mirrors.aliyun.com/pypi/simple/`
 - Tsinghua (China): `https://pypi.tuna.tsinghua.edu.cn/simple`
 
-### Solution 2: Fully Offline Installation with Pre-Downloaded Wheels (Recommended)
+### Solution 2: Full Offline Bundle (Recommended for zero internet)
+
+Use this when the server cannot reach GitHub, PyPI, or Ubuntu repositories.
+
+#### Build the bundle on an internet-connected Linux/WSL machine
+
+```bash
+git clone https://github.com/yoyoraya/eve-xui-manager.git
+cd eve-xui-manager
+chmod +x prepare-offline-bundle.sh
+bash prepare-offline-bundle.sh .
+```
+
+Docker is recommended on the build machine so the script can download `.deb`
+packages for Ubuntu 20.04, 22.04, and 24.04 in one run. Without Docker, it only
+downloads `.deb` packages for the current Ubuntu release.
+
+This creates:
+
+```text
+offline/apt/focal-amd64/*.deb   # Ubuntu 20.04
+offline/apt/jammy-amd64/*.deb   # Ubuntu 22.04
+offline/apt/noble-amd64/*.deb   # Ubuntu 24.04
+offline/python/python-3.11-linux-x86_64.tar.gz
+offline/wheels/cp311-linux-x86_64/*.whl
+dist/eve-xui-manager-offline.tar.gz
+```
+
+`amd64` covers normal Intel and AMD x86_64 servers.
+
+#### Transfer and install on the restricted server
+
+```bash
+scp dist/eve-xui-manager-offline.tar.gz root@SERVER_IP:/root/
+ssh root@SERVER_IP
+tar -xzf /root/eve-xui-manager-offline.tar.gz -C /root
+cd /root/eve-xui-manager
+sudo bash setup.sh
+```
+
+Select:
+
+```text
+[o] Install (Fully Offline Bundle)
+```
+
+The installer uses only local files from `offline/`:
+- Ubuntu `.deb` packages for nginx, PostgreSQL, Certbot, UFW, rsync, etc.
+- Portable Python 3.11 runtime.
+- Python wheels for `requirements.txt`, `gunicorn`, and `psycopg2-binary`.
+
+### Solution 3: Offline Python Wheels Only
 
 #### Step 1: Prepare Wheels (on a machine with internet)
 
@@ -84,7 +135,7 @@ The script automatically:
 - Uses offline pip (`--no-index --find-links`)
 - Installs all packages without internet
 
-### Solution 3: Hybrid Approach
+### Solution 4: Hybrid Approach
 
 ```bash
 # Setup script tries in this order:
