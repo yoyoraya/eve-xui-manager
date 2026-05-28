@@ -1361,6 +1361,8 @@
     let selectedRenewPackageName = '';
     let currentClientExpiryText = '';
     let currentClientRemainingVolume = '';
+    let addCustomPriceRequestSeq = 0;
+    let renewCustomPriceRequestSeq = 0;
     const BASE_COST_DAY = {{ base_cost_day|default(0) }};
     const BASE_COST_GB = {{ base_cost_gb|default(0) }};
     const BASE_COST_DAY_UNLIMITED = {{ base_cost_day_unlimited|default(0) }};
@@ -3479,11 +3481,34 @@
         return daysCost + (vol * BASE_COST_GB);
     }
 
+    async function fetchCustomDynamicPrice(days, volume, serverId) {
+        const params = new URLSearchParams({
+            days: String(Math.max(0, parseInt(days || 0))),
+            volume_gb: String(Math.max(0, parseInt(volume || 0)))
+        });
+        if (serverId) params.set('server_id', String(serverId));
+        const res = await fetch(`/api/packages/min-price?${params.toString()}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok || !data || !data.success) throw new Error(data?.error || 'Pricing failed');
+        return Number(data.min_price || 0);
+    }
+
     function calculateRenewCustomPrice() {
+        let days = parseInt(document.getElementById('renew-custom-days').value) || 0;
+        let vol = parseInt(document.getElementById('renew-custom-volume').value) || 0;
+        if (days < 0) days = 0;
+        if (vol < 0) vol = 0;
         const total = computeRenewCustomPrice();
         const costDisplay = document.getElementById('renew-price-display');
         if (costDisplay) costDisplay.innerText = total.toLocaleString();
         refreshRenewPriceDisplay(total);
+        const seq = ++renewCustomPriceRequestSeq;
+        const serverId = document.getElementById('renew-server-id')?.value || '';
+        fetchCustomDynamicPrice(days, vol, serverId).then(dynamicTotal => {
+            if (seq !== renewCustomPriceRequestSeq || selectedRenewPackageId) return;
+            if (costDisplay) costDisplay.innerText = dynamicTotal.toLocaleString();
+            refreshRenewPriceDisplay(dynamicTotal);
+        }).catch(() => {});
     }
 
     function refreshRenewPriceDisplay(prefetchedAmount) {
@@ -3507,12 +3532,23 @@
     }
 
     function calculateCustomPrice() {
+        let days = parseInt(document.getElementById('custom-days').value) || 0;
+        let vol = parseInt(document.getElementById('custom-volume').value) || 0;
+        if (days < 0) days = 0;
+        if (vol < 0) vol = 0;
         const total = computeAddCustomPrice();
         const preview = document.getElementById('custom-price-display');
         if (preview) preview.innerText = total.toLocaleString();
         if (!selectedPackageId) {
             updateAddPriceDisplay(total);
         }
+        const seq = ++addCustomPriceRequestSeq;
+        const serverId = document.getElementById('add-client-server-select')?.value || '';
+        fetchCustomDynamicPrice(days, vol, serverId).then(dynamicTotal => {
+            if (seq !== addCustomPriceRequestSeq || selectedPackageId) return;
+            if (preview) preview.innerText = dynamicTotal.toLocaleString();
+            updateAddPriceDisplay(dynamicTotal);
+        }).catch(() => {});
     }
 
     function getPackagePrice(containerSelector, packageId) {

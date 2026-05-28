@@ -685,6 +685,11 @@ function renderTiers(body) {
         const r = _resellerCache.find(r => r.id === id);
         return r ? r.username : (id ? `#${id}` : 'Global');
     };
+    const tierResellerNames = tier => {
+        const ids = tier.assigned_reseller_ids || (tier.reseller_id ? [tier.reseller_id] : []);
+        if (!ids.length) return 'Global';
+        return ids.map(id => resellerName(parseInt(id))).join(', ');
+    };
 
     const fmtRange = (mn, mx, unit) => {
         if (mn == null && mx == null) return 'Any';
@@ -716,7 +721,7 @@ function renderTiers(body) {
                 <td>${fmtRange(t.min_days, t.max_days, 'd')}</td>
                 <td>${t.cost_per_gb != null ? Number(t.cost_per_gb).toLocaleString() : '—'}</td>
                 <td>${t.cost_per_day != null ? Number(t.cost_per_day).toLocaleString() : '—'}</td>
-                <td>${escHtml(resellerName(t.reseller_id))}</td>
+                <td>${escHtml(tierResellerNames(t))}</td>
                 <td>${t.priority}</td>
                 <td style="white-space:nowrap;">
                     <button class="action-icon" title="Edit" onclick="startEditTier(${t.id})">
@@ -751,6 +756,13 @@ function openTierModal(tier) {
     sel.innerHTML = '<option value="">— Global —</option>' +
         _resellerCache.map(r => `<option value="${r.id}" ${tier && tier.reseller_id === r.id ? 'selected' : ''}>${escHtml(r.username)}</option>`).join('');
     if (tier && tier.reseller_id) sel.value = tier.reseller_id;
+    sel.multiple = true;
+    sel.size = Math.min(6, Math.max(3, _resellerCache.length || 3));
+    const selectedIds = new Set((tier?.assigned_reseller_ids || (tier?.reseller_id ? [tier.reseller_id] : [])).map(id => parseInt(id)));
+    Array.from(sel.options).forEach(opt => {
+        if (opt.value === '') opt.remove();
+        else opt.selected = selectedIds.has(parseInt(opt.value));
+    });
 
     document.getElementById('tier-modal').classList.remove('hidden');
 }
@@ -774,7 +786,7 @@ async function submitTier() {
         max_days:      document.getElementById('tier-max-days').value !== '' ? parseInt(document.getElementById('tier-max-days').value.replace(/,/g, '')) : null,
         cost_per_gb:   document.getElementById('tier-cpg').value !== '' ? unformatNumber(document.getElementById('tier-cpg').value) : null,
         cost_per_day:  document.getElementById('tier-cpd').value !== '' ? unformatNumber(document.getElementById('tier-cpd').value) : null,
-        reseller_id:   document.getElementById('tier-reseller').value || null,
+        assigned_reseller_ids: Array.from(document.getElementById('tier-reseller').selectedOptions || []).map(opt => parseInt(opt.value)),
         priority:      parseInt(document.getElementById('tier-priority').value) || 0,
         is_active:     document.getElementById('tier-active').checked,
     };

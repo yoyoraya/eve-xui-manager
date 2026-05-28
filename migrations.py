@@ -236,6 +236,16 @@ def fix_database():
         except Exception as e:
             print(f"⚠️  Error creating/updating client_ownerships table: {e}")
 
+        # 10) Ensure dynamic price tiers support multiple resellers
+        try:
+            c.execute("PRAGMA table_info(price_tiers)")
+            cols = {row[1] for row in (c.fetchall() or [])}
+            if cols and 'assigned_reseller_ids' not in cols:
+                c.execute("ALTER TABLE price_tiers ADD COLUMN assigned_reseller_ids TEXT DEFAULT '[]'")
+                print("✅ Column 'price_tiers.assigned_reseller_ids' added.")
+        except Exception as e:
+            print(f"⚠️  Error updating price_tiers table: {e}")
+
         conn.commit()
         conn.close()
         print("\n🚀 Database repair completed! You can now restart your app.")

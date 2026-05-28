@@ -2269,8 +2269,10 @@ class PriceTier(db.Model):
     # Rate overrides (None = fall through to system default)
     cost_per_gb = db.Column(db.Integer, nullable=True)
     cost_per_day = db.Column(db.Integer, nullable=True)
-    # Scope: None = global; set reseller_id for reseller-specific override
+    # Scope: None = global; reseller_id is legacy single-reseller scope.
+    # assigned_reseller_ids stores a JSON list for multi-reseller rules.
     reseller_id = db.Column(db.Integer, nullable=True, index=True)
+    assigned_reseller_ids = db.Column(db.Text, default='[]')
     server_id = db.Column(db.Integer, nullable=True, index=True)
     priority = db.Column(db.Integer, default=0)  # higher = evaluated first
     is_active = db.Column(db.Boolean, default=True)
@@ -2278,6 +2280,12 @@ class PriceTier(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
+        try:
+            assigned = json.loads(self.assigned_reseller_ids or '[]')
+        except Exception:
+            assigned = []
+        if self.reseller_id and self.reseller_id not in assigned:
+            assigned.append(self.reseller_id)
         return {
             'id': self.id,
             'name': self.name,
@@ -2288,6 +2296,7 @@ class PriceTier(db.Model):
             'cost_per_gb': self.cost_per_gb,
             'cost_per_day': self.cost_per_day,
             'reseller_id': self.reseller_id,
+            'assigned_reseller_ids': assigned,
             'server_id': self.server_id,
             'priority': self.priority,
             'is_active': self.is_active,
@@ -3730,6 +3739,18 @@ with app.app_context():
                         _conn.commit()
     except Exception as _pe:
         print(f"Migration error (packages extended columns): {_pe}")
+
+    # Ensure price_tiers supports assigning one dynamic rule to multiple resellers.
+    try:
+        inspector = inspect(db.engine)
+        if 'price_tiers' in set(inspector.get_table_names()):
+            _tier_cols = [c['name'] for c in inspector.get_columns('price_tiers')]
+            if 'assigned_reseller_ids' not in _tier_cols:
+                with db.engine.connect() as _conn:
+                    _conn.execute(text("ALTER TABLE price_tiers ADD COLUMN assigned_reseller_ids TEXT DEFAULT '[]'"))
+                    _conn.commit()
+    except Exception as _te:
+        print(f"Migration error (price_tiers assigned_reseller_ids): {_te}")
 
     # Add inbound_tag to usage_snapshots (older DBs)
     try:
@@ -8287,13 +8308,14 @@ def renew_client(server_id, inbound_id, email):
                 days_to_add = 0
             # 0 days or 0 volume means unlimited; allowed for unlimited users
             
-            base_cost_day = get_config('cost_per_day', 0)
-            base_cost_gb = get_config('cost_per_gb', 0)
-            
-            user_cost_day = calculate_reseller_price(user, base_price=base_cost_day, cost_type='day')
-            user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
-            
-            price = (days_to_add * user_cost_day) + (volume_gb_to_add * user_cost_gb)
+            reseller_context_id = user.id if user.role == 'reseller' else None
+            price, _cpg, _cpd, _tier = _calculate_minimum_price(
+                volume_gb_to_add,
+                days_to_add,
+                reseller_id=reseller_context_id,
+                server_id=server_id,
+                user=user,
+            )
             days_label = f"{days_to_add} Days" if days_to_add > 0 else "Unlimited Days"
             if not volume_provided:
                 vol_label = "Keep Volume"
@@ -9523,18 +9545,14 @@ def add_client(server_id, inbound_id):
         days = int(data.get('days', 30))
         volume_gb = int(data.get('volume', 0))
 
-        base_cost_day = get_config('cost_per_day', 0)
-        base_cost_gb = get_config('cost_per_gb', 0)
-        base_cost_day_unlimited = get_config('cost_per_day_unlimited', 0)
-
-        user_cost_day = calculate_reseller_price(user, base_price=base_cost_day, cost_type='day')
-        user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
-        user_cost_day_unlimited = calculate_reseller_price(user, base_price=base_cost_day_unlimited, cost_type='day')
-
-        if days == 0:
-            price = user_cost_day_unlimited + (volume_gb * user_cost_gb)
-        else:
-            price = (days * user_cost_day) + (volume_gb * user_cost_gb)
+        reseller_context_id = user.id if user.role == 'reseller' else None
+        price, _cpg, _cpd, _tier = _calculate_minimum_price(
+            volume_gb,
+            days,
+            reseller_id=reseller_context_id,
+            server_id=server_id,
+            user=user,
+        )
         days_label = 'Unlimited' if days == 0 else str(days)
         vol_label  = 'Unlimited' if volume_gb == 0 else str(volume_gb)
         description = f"Custom Plan: {days_label} Days, {vol_label} GB - {email}"
@@ -9978,6 +9996,102 @@ def _calculate_minimum_price(volume_gb, days, reseller_id=None, server_id=None):
     return min_price, cpg, cpd
 
 
+def _tier_assigned_reseller_ids(tier):
+    ids = set()
+    if getattr(tier, 'reseller_id', None) is not None:
+        try:
+            ids.add(int(tier.reseller_id))
+        except Exception:
+            pass
+    try:
+        raw_ids = json.loads(tier.assigned_reseller_ids or '[]')
+    except Exception:
+        raw_ids = []
+    for rid in raw_ids if isinstance(raw_ids, list) else []:
+        try:
+            ids.add(int(rid))
+        except Exception:
+            continue
+    return ids
+
+
+def _get_applicable_price_tier(volume_gb, days, reseller_id=None, server_id=None):
+    """Return the best matching active dynamic pricing tier."""
+    volume_gb = float(volume_gb or 0)
+    days = int(days or 0)
+    try:
+        reseller_id = int(reseller_id) if reseller_id not in (None, '', 0, '0') else None
+    except Exception:
+        reseller_id = None
+
+    tiers = (PriceTier.query
+             .filter_by(is_active=True)
+             .order_by(PriceTier.priority.desc(), PriceTier.id.desc())
+             .all())
+
+    best_global = None
+    for tier in tiers:
+        assigned_ids = _tier_assigned_reseller_ids(tier)
+        if assigned_ids:
+            if reseller_id is None or reseller_id not in assigned_ids:
+                continue
+        elif best_global is not None:
+            continue
+
+        if tier.server_id is not None and tier.server_id != server_id:
+            continue
+        if tier.min_volume_gb is not None and volume_gb < tier.min_volume_gb:
+            continue
+        if tier.max_volume_gb is not None and volume_gb >= tier.max_volume_gb:
+            continue
+        if tier.min_days is not None and days < tier.min_days:
+            continue
+        if tier.max_days is not None and days >= tier.max_days:
+            continue
+        if assigned_ids:
+            return tier
+        best_global = tier
+    return best_global
+
+
+def _calculate_minimum_price(volume_gb, days, reseller_id=None, server_id=None, user=None):
+    """Returns (price, cost_per_gb, cost_per_day, matched_tier)."""
+    volume_gb = float(volume_gb or 0)
+    days = int(days or 0)
+    tier = _get_applicable_price_tier(volume_gb, days, reseller_id=reseller_id, server_id=server_id)
+
+    if tier:
+        cpg = int(tier.cost_per_gb or 0)
+        cpd = int(tier.cost_per_day or 0)
+    else:
+        try:
+            cpg = int((db.session.get(SystemConfig, 'cost_per_gb') or SystemConfig()).value or 0)
+        except Exception:
+            cpg = 0
+        try:
+            cpd = int((db.session.get(SystemConfig, 'cost_per_day') or SystemConfig()).value or 0)
+        except Exception:
+            cpd = 0
+        if user is not None:
+            cpg = calculate_reseller_price(user, base_price=cpg, cost_type='gb')
+            cpd = calculate_reseller_price(user, base_price=cpd, cost_type='day')
+
+    if days == 0:
+        if tier:
+            cpd_unlimited = 0
+        else:
+            try:
+                cpd_unlimited = int((db.session.get(SystemConfig, 'cost_per_day_unlimited') or SystemConfig()).value or 0)
+            except Exception:
+                cpd_unlimited = 0
+            if user is not None:
+                cpd_unlimited = calculate_reseller_price(user, base_price=cpd_unlimited, cost_type='day')
+        min_price = int(volume_gb * cpg + cpd_unlimited)
+    else:
+        min_price = int(volume_gb * cpg + days * cpd)
+    return min_price, cpg, cpd, tier
+
+
 @app.route('/api/packages/min-price')
 @login_required
 def package_min_price():
@@ -10004,12 +10118,16 @@ def package_min_price():
     else:
         reseller_id = user.id
 
-    min_price, cpg, cpd = _calculate_minimum_price(volume_gb, days, reseller_id=reseller_id, server_id=server_id)
+    min_price, cpg, cpd, tier = _calculate_minimum_price(
+        volume_gb, days, reseller_id=reseller_id, server_id=server_id, user=user
+    )
     return jsonify({
         'success': True,
         'min_price': min_price,
         'cost_per_gb': cpg,
         'cost_per_day': cpd,
+        'tier_id': tier.id if tier else None,
+        'tier_name': tier.name if tier else None,
     })
 
 
@@ -10020,8 +10138,13 @@ def list_price_tiers():
     q = PriceTier.query
     if reseller_id:
         try:
+            rid = int(reseller_id)
             q = q.filter(
-                db.or_(PriceTier.reseller_id.is_(None), PriceTier.reseller_id == int(reseller_id))
+                db.or_(
+                    PriceTier.reseller_id.is_(None),
+                    PriceTier.reseller_id == rid,
+                    PriceTier.assigned_reseller_ids.like(f'%{rid}%')
+                )
             )
         except Exception:
             pass
@@ -10035,6 +10158,12 @@ def create_price_tier():
     data = request.json or {}
     admin_id = session.get('admin_id')
     try:
+        assigned_ids = data.get('assigned_reseller_ids', data.get('reseller_ids', []))
+        if data.get('reseller_id') and not assigned_ids:
+            assigned_ids = [data.get('reseller_id')]
+        if not isinstance(assigned_ids, list):
+            assigned_ids = []
+        assigned_ids = [int(r) for r in assigned_ids if str(r or '').strip()]
         tier = PriceTier(
             name=str(data.get('name', '')).strip() or 'Tier',
             min_volume_gb=float(data['min_volume_gb']) if data.get('min_volume_gb') not in (None, '') else None,
@@ -10043,7 +10172,8 @@ def create_price_tier():
             max_days=int(data['max_days']) if data.get('max_days') not in (None, '') else None,
             cost_per_gb=int(data['cost_per_gb']) if data.get('cost_per_gb') not in (None, '') else None,
             cost_per_day=int(data['cost_per_day']) if data.get('cost_per_day') not in (None, '') else None,
-            reseller_id=int(data['reseller_id']) if data.get('reseller_id') else None,
+            reseller_id=assigned_ids[0] if len(assigned_ids) == 1 else None,
+            assigned_reseller_ids=json.dumps(assigned_ids),
             server_id=int(data['server_id']) if data.get('server_id') else None,
             priority=int(data.get('priority') or 0),
             is_active=bool(data.get('is_active', True)),
@@ -10075,6 +10205,13 @@ def update_price_tier(tier_id):
                 setattr(tier, _field, int(data[_field]) if data[_field] not in (None, '') else None)
         if 'reseller_id' in data:
             tier.reseller_id = int(data['reseller_id']) if data['reseller_id'] else None
+        if 'assigned_reseller_ids' in data or 'reseller_ids' in data:
+            assigned_ids = data.get('assigned_reseller_ids', data.get('reseller_ids', []))
+            if not isinstance(assigned_ids, list):
+                assigned_ids = []
+            assigned_ids = [int(r) for r in assigned_ids if str(r or '').strip()]
+            tier.assigned_reseller_ids = json.dumps(assigned_ids)
+            tier.reseller_id = assigned_ids[0] if len(assigned_ids) == 1 else None
         if 'server_id' in data:
             tier.server_id = int(data['server_id']) if data['server_id'] else None
         if 'is_active' in data:
