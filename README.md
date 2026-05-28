@@ -2,6 +2,12 @@
 
 A professional web-based monitoring dashboard for multiple X-UI VPN panels with enterprise security features, secure authentication, and comprehensive statistics. Supports unlimited X-UI servers (Sanaei 3X-UI or Alireza X-UI).
 
+## Recommended Deployment
+
+For production and restricted/offline servers, use the Docker deployment. GitHub Actions builds the image and publishes it to GHCR, so the target server does not need GitHub, PyPI, or apt access after the Docker images are transferred.
+
+See [DOCKER.md](DOCKER.md).
+
 un the following command on your Ubuntu/Debian server:
 ## 🚀 Installation (One-Command)
 Run the following command on your Ubuntu/Debian server:

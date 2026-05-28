@@ -1,0 +1,60 @@
+services:
+  app:
+    image: ${EVE_IMAGE:-ghcr.io/yoyoraya/eve-xui-manager:latest}
+    restart: unless-stopped
+    environment:
+      FLASK_ENV: production
+      API_PORT: 5000
+      DATABASE_URL: postgresql://eve_manager:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/eve_manager
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+    volumes:
+      - eve_data:/app/instance
+      - eve_uploads:/app/static/uploads
+      - eve_app_files:/app/static/app-files
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: eve_manager
+      POSTGRES_USER: eve_manager
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eve_manager -d eve_manager"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  eve_data:
+  eve_uploads:
+  eve_app_files:
+  postgres_data:
+  caddy_data:
+  caddy_config:
