@@ -1935,14 +1935,31 @@ def _telegram_get_me(token: str, proxies: dict | None = None, timeout_sec: int =
     return requests.get(url, proxies=proxies, timeout=timeout_sec)
 
 
+TELEGRAM_UPLOAD_CONNECT_TIMEOUT_SECONDS = 30
+TELEGRAM_UPLOAD_READ_TIMEOUT_SECONDS = 600
+TELEGRAM_UPLOAD_RETRIES = 3
+
+
 def _telegram_send_document(token: str, chat_id: str, file_path: str, caption: str | None, proxies: dict | None = None):
     url = f"https://api.telegram.org/bot{token}/sendDocument"
     data = {'chat_id': chat_id}
     if caption:
         data['caption'] = caption
-    with open(file_path, 'rb') as handle:
-        files = {'document': (os.path.basename(file_path), handle)}
-        return requests.post(url, data=data, files=files, proxies=proxies, timeout=(15, 300))
+    timeout = (TELEGRAM_UPLOAD_CONNECT_TIMEOUT_SECONDS, TELEGRAM_UPLOAD_READ_TIMEOUT_SECONDS)
+    last_exc = None
+    for attempt in range(1, TELEGRAM_UPLOAD_RETRIES + 1):
+        try:
+            with open(file_path, 'rb') as handle:
+                files = {'document': (os.path.basename(file_path), handle)}
+                return requests.post(url, data=data, files=files, proxies=proxies, timeout=timeout)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            if attempt >= TELEGRAM_UPLOAD_RETRIES:
+                raise
+            time.sleep(min(2 * attempt, 5))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError('Telegram upload failed')
 
 
 def _build_telegram_backup_caption(server: 'Server', backup_time: datetime) -> str:
