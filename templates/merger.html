@@ -3,42 +3,90 @@
 {% block title %}Merger - Eve Manager{% endblock %}
 {% block page_title %}Merger{% endblock %}
 
+{% block header_actions %}
+<button type="button" class="btn btn-secondary btn-full-mobile" onclick="resetMergerPage()">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+        <path d="M3 3v6h6"></path>
+    </svg>
+    <span class="btn-label">Reset</span>
+</button>
+{% endblock %}
+
 {% block content %}
 <div class="merger-page">
-    <section class="merger-toolbar">
-        <form id="merger-upload-form" class="merger-upload" enctype="multipart/form-data">
-            <label class="merger-file">
-                <input type="file" id="merger-db-file" name="database" accept=".db,.sqlite,.sqlite3,application/octet-stream">
-                <span id="merger-file-name">x-ui database</span>
-            </label>
-            <button type="submit" class="btn btn-primary">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="17 8 12 3 7 8"></polyline>
-                    <line x1="12" y1="3" x2="12" y2="15"></line>
-                </svg>
-                Load
-            </button>
-        </form>
-        <div class="merger-summary" id="merger-summary">
-            <span>0 inbounds</span>
-            <span>0 clients</span>
+    <section class="merger-console">
+        <div class="merger-console-main">
+            <div class="merger-kicker">SQLite inbound workspace</div>
+            <h2>X-UI Inbound Merger</h2>
+            <form id="merger-upload-form" class="merger-upload" enctype="multipart/form-data">
+                <label class="merger-dropzone" id="merger-dropzone">
+                    <input type="file" id="merger-db-file" name="database" accept=".db,.sqlite,.sqlite3,application/octet-stream">
+                    <span class="merger-dropzone-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                            <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path>
+                            <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path>
+                        </svg>
+                    </span>
+                    <span class="merger-file-meta">
+                        <strong id="merger-file-name">Choose database</strong>
+                        <small>.db / .sqlite</small>
+                    </span>
+                </label>
+                <button type="submit" class="btn btn-primary merger-load-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Load Database
+                </button>
+            </form>
+        </div>
+
+        <div class="merger-metrics" id="merger-metrics">
+            <div class="merger-metric">
+                <span>Inbounds</span>
+                <strong id="metric-inbounds">0</strong>
+            </div>
+            <div class="merger-metric">
+                <span>Clients</span>
+                <strong id="metric-clients">0</strong>
+            </div>
+            <div class="merger-metric">
+                <span>Traffic Rows</span>
+                <strong id="metric-traffic">0</strong>
+            </div>
         </div>
     </section>
 
-    <section class="merger-layout">
-        <div class="merger-panel">
-            <div class="merger-panel-header">
-                <h2>Inbounds</h2>
-                <span id="merger-table-note">No database loaded</span>
+    <section class="merger-workbench">
+        <div class="merger-picker">
+            <div class="merger-panel-title">
+                <div>
+                    <span class="merger-kicker">Selection</span>
+                    <h3>Inbounds</h3>
+                </div>
+                <div class="merger-toolbar">
+                    <div class="merger-search">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="merger-search" placeholder="Search remark, port, protocol" oninput="renderMergerInbounds()">
+                    </div>
+                    <span class="merger-selected-pill" id="merger-selected-pill">0 selected</span>
+                </div>
             </div>
-            <div class="merger-table-wrap">
+
+            <div class="merger-table-shell">
                 <table class="merger-table">
                     <thead>
                         <tr>
-                            <th>Select</th>
+                            <th>Merge</th>
                             <th>Base</th>
-                            <th>Remark</th>
+                            <th>Inbound</th>
                             <th>Port</th>
                             <th>Protocol</th>
                             <th>Clients</th>
@@ -47,42 +95,66 @@
                     </thead>
                     <tbody id="merger-inbounds-body">
                         <tr>
-                            <td colspan="7" class="merger-empty">Upload a database.</td>
+                            <td colspan="7">
+                                <div class="merger-empty">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                        <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                                        <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path>
+                                        <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path>
+                                    </svg>
+                                    <h3>No database loaded</h3>
+                                </div>
+                            </td>
                         </tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <aside class="merger-side">
-            <div class="merger-panel">
-                <div class="merger-panel-header">
-                    <h2>Output</h2>
+        <aside class="merger-command">
+            <div class="merger-card">
+                <div class="merger-panel-title compact">
+                    <div>
+                        <span class="merger-kicker">Output</span>
+                        <h3>Merge Target</h3>
+                    </div>
+                    <span class="merger-status-dot" id="merger-ready-dot"></span>
                 </div>
-                <div class="merger-form-grid">
-                    <label>
+
+                <div class="merger-target-card" id="merger-target-card">
+                    <span>Base inbound</span>
+                    <strong id="merger-base-label">-</strong>
+                    <small id="merger-base-meta">Select a row as base</small>
+                </div>
+
+                <div class="merger-fields">
+                    <label class="merger-field">
                         <span>Final Port</span>
-                        <input type="number" id="merger-final-port" min="1" max="65535" placeholder="443">
+                        <input class="form-input" type="number" id="merger-final-port" min="1" max="65535" placeholder="443">
                     </label>
-                    <label>
+                    <label class="merger-field">
                         <span>Final Remark</span>
-                        <input type="text" id="merger-final-remark" placeholder="optional">
+                        <input class="form-input" type="text" id="merger-final-remark" placeholder="optional">
                     </label>
                 </div>
+
                 <button type="button" class="btn btn-primary merger-run-btn" onclick="mergeSelectedInbounds()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M8 7h8"></path>
                         <path d="M8 17h8"></path>
                         <path d="M12 3v18"></path>
                     </svg>
-                    Merge
+                    Merge Inbounds
                 </button>
             </div>
 
-            <div class="merger-panel hidden" id="merger-result">
-                <div class="merger-panel-header">
-                    <h2>Result</h2>
-                    <span id="merger-result-meta"></span>
+            <div class="merger-card hidden" id="merger-result">
+                <div class="merger-panel-title compact">
+                    <div>
+                        <span class="merger-kicker">Ready</span>
+                        <h3>Downloads</h3>
+                    </div>
+                    <span class="merger-result-count" id="merger-result-meta"></span>
                 </div>
                 <div class="merger-downloads">
                     <a class="btn btn-secondary" id="merger-db-download" href="#">
@@ -97,13 +169,13 @@
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                             <polyline points="14 2 14 8 20 8"></polyline>
-                            <line x1="12" y1="18" x2="12" y2="12"></line>
-                            <line x1="9" y1="15" x2="15" y2="15"></line>
+                            <path d="M12 12v6"></path>
+                            <path d="M9 15h6"></path>
                         </svg>
-                        Export
+                        Inbound Export
                     </a>
                 </div>
-                <div id="merger-duplicates" class="merger-duplicates hidden"></div>
+                <div id="merger-duplicates" class="merger-renames hidden"></div>
             </div>
         </aside>
     </section>
@@ -112,141 +184,397 @@
 <style>
     .merger-page {
         display: grid;
-        gap: 16px;
+        gap: 18px;
     }
 
-    .merger-toolbar,
-    .merger-panel {
+    .merger-console,
+    .merger-picker,
+    .merger-card {
+        border: 1px solid var(--border-color);
         background: var(--bg-card);
+        border-radius: 8px;
+        box-shadow: var(--shadow);
+    }
+
+    .merger-console {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 0.55fr);
+        gap: 18px;
+        padding: 18px;
+        overflow: hidden;
+    }
+
+    .merger-console-main {
+        display: grid;
+        gap: 12px;
+        align-content: center;
+        min-width: 0;
+    }
+
+    .merger-console-main h2,
+    .merger-panel-title h3 {
+        margin: 0;
+        color: var(--text-primary);
+        letter-spacing: 0;
+    }
+
+    .merger-console-main h2 {
+        font-size: 1.45rem;
+        line-height: 1.2;
+    }
+
+    .merger-kicker {
+        display: block;
+        color: var(--primary);
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 2px;
+    }
+
+    .merger-upload {
+        display: flex;
+        gap: 10px;
+        align-items: stretch;
+        flex-wrap: wrap;
+    }
+
+    .merger-dropzone {
+        min-height: 60px;
+        min-width: min(420px, 100%);
+        flex: 1 1 360px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border: 1px dashed rgba(99, 102, 241, 0.55);
+        background: var(--bg-dark);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: border-color 0.2s, background 0.2s;
+    }
+
+    .merger-dropzone:hover,
+    .merger-dropzone.dragover {
+        border-color: var(--primary);
+        background: rgba(99, 102, 241, 0.10);
+    }
+
+    .merger-dropzone input {
+        display: none;
+    }
+
+    .merger-dropzone-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(99, 102, 241, 0.16);
+        color: var(--primary);
+        flex-shrink: 0;
+    }
+
+    .merger-file-meta {
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+    }
+
+    .merger-file-meta strong {
+        color: var(--text-primary);
+        font-size: 0.95rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .merger-file-meta small,
+    .merger-field span,
+    .merger-target-card span,
+    .merger-target-card small {
+        color: var(--text-secondary);
+        font-size: 0.78rem;
+    }
+
+    .merger-load-btn {
+        min-height: 60px;
+    }
+
+    .merger-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .merger-metric {
+        min-height: 86px;
+        padding: 14px;
         border: 1px solid var(--border-color);
         border-radius: 8px;
+        background: var(--bg-dark);
+        display: grid;
+        align-content: space-between;
+    }
+
+    .merger-metric span {
+        color: var(--text-secondary);
+        font-size: 0.76rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .merger-metric strong {
+        color: var(--text-primary);
+        font-size: 1.55rem;
+        line-height: 1;
+    }
+
+    .merger-workbench {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 18px;
+        align-items: start;
+    }
+
+    .merger-picker,
+    .merger-card {
+        overflow: hidden;
+    }
+
+    .merger-command {
+        display: grid;
+        gap: 16px;
+        position: sticky;
+        top: 86px;
+    }
+
+    .merger-panel-title {
+        min-height: 68px;
+        padding: 16px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+    }
+
+    .merger-panel-title.compact {
+        min-height: 58px;
+    }
+
+    .merger-panel-title h3 {
+        font-size: 1.02rem;
     }
 
     .merger-toolbar {
         display: flex;
-        justify-content: space-between;
-        gap: 12px;
         align-items: center;
-        padding: 14px;
-    }
-
-    .merger-upload,
-    .merger-summary,
-    .merger-downloads {
-        display: flex;
-        align-items: center;
+        justify-content: flex-end;
         gap: 10px;
         flex-wrap: wrap;
+        min-width: 280px;
     }
 
-    .merger-file {
+    .merger-search {
+        height: 38px;
         min-width: 260px;
         display: flex;
         align-items: center;
-        min-height: 42px;
-        padding: 0 12px;
-        border: 1px dashed var(--border-color);
+        gap: 8px;
+        padding: 0 10px;
+        border: 1px solid var(--border-color);
         border-radius: 8px;
+        background: var(--bg-dark);
         color: var(--text-secondary);
-        cursor: pointer;
     }
 
-    .merger-file input {
-        display: none;
+    .merger-search input {
+        width: 100%;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 0.86rem;
     }
 
-    .merger-summary span,
-    .merger-panel-header span,
-    .merger-status,
-    .merger-duplicates {
-        color: var(--text-secondary);
-        font-size: 0.85rem;
-    }
-
-    .merger-layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 320px;
-        gap: 16px;
-        align-items: start;
-    }
-
-    .merger-panel {
-        overflow: hidden;
-    }
-
-    .merger-panel-header {
-        min-height: 54px;
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--border-color);
-        display: flex;
+    .merger-selected-pill,
+    .merger-result-count {
+        min-height: 28px;
+        display: inline-flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-    }
-
-    .merger-panel-header h2 {
-        margin: 0;
-        font-size: 1rem;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(99, 102, 241, 0.14);
+        color: var(--primary);
+        border: 1px solid rgba(99, 102, 241, 0.30);
+        font-size: 0.78rem;
         font-weight: 700;
+        white-space: nowrap;
     }
 
-    .merger-table-wrap {
+    .merger-table-shell {
         overflow-x: auto;
     }
 
     .merger-table {
         width: 100%;
+        min-width: 760px;
         border-collapse: collapse;
-        min-width: 720px;
     }
 
     .merger-table th,
     .merger-table td {
-        padding: 12px 14px;
+        padding: 13px 14px;
         border-bottom: 1px solid var(--border-color);
         text-align: left;
         white-space: nowrap;
+        vertical-align: middle;
     }
 
     .merger-table th {
         color: var(--text-secondary);
-        font-size: 0.78rem;
+        font-size: 0.72rem;
         text-transform: uppercase;
-        font-weight: 600;
+        font-weight: 700;
+    }
+
+    .merger-table tbody tr {
+        transition: background 0.15s;
+    }
+
+    .merger-table tbody tr:hover,
+    .merger-table tbody tr.is-selected {
+        background: rgba(99, 102, 241, 0.08);
+    }
+
+    .merger-inbound-name {
+        display: grid;
+        gap: 2px;
+        min-width: 220px;
+    }
+
+    .merger-inbound-name strong {
+        color: var(--text-primary);
+        font-size: 0.92rem;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .merger-inbound-name small {
+        color: var(--text-secondary);
+        font-size: 0.72rem;
+    }
+
+    .merger-radio,
+    .merger-check {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--primary);
+        cursor: pointer;
+    }
+
+    .merger-badge {
+        min-height: 26px;
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-dark);
+        color: var(--text-secondary);
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .merger-badge.protocol {
+        color: var(--primary);
+        border-color: rgba(99, 102, 241, 0.35);
+        background: rgba(99, 102, 241, 0.12);
+    }
+
+    .merger-badge.enabled {
+        color: var(--success);
+        border-color: rgba(34, 197, 94, 0.32);
+        background: rgba(34, 197, 94, 0.10);
+    }
+
+    .merger-badge.disabled {
+        color: var(--danger);
+        border-color: rgba(239, 68, 68, 0.32);
+        background: rgba(239, 68, 68, 0.10);
     }
 
     .merger-empty {
-        color: var(--text-secondary);
-        text-align: center;
-        height: 120px;
-    }
-
-    .merger-side {
+        min-height: 260px;
         display: grid;
-        gap: 16px;
+        place-items: center;
+        align-content: center;
+        gap: 10px;
+        color: var(--text-secondary);
     }
 
-    .merger-form-grid {
+    .merger-empty h3 {
+        margin: 0;
+        color: var(--text-primary);
+        font-size: 1rem;
+    }
+
+    .merger-empty svg {
+        color: var(--primary);
+        opacity: 0.9;
+    }
+
+    .merger-target-card {
+        margin: 16px;
+        padding: 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--bg-dark);
+        display: grid;
+        gap: 4px;
+    }
+
+    .merger-target-card strong {
+        color: var(--text-primary);
+        font-size: 1rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .merger-status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--text-secondary);
+        box-shadow: 0 0 0 5px rgba(148, 163, 184, 0.10);
+    }
+
+    .merger-status-dot.ready {
+        background: var(--success);
+        box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.12);
+    }
+
+    .merger-fields {
+        padding: 0 16px 16px;
         display: grid;
         gap: 12px;
-        padding: 16px;
     }
 
-    .merger-form-grid label {
+    .merger-field {
         display: grid;
         gap: 7px;
-        color: var(--text-secondary);
-        font-size: 0.82rem;
     }
 
-    .merger-form-grid input {
+    .merger-field input {
         width: 100%;
         min-height: 42px;
-        border: 1px solid var(--border-color);
-        background: var(--bg-input, var(--bg-card-hover));
-        color: var(--text-primary);
-        border-radius: 8px;
-        padding: 0 12px;
     }
 
     .merger-run-btn {
@@ -255,42 +583,78 @@
         justify-content: center;
     }
 
-    .merger-downloads,
-    .merger-duplicates {
+    .merger-downloads {
         padding: 16px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
     }
 
-    .merger-duplicates {
-        border-top: 1px solid var(--border-color);
+    .merger-downloads .btn {
+        justify-content: center;
+    }
+
+    .merger-renames {
+        margin: 0 16px 16px;
+        padding: 12px;
         display: grid;
         gap: 8px;
+        border: 1px solid rgba(245, 158, 11, 0.28);
+        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.08);
+        color: var(--text-secondary);
+        font-size: 0.82rem;
     }
 
-    .merger-duplicates.hidden,
+    .merger-renames strong {
+        color: var(--warning);
+    }
+
+    .merger-renames code {
+        color: var(--text-primary);
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 2px 6px;
+    }
+
     .hidden {
-        display: none;
+        display: none !important;
     }
 
-    .merger-status.enabled {
-        color: var(--success-color, #22c55e);
-    }
-
-    .merger-status.disabled {
-        color: var(--danger-color, #ef4444);
-    }
-
-    @media (max-width: 1000px) {
-        .merger-layout {
+    @media (max-width: 1120px) {
+        .merger-console,
+        .merger-workbench {
             grid-template-columns: 1fr;
         }
 
-        .merger-toolbar {
+        .merger-command {
+            position: static;
+        }
+    }
+
+    @media (max-width: 720px) {
+        .merger-console {
+            padding: 14px;
+        }
+
+        .merger-metrics {
+            grid-template-columns: 1fr;
+        }
+
+        .merger-panel-title {
             align-items: stretch;
             flex-direction: column;
         }
 
-        .merger-file {
+        .merger-toolbar,
+        .merger-search {
+            width: 100%;
             min-width: 0;
+        }
+
+        .merger-load-btn,
+        .merger-upload {
             width: 100%;
         }
     }
@@ -301,19 +665,47 @@
 <script nonce="{{ csp_nonce }}">
     let mergerJobId = null;
     let mergerInbounds = [];
+    const selectedInboundIds = new Set();
+    let baseInboundId = null;
 
-    document.getElementById('merger-db-file').addEventListener('change', (event) => {
+    const fileInput = document.getElementById('merger-db-file');
+    const dropzone = document.getElementById('merger-dropzone');
+
+    fileInput.addEventListener('change', (event) => {
         const file = event.target.files && event.target.files[0];
-        document.getElementById('merger-file-name').textContent = file ? file.name : 'x-ui database';
+        document.getElementById('merger-file-name').textContent = file ? file.name : 'Choose database';
+    });
+
+    ['dragenter', 'dragover'].forEach((name) => {
+        dropzone.addEventListener(name, (event) => {
+            event.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+    });
+
+    ['dragleave', 'drop'].forEach((name) => {
+        dropzone.addEventListener(name, (event) => {
+            event.preventDefault();
+            dropzone.classList.remove('dragover');
+        });
+    });
+
+    dropzone.addEventListener('drop', (event) => {
+        const file = event.dataTransfer?.files?.[0];
+        if (!file) return;
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        fileInput.files = transfer.files;
+        document.getElementById('merger-file-name').textContent = file.name;
     });
 
     document.getElementById('merger-upload-form').addEventListener('submit', async (event) => {
         event.preventDefault();
-        const fileInput = document.getElementById('merger-db-file');
         if (!fileInput.files || !fileInput.files[0]) {
             showToast('Select a database file', 'error');
             return;
         }
+
         const form = new FormData();
         form.append('database', fileInput.files[0]);
         showLoading();
@@ -323,7 +715,12 @@
             if (!resp.ok || !data.success) throw new Error(data.error || 'Analyze failed');
             mergerJobId = data.job_id;
             mergerInbounds = data.inbounds || [];
+            selectedInboundIds.clear();
+            mergerInbounds.slice(0, 2).forEach((item) => selectedInboundIds.add(Number(item.id)));
+            baseInboundId = mergerInbounds[0] ? Number(mergerInbounds[0].id) : null;
+            if (mergerInbounds[0]?.port) document.getElementById('merger-final-port').value = mergerInbounds[0].port;
             renderMergerInbounds();
+            updateMergerSummary();
             showToast('Database loaded');
         } catch (error) {
             showToast(error.message || 'Database load failed', 'error');
@@ -334,38 +731,103 @@
 
     function renderMergerInbounds() {
         const body = document.getElementById('merger-inbounds-body');
-        const note = document.getElementById('merger-table-note');
-        const summary = document.getElementById('merger-summary');
-        const totalClients = mergerInbounds.reduce((sum, item) => sum + Number(item.client_count || 0), 0);
-        summary.innerHTML = `<span>${mergerInbounds.length} inbounds</span><span>${totalClients} clients</span>`;
-        note.textContent = mergerInbounds.length ? 'Ready' : 'No inbounds found';
-        document.getElementById('merger-result').classList.add('hidden');
+        const search = (document.getElementById('merger-search').value || '').trim().toLowerCase();
+        const visible = mergerInbounds.filter((item) => {
+            const haystack = `${item.remark || ''} ${item.port || ''} ${item.protocol || ''}`.toLowerCase();
+            return !search || haystack.includes(search);
+        });
 
         if (!mergerInbounds.length) {
-            body.innerHTML = '<tr><td colspan="7" class="merger-empty">No inbounds found.</td></tr>';
+            body.innerHTML = `
+                <tr>
+                    <td colspan="7">
+                        <div class="merger-empty">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                                <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path>
+                                <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path>
+                            </svg>
+                            <h3>No database loaded</h3>
+                        </div>
+                    </td>
+                </tr>`;
+            updateMergerSelectionMeta();
             return;
         }
 
-        body.innerHTML = mergerInbounds.map((item, index) => {
-            const checked = index < 2 ? 'checked' : '';
-            const baseChecked = index === 0 ? 'checked' : '';
+        if (!visible.length) {
+            body.innerHTML = '<tr><td colspan="7"><div class="merger-empty"><h3>No matching inbounds</h3></div></td></tr>';
+            updateMergerSelectionMeta();
+            return;
+        }
+
+        body.innerHTML = visible.map((item) => {
+            const id = Number(item.id);
+            const checked = selectedInboundIds.has(id) ? 'checked' : '';
+            const baseChecked = baseInboundId === id ? 'checked' : '';
             const statusClass = item.enable ? 'enabled' : 'disabled';
             const statusText = item.enable ? 'Enabled' : 'Disabled';
+            const selectedClass = selectedInboundIds.has(id) ? 'is-selected' : '';
             return `
-                <tr>
-                    <td><input type="checkbox" class="merger-select" value="${item.id}" ${checked}></td>
-                    <td><input type="radio" name="merger-base" class="merger-base" value="${item.id}" ${baseChecked}></td>
-                    <td>${escapeMergerHtml(item.remark || '-')}</td>
-                    <td>${escapeMergerHtml(String(item.port ?? '-'))}</td>
-                    <td>${escapeMergerHtml(item.protocol || '-')}</td>
-                    <td>${Number(item.client_count || 0)}</td>
-                    <td><span class="merger-status ${statusClass}">${statusText}</span></td>
+                <tr class="${selectedClass}" data-inbound-id="${id}">
+                    <td><input type="checkbox" class="merger-check merger-select" value="${id}" ${checked} onchange="toggleMergerSelected(${id}, this.checked)"></td>
+                    <td><input type="radio" name="merger-base" class="merger-radio merger-base" value="${id}" ${baseChecked} onchange="setMergerBase(${id})"></td>
+                    <td>
+                        <div class="merger-inbound-name">
+                            <strong title="${escapeMergerHtml(item.remark || '-')}">${escapeMergerHtml(item.remark || '-')}</strong>
+                            <small>ID ${id} · ${formatBytes(Number(item.up || 0) + Number(item.down || 0))} used</small>
+                        </div>
+                    </td>
+                    <td><span class="merger-badge">${escapeMergerHtml(String(item.port ?? '-'))}</span></td>
+                    <td><span class="merger-badge protocol">${escapeMergerHtml(item.protocol || '-')}</span></td>
+                    <td><span class="merger-badge">${Number(item.client_count || 0)}</span></td>
+                    <td><span class="merger-badge ${statusClass}">${statusText}</span></td>
                 </tr>
             `;
         }).join('');
+        updateMergerSelectionMeta();
+    }
 
-        const firstPort = mergerInbounds[0]?.port;
-        if (firstPort) document.getElementById('merger-final-port').value = firstPort;
+    function toggleMergerSelected(id, isChecked) {
+        if (isChecked) {
+            selectedInboundIds.add(Number(id));
+            if (!baseInboundId) baseInboundId = Number(id);
+        } else {
+            selectedInboundIds.delete(Number(id));
+            if (baseInboundId === Number(id)) {
+                baseInboundId = selectedInboundIds.size ? Array.from(selectedInboundIds)[0] : null;
+            }
+        }
+        renderMergerInbounds();
+    }
+
+    function setMergerBase(id) {
+        baseInboundId = Number(id);
+        selectedInboundIds.add(Number(id));
+        const item = mergerInbounds.find((row) => Number(row.id) === baseInboundId);
+        if (item?.port) document.getElementById('merger-final-port').value = item.port;
+        renderMergerInbounds();
+    }
+
+    function updateMergerSummary() {
+        const totalClients = mergerInbounds.reduce((sum, item) => sum + Number(item.client_count || 0), 0);
+        const totalTrafficRows = mergerInbounds.reduce((sum, item) => sum + Number(item.traffic_rows || 0), 0);
+        document.getElementById('metric-inbounds').textContent = mergerInbounds.length.toLocaleString();
+        document.getElementById('metric-clients').textContent = totalClients.toLocaleString();
+        document.getElementById('metric-traffic').textContent = totalTrafficRows.toLocaleString();
+    }
+
+    function updateMergerSelectionMeta() {
+        const pill = document.getElementById('merger-selected-pill');
+        const readyDot = document.getElementById('merger-ready-dot');
+        const baseItem = mergerInbounds.find((item) => Number(item.id) === Number(baseInboundId));
+        pill.textContent = `${selectedInboundIds.size} selected`;
+        readyDot.classList.toggle('ready', selectedInboundIds.size >= 2 && !!baseItem);
+
+        document.getElementById('merger-base-label').textContent = baseItem ? (baseItem.remark || `Inbound ${baseItem.id}`) : '-';
+        document.getElementById('merger-base-meta').textContent = baseItem
+            ? `ID ${baseItem.id} · port ${baseItem.port ?? '-'} · ${baseItem.protocol || '-'}`
+            : 'Select a row as base';
     }
 
     async function mergeSelectedInbounds() {
@@ -373,15 +835,14 @@
             showToast('Load a database first', 'error');
             return;
         }
-        const selected = Array.from(document.querySelectorAll('.merger-select:checked')).map(el => Number(el.value));
-        const base = document.querySelector('.merger-base:checked');
+        const selected = Array.from(selectedInboundIds);
         const finalPort = Number(document.getElementById('merger-final-port').value || 0);
         const remark = document.getElementById('merger-final-remark').value.trim();
         if (selected.length < 2) {
             showToast('Select at least two inbounds', 'error');
             return;
         }
-        if (!base || !selected.includes(Number(base.value))) {
+        if (!baseInboundId || !selected.includes(Number(baseInboundId))) {
             showToast('Base inbound must be selected', 'error');
             return;
         }
@@ -398,7 +859,7 @@
                 body: JSON.stringify({
                     job_id: mergerJobId,
                     inbound_ids: selected,
-                    base_inbound_id: Number(base.value),
+                    base_inbound_id: Number(baseInboundId),
                     final_port: finalPort,
                     remark
                 })
@@ -417,7 +878,7 @@
     function showMergerResult(data) {
         const panel = document.getElementById('merger-result');
         panel.classList.remove('hidden');
-        document.getElementById('merger-result-meta').textContent = `${data.client_count || 0} clients | port ${data.final_port}`;
+        document.getElementById('merger-result-meta').textContent = `${data.client_count || 0} clients`;
         document.getElementById('merger-db-download').href = data.downloads?.database || '#';
         document.getElementById('merger-export-download').href = data.downloads?.inbound_export || '#';
 
@@ -429,9 +890,39 @@
             return;
         }
         box.classList.remove('hidden');
-        box.innerHTML = dup.map(item => (
-            `<div>${escapeMergerHtml(item.original)} -> ${escapeMergerHtml(item.renamed)} <span>(inbound ${item.inbound_id})</span></div>`
-        )).join('');
+        box.innerHTML = [
+            `<strong>${dup.length} renamed duplicate${dup.length > 1 ? 's' : ''}</strong>`,
+            ...dup.map(item => (
+                `<div><code>${escapeMergerHtml(item.original)}</code> -> <code>${escapeMergerHtml(item.renamed)}</code></div>`
+            ))
+        ].join('');
+    }
+
+    function resetMergerPage() {
+        mergerJobId = null;
+        mergerInbounds = [];
+        selectedInboundIds.clear();
+        baseInboundId = null;
+        fileInput.value = '';
+        document.getElementById('merger-file-name').textContent = 'Choose database';
+        document.getElementById('merger-search').value = '';
+        document.getElementById('merger-final-port').value = '';
+        document.getElementById('merger-final-remark').value = '';
+        document.getElementById('merger-result').classList.add('hidden');
+        updateMergerSummary();
+        renderMergerInbounds();
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes || bytes <= 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let value = bytes;
+        let index = 0;
+        while (value >= 1024 && index < units.length - 1) {
+            value /= 1024;
+            index += 1;
+        }
+        return `${value.toFixed(index ? 1 : 0)} ${units[index]}`;
     }
 
     function escapeMergerHtml(value) {
