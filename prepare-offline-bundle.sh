@@ -102,6 +102,7 @@ Usage:
 Environment:
   EVE_OFFLINE_TARGETS="focal jammy noble"   Ubuntu 20.04/22.04/24.04
   EVE_OFFLINE_ARCH="amd64"                  Target architecture
+  EVE_DOCKER_IMAGE_PREFIX=""                Optional registry prefix, e.g. mirror.local/library/
   PBS_URL="https://..."                     Override Python standalone runtime URL
 
 Output:
@@ -280,12 +281,34 @@ download_python_runtime() {
 }
 
 ubuntu_image_for_codename() {
+    local prefix="${EVE_DOCKER_IMAGE_PREFIX:-}"
     case "$1" in
-        focal) echo "ubuntu:20.04" ;;
-        jammy) echo "ubuntu:22.04" ;;
-        noble) echo "ubuntu:24.04" ;;
+        focal) echo "${prefix}ubuntu:20.04" ;;
+        jammy) echo "${prefix}ubuntu:22.04" ;;
+        noble) echo "${prefix}ubuntu:24.04" ;;
         *) print_error "Unsupported Ubuntu codename: $1"; exit 1 ;;
     esac
+}
+
+docker_pull_with_retry() {
+    local image="$1"
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            return 0
+        fi
+        print_warning "Pulling Docker image ($attempt/5): $image"
+        if docker pull "$image"; then
+            return 0
+        fi
+        sleep $((attempt * 5))
+    done
+
+    print_error "Failed to pull Docker image: $image"
+    print_warning "Docker Hub may be temporarily unavailable or blocked."
+    print_warning "Try again later, pre-pull the image manually, or set EVE_DOCKER_IMAGE_PREFIX to a registry mirror."
+    print_warning "Example: EVE_DOCKER_IMAGE_PREFIX='docker.mirror.example/library/' bash prepare-offline-bundle.sh --profile profile.txt ."
+    exit 1
 }
 
 download_apt_with_docker() {
@@ -298,6 +321,7 @@ download_apt_with_docker() {
     packages="${APT_PACKAGES[*]}"
 
     print_header "Downloading apt packages for $codename / $TARGET_ARCH"
+    docker_pull_with_retry "$image"
     docker run --rm --platform "linux/$TARGET_ARCH" \
         -v "$out_dir:/out" \
         "$image" \
