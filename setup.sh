@@ -348,6 +348,7 @@ validate_offline_deb_bundle() {
     local deb_dir="$1"
     local codename="$2"
     local max_libc=""
+    local packages_file conflicts_found=0
 
     case "$codename" in
         focal) max_libc="2.31" ;;
@@ -361,9 +362,12 @@ validate_offline_deb_bundle() {
         return 0
     fi
 
+    packages_file="$(mktemp /tmp/eve-offline-packages.XXXXXX)"
+    : > "$packages_file"
     local deb deps req bad=0
     for deb in "$deb_dir"/*.deb; do
         [ -f "$deb" ] || continue
+        dpkg-deb -f "$deb" Package 2>/dev/null >> "$packages_file" || true
         deps="$(dpkg-deb -f "$deb" Depends Pre-Depends 2>/dev/null || true)"
         req="$(printf '%s\n' "$deps" | grep -oE 'libc6 \(\>= [0-9][^)]+\)' | sed -E 's/.*>= ([^)]+)\).*/\1/' | sort -V | tail -1 || true)"
         if [ -n "$req" ] && dpkg --compare-versions "$req" gt "$max_libc"; then
@@ -371,6 +375,35 @@ validate_offline_deb_bundle() {
             bad=1
         fi
     done
+    sort -u "$packages_file" -o "$packages_file"
+
+    check_conflict_group() {
+        local label="$1"; shift
+        local found=()
+        local pkg
+        for pkg in "$@"; do
+            if grep -qx "$pkg" "$packages_file"; then
+                found+=("$pkg")
+            fi
+        done
+        if [ "${#found[@]}" -gt 1 ]; then
+            print_error "Conflicting packages in offline bundle ($label): ${found[*]}"
+            conflicts_found=1
+        fi
+    }
+
+    check_conflict_group "make" make make-guile
+    check_conflict_group "nginx flavor" nginx-core nginx-light nginx-extras nginx-full
+
+    rm -f "$packages_file"
+
+    if [ "$conflicts_found" -ne 0 ]; then
+        print_error "This offline apt bundle was built with the old dependency collector and contains mutually exclusive packages."
+        print_warning "Rebuild the bundle with the latest prepare-offline-bundle.sh. Do not reuse the old offline/apt folder."
+        print_warning "  rm -rf offline/apt/${codename}-amd64"
+        print_warning "  bash prepare-offline-bundle.sh --profile /path/to/eve-offline-profile.txt ."
+        return 1
+    fi
 
     if [ "$bad" -ne 0 ]; then
         print_error "This offline apt bundle was built for a newer Ubuntu release or contains stale mixed packages."

@@ -6,6 +6,15 @@ This folder is populated by:
 bash prepare-offline-bundle.sh .
 ```
 
+If an older bundle produced apt conflicts such as `make` vs `make-guile` or
+multiple nginx flavors, remove the target apt folder and rebuild with the latest
+builder:
+
+```bash
+rm -rf offline/apt/jammy-amd64
+bash prepare-offline-bundle.sh --profile /path/to/eve-offline-profile.txt .
+```
+
 The generated bundle is intentionally not committed to git because it contains
 large distro-specific `.deb` files, Python wheels, and a portable Python runtime.
 

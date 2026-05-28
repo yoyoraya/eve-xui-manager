@@ -66,6 +66,18 @@ chmod +x prepare-offline-bundle.sh
 bash prepare-offline-bundle.sh --profile /path/to/eve-offline-profile.txt .
 ```
 
+If you previously built a bundle and saw conflicts such as `make` vs
+`make-guile` or multiple nginx flavors (`nginx-core`, `nginx-light`,
+`nginx-extras`), delete the old apt folder before rebuilding:
+
+```bash
+rm -rf offline/apt/jammy-amd64
+bash prepare-offline-bundle.sh --profile /path/to/eve-offline-profile.txt .
+```
+
+The builder uses apt's own resolver with `--download-only`, so the bundle keeps
+only the package choices that Ubuntu would actually install.
+
 Generic all-target flow:
 
 ```bash

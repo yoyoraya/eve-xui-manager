@@ -328,18 +328,11 @@ download_apt_with_docker() {
         bash -lc "set -euo pipefail
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            resolved=\$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances $packages \
-              | awk '/^[[:alnum:]][^< ]/ { print \$1 }' | sort -u)
-            downloadable=''
-            for pkg in \$resolved; do
-              if apt-cache show \"\$pkg\" >/dev/null 2>&1; then
-                downloadable=\"\$downloadable \$pkg\"
-              fi
-            done
-            printf '%s\n' \$downloadable | tr ' ' '\n' | sed '/^$/d' | sort -u > /out/package-list.txt
-            cd /tmp
-            apt-get download \$downloadable
-            cp -v ./*.deb /out/
+            apt-get install -y --download-only --no-install-recommends $packages
+            find /var/cache/apt/archives -maxdepth 1 -type f -name '*.deb' -exec cp -v {} /out/ \\;
+            for deb in /out/*.deb; do
+              dpkg-deb -f \"\$deb\" Package
+            done | sort -u > /out/package-list.txt
         "
 
     local count
@@ -370,19 +363,18 @@ download_apt_for_current_host() {
     out_dir="$OFFLINE_DIR/apt/${codename}-${TARGET_ARCH}"
     rm -rf "$out_dir"
     mkdir -p "$out_dir"
+    mkdir -p "$out_dir/partial"
     print_warning "Docker not found. Downloading only for current host: $codename"
     sudo apt-get update
-    local resolved downloadable pkg
-    resolved="$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "${APT_PACKAGES[@]}" \
-        | awk '/^[[:alnum:]][^< ]/ { print $1 }' | sort -u)"
-    downloadable=()
-    for pkg in $resolved; do
-        if apt-cache show "$pkg" >/dev/null 2>&1; then
-            downloadable+=("$pkg")
-        fi
-    done
-    printf '%s\n' "${downloadable[@]}" > "$out_dir/package-list.txt"
-    (cd "$out_dir" && apt-get download "${downloadable[@]}")
+    sudo apt-get install -y --download-only --no-install-recommends \
+        -o Dir::Cache::archives="$out_dir" \
+        "${APT_PACKAGES[@]}"
+    rm -rf "$out_dir/partial" "$out_dir/lock"
+    local deb
+    for deb in "$out_dir"/*.deb; do
+        [ -f "$deb" ] || continue
+        dpkg-deb -f "$deb" Package
+    done | sort -u > "$out_dir/package-list.txt"
 }
 
 download_apt_packages() {
