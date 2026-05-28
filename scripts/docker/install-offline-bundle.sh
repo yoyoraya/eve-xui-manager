@@ -51,6 +51,26 @@ if ! docker compose version >/dev/null 2>&1; then
     exit 1
 fi
 
+install_eve_cli() {
+    local src="./eve"
+    local dst="/usr/local/bin/eve"
+    local cfg="/etc/eve-docker.conf"
+
+    if [ -f "$src" ]; then
+        cp "$src" "$dst"
+        chmod +x "$dst"
+        cat > "$cfg" <<EOF
+INSTALL_DIR=$(pwd)
+COMPOSE_FILE=$(pwd)/docker-compose.yml
+ENV_FILE=$(pwd)/.env
+EOF
+        chmod 644 "$cfg"
+        echo "OK: installed eve CLI to $dst"
+    else
+        echo "WARN: eve CLI not found next to install.sh (skipping)" >&2
+    fi
+}
+
 write_caddyfile() {
     local ssl_mode="$1"
 
@@ -146,6 +166,8 @@ fi
 
 echo "-- Starting Eve"
 docker compose up -d
+
+install_eve_cli
 
 echo
 echo "OK: Eve is starting."

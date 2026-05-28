@@ -80,6 +80,12 @@ sudo bash install.sh
 
 The installer asks for the domain/IP, email, PostgreSQL password, and initial admin credentials, then starts Eve with Docker Compose.
 
+After install, run `eve` for a simple interactive menu (set domain, choose SSL mode, view status/logs):
+
+```bash
+sudo eve
+```
+
 The target server only needs Docker Engine and the Docker Compose plugin. The app itself does not depend on the target Ubuntu package versions, so Ubuntu 20.04, 22.04, and 24.04 on amd64 are supported.
 
 ### Manual Image Export

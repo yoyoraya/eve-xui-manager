@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INSTALL_DIR_DEFAULT="/opt/eve-docker"
+CONFIG_FILE="/etc/eve-docker.conf"
+
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$CONFIG_FILE"
+fi
+
+INSTALL_DIR="${INSTALL_DIR:-$INSTALL_DIR_DEFAULT}"
+COMPOSE_FILE="${COMPOSE_FILE:-$INSTALL_DIR/docker-compose.yml}"
+ENV_FILE="${ENV_FILE:-$INSTALL_DIR/.env}"
+
+need_cmd() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "ERR: '$1' is required." >&2
+        exit 1
+    fi
+}
+
+write_caddyfile() {
+    local ssl_mode="$1"
+    local out_dir="$INSTALL_DIR/docker"
+    mkdir -p "$out_dir"
+
+    case "$ssl_mode" in
+        letsencrypt)
+            cat > "$out_dir/Caddyfile" <<'EOF'
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$DOMAIN} {
+    encode gzip zstd
+    reverse_proxy app:5000
+}
+EOF
+            ;;
+        internal)
+            cat > "$out_dir/Caddyfile" <<'EOF'
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$DOMAIN} {
+    tls internal
+    encode gzip zstd
+    reverse_proxy app:5000
+}
+EOF
+            ;;
+        http)
+            cat > "$out_dir/Caddyfile" <<'EOF'
+{
+    auto_https off
+}
+
+http://{$DOMAIN} {
+    encode gzip zstd
+    reverse_proxy app:5000
+}
+EOF
+            ;;
+        *)
+            echo "ERR: invalid SSL_MODE: $ssl_mode (use: letsencrypt | internal | http)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+read_env() {
+    if [ ! -f "$ENV_FILE" ]; then
+        return 0
+    fi
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
+}
+
+set_env_kv() {
+    local key="$1"
+    local value="$2"
+
+    mkdir -p "$(dirname "$ENV_FILE")"
+    touch "$ENV_FILE"
+    chmod 600 "$ENV_FILE" || true
+
+    if grep -qE "^${key}=" "$ENV_FILE"; then
+        # POSIX-safe replace
+        tmp="$(mktemp)"
+        awk -v k="$key" -v v="$value" 'BEGIN{FS=OFS="="} $1==k{$0=k"="v} {print}' "$ENV_FILE" > "$tmp"
+        mv "$tmp" "$ENV_FILE"
+    else
+        echo "${key}=${value}" >> "$ENV_FILE"
+    fi
+}
+
+compose() {
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+pause() { read -r -p "Press Enter..." _; }
+
+print_header() {
+    echo
+    echo "==== $1 ===="
+}
+
+status() {
+    print_header "Status"
+    compose ps
+}
+
+logs() {
+    print_header "Logs (app)"
+    compose logs -n 200 app
+}
+
+restart_stack() {
+    print_header "Restart"
+    compose up -d
+    echo "OK"
+}
+
+set_domain_and_ssl() {
+    read_env
+
+    print_header "Configure Domain + SSL"
+    echo "Current DOMAIN: ${DOMAIN:-<unset>}"
+    echo "Current SSL_MODE: ${SSL_MODE:-<unset>}"
+    echo
+
+    read -r -p "Domain or IP (example: panel.example.com): " new_domain
+    new_domain="${new_domain:-${DOMAIN:-}}"
+    if [ -z "$new_domain" ]; then
+        echo "ERR: DOMAIN is required." >&2
+        return 1
+    fi
+
+    read -r -p "SSL mode (http|internal|letsencrypt) [http]: " new_ssl
+    new_ssl="${new_ssl:-${SSL_MODE:-http}}"
+
+    # If user entered an IP, default to http to avoid ACME failures.
+    if echo "$new_domain" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' && [ "$new_ssl" = "letsencrypt" ]; then
+        echo "WARN: DOMAIN looks like an IP; Let's Encrypt will likely fail. Switching SSL_MODE to http."
+        new_ssl="http"
+    fi
+
+    read -r -p "Let's Encrypt email (optional) [${LETSENCRYPT_EMAIL:-admin@${new_domain}}]: " new_email
+    new_email="${new_email:-${LETSENCRYPT_EMAIL:-admin@${new_domain}}}"
+
+    set_env_kv "DOMAIN" "$new_domain"
+    set_env_kv "SSL_MODE" "$new_ssl"
+    set_env_kv "LETSENCRYPT_EMAIL" "$new_email"
+
+    write_caddyfile "$new_ssl"
+
+    echo "OK: updated .env and docker/Caddyfile"
+    restart_stack
+}
+
+http_ip_quickstart() {
+    print_header "HTTP-Only (IP) Quickstart"
+    read -r -p "Server IP (example: 1.2.3.4): " ip
+    if [ -z "$ip" ]; then
+        echo "ERR: IP required." >&2
+        return 1
+    fi
+    set_env_kv "DOMAIN" "$ip"
+    set_env_kv "SSL_MODE" "http"
+    set_env_kv "LETSENCRYPT_EMAIL" ""
+    write_caddyfile "http"
+    echo "OK: configured HTTP-only on ${ip}"
+    restart_stack
+    echo "Try: http://${ip}"
+}
+
+main_menu() {
+    need_cmd docker
+
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        echo "ERR: docker-compose.yml not found at: $COMPOSE_FILE" >&2
+        echo "Set INSTALL_DIR in $CONFIG_FILE or move the install to $INSTALL_DIR_DEFAULT" >&2
+        exit 1
+    fi
+
+    while true; do
+        read_env
+        echo
+        echo "Eve Docker Manager"
+        echo "Install dir : $INSTALL_DIR"
+        echo "Domain      : ${DOMAIN:-<unset>}"
+        echo "SSL mode    : ${SSL_MODE:-<unset>}"
+        echo
+        echo "[1] Status"
+        echo "[2] Logs (app)"
+        echo "[3] Set domain + SSL mode"
+        echo "[4] Quickstart: IP without SSL (HTTP)"
+        echo "[5] Restart stack"
+        echo "[q] Quit"
+        echo
+        read -r -p "Select: " choice
+
+        case "$choice" in
+            1) status; pause ;;
+            2) logs; pause ;;
+            3) set_domain_and_ssl; pause ;;
+            4) http_ip_quickstart; pause ;;
+            5) restart_stack; pause ;;
+            q|Q) exit 0 ;;
+            *) echo "Invalid choice" ;;
+        esac
+    done
+}
+
+main_menu
+
