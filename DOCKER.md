@@ -14,6 +14,7 @@ Create `.env` next to `docker-compose.yml`:
 
 ```env
 DOMAIN=panel.example.com
+SSL_MODE=letsencrypt
 LETSENCRYPT_EMAIL=admin@example.com
 EVE_IMAGE=ghcr.io/yoyoraya/eve-xui-manager:latest
 POSTGRES_PASSWORD=change-this-long-random-password
@@ -21,7 +22,13 @@ INITIAL_ADMIN_USERNAME=admin
 INITIAL_ADMIN_PASSWORD=change-this-admin-password
 ```
 
-`DOMAIN` is the domain you want this server to use. For local or IP-only HTTP tests, set `DOMAIN=:80`.
+`SSL_MODE` options:
+
+- `letsencrypt`: automatic trusted HTTPS certificates (requires correct DNS + open 80/443)
+- `internal`: self-signed HTTPS via Caddy's internal CA (works without DNS validation; browsers warn)
+- `http`: HTTP only (no TLS; useful for IP-only or debugging)
+
+`DOMAIN` is the domain/IP you want this server to use. For `http` mode you can use an IP or hostname.
 
 `LETSENCRYPT_EMAIL` is optional. Caddy can issue certificates without it, but keeping it set is recommended for real domains.
 

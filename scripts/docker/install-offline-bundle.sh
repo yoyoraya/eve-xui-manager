@@ -51,6 +51,57 @@ if ! docker compose version >/dev/null 2>&1; then
     exit 1
 fi
 
+write_caddyfile() {
+    local ssl_mode="$1"
+
+    mkdir -p docker
+
+    case "$ssl_mode" in
+        letsencrypt)
+            cat > docker/Caddyfile <<'EOF'
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$DOMAIN} {
+    encode gzip zstd
+    reverse_proxy app:5000
+}
+EOF
+            ;;
+        internal)
+            cat > docker/Caddyfile <<'EOF'
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$DOMAIN} {
+    tls internal
+    encode gzip zstd
+    reverse_proxy app:5000
+}
+EOF
+            ;;
+        http)
+            # HTTP-only, no redirects, no ACME.
+            cat > docker/Caddyfile <<'EOF'
+{
+    auto_https off
+}
+
+http://{$DOMAIN} {
+    encode gzip zstd
+    reverse_proxy app:5000
+}
+EOF
+            ;;
+        *)
+            echo "ERR: invalid SSL_MODE: $ssl_mode (use: letsencrypt | internal | http)" >&2
+            exit 1
+            ;;
+    esac
+}
+
 if [ ! -f docker-images.tar ]; then
     echo "ERR: docker-images.tar not found next to install.sh" >&2
     exit 1
@@ -62,13 +113,17 @@ docker load -i docker-images.tar
 if [ ! -f .env ]; then
     echo "-- Creating .env"
     prompt_default DOMAIN "Domain or IP for this server (example: panel.example.com)"
+    prompt_default SSL_MODE "SSL mode (letsencrypt|internal|http)" "letsencrypt"
     prompt_default LETSENCRYPT_EMAIL "Let's Encrypt email (optional)" "admin@${DOMAIN}"
     prompt_default POSTGRES_PASSWORD "PostgreSQL password" "$(random_secret)"
     prompt_default INITIAL_ADMIN_USERNAME "Initial admin username" "admin"
     prompt_default INITIAL_ADMIN_PASSWORD "Initial admin password" "$(random_secret)"
 
+    write_caddyfile "$SSL_MODE"
+
     cat > .env <<EOF
 DOMAIN=${DOMAIN}
+SSL_MODE=${SSL_MODE}
 LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
 EVE_IMAGE=${EVE_IMAGE:-ghcr.io/yoyoraya/eve-xui-manager:latest}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -82,6 +137,11 @@ EOF
     chmod 600 .env
 else
     echo "-- Existing .env found; keeping it"
+    # Backfill: if SSL_MODE exists, (re)generate the Caddyfile so changes apply.
+    SSL_MODE_EXISTING="$(grep -E '^SSL_MODE=' .env | tail -n 1 | cut -d= -f2- || true)"
+    if [ -n "$SSL_MODE_EXISTING" ]; then
+        write_caddyfile "$SSL_MODE_EXISTING"
+    fi
 fi
 
 echo "-- Starting Eve"
