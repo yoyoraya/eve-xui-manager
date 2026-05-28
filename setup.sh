@@ -344,6 +344,43 @@ offline_deb_dir() {
     return 1
 }
 
+validate_offline_deb_bundle() {
+    local deb_dir="$1"
+    local codename="$2"
+    local max_libc=""
+
+    case "$codename" in
+        focal) max_libc="2.31" ;;
+        jammy) max_libc="2.35" ;;
+        noble) max_libc="2.39" ;;
+        *) return 0 ;;
+    esac
+
+    if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1; then
+        print_warning "Cannot pre-check .deb compatibility (dpkg tools missing)"
+        return 0
+    fi
+
+    local deb deps req bad=0
+    for deb in "$deb_dir"/*.deb; do
+        [ -f "$deb" ] || continue
+        deps="$(dpkg-deb -f "$deb" Depends Pre-Depends 2>/dev/null || true)"
+        req="$(printf '%s\n' "$deps" | grep -oE 'libc6 \(\>= [0-9][^)]+\)' | sed -E 's/.*>= ([^)]+)\).*/\1/' | sort -V | tail -1 || true)"
+        if [ -n "$req" ] && dpkg --compare-versions "$req" gt "$max_libc"; then
+            print_error "Incompatible package for Ubuntu $codename: $(basename "$deb") requires libc6 >= $req"
+            bad=1
+        fi
+    done
+
+    if [ "$bad" -ne 0 ]; then
+        print_error "This offline apt bundle was built for a newer Ubuntu release or contains stale mixed packages."
+        print_warning "Delete offline/apt/${codename}-amd64 and rebuild with:"
+        print_warning "  bash prepare-offline-bundle.sh --profile /path/to/eve-offline-profile.txt ."
+        return 1
+    fi
+    return 0
+}
+
 install_offline_apt_dependencies() {
     print_header "Installing Offline System Packages"
     resolve_offline_root
@@ -368,25 +405,18 @@ install_offline_apt_dependencies() {
         return 1
     fi
 
+    validate_offline_deb_bundle "$deb_dir" "$codename"
+
     print_warning "Installing local .deb packages from $deb_dir"
     export DEBIAN_FRONTEND=noninteractive
     wait_for_apt
 
-    # Multiple passes let dpkg configure packages whose dependencies appear later in the folder.
-    local pass
-    for pass in 1 2 3; do
-        if dpkg -i "$deb_dir"/*.deb; then
-            print_success "System packages installed"
-            return 0
-        fi
-        print_warning "dpkg pass $pass needed another dependency pass..."
-    done
-
-    if apt-get --no-download -y -f install; then
-        print_success "System packages configured from local cache"
+    if apt-get install -y --no-download "$deb_dir"/*.deb; then
+        print_success "System packages installed"
         return 0
     fi
 
+    apt-get --no-download -y -f install || true
     print_error "Offline system package installation failed"
     print_warning "The bundle may be incomplete for Ubuntu ${codename:-unknown} / $arch."
     return 1

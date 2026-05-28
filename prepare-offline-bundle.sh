@@ -293,6 +293,7 @@ download_apt_with_docker() {
     local image out_dir packages
     image="$(ubuntu_image_for_codename "$codename")"
     out_dir="$OFFLINE_DIR/apt/${codename}-${TARGET_ARCH}"
+    rm -rf "$out_dir"
     mkdir -p "$out_dir"
     packages="${APT_PACKAGES[*]}"
 
@@ -343,6 +344,7 @@ download_apt_for_current_host() {
     fi
 
     out_dir="$OFFLINE_DIR/apt/${codename}-${TARGET_ARCH}"
+    rm -rf "$out_dir"
     mkdir -p "$out_dir"
     print_warning "Docker not found. Downloading only for current host: $codename"
     sudo apt-get update
