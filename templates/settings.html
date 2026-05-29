@@ -917,6 +917,13 @@
                 <input type="text" id="account-message-template-name" class="form-input" placeholder="e.g. Persian Account Info">
             </div>
             <div class="form-group">
+                <label>Delivery Channel</label>
+                <select id="account-message-template-channel" class="form-input" onchange="handleAccountMessageChannelChange()">
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="sms">SMS</option>
+                </select>
+            </div>
+            <div class="form-group">
                 <label>Content</label>
                 <div class="variables-chips" id="account-message-modal-vars">
                     <span class="var-chip" onclick="insertAccountMessageVar('{email}')">{email}</span>
@@ -932,6 +939,7 @@
                         <span class="renew-preview-hint">Preview appears here...</span>
                     </div>
                 </div>
+                <div id="account-message-sms-counter" class="sms-counter hidden"></div>
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeAccountMessageTemplateModal()">Cancel</button>
@@ -1160,6 +1168,28 @@
         border-radius: 12px;
         width: fit-content;
         display: inline-block;
+    }
+
+    .channel-badge {
+        background: rgba(59, 130, 246, 0.15);
+        color: var(--accent);
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 12px;
+        width: fit-content;
+        display: inline-block;
+    }
+
+    .sms-counter {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        color: var(--text-secondary);
+        background: rgba(15, 23, 42, 0.35);
+        font-size: 0.85rem;
+        direction: ltr;
+        text-align: left;
     }
 
     html[data-theme="light"] .active-badge {
@@ -3442,6 +3472,8 @@
 
     let accountMessageTemplatesCache = [];
     let accountMessageAvailableVars = [];
+    let accountMessageDefaultContent = '';
+    let accountMessageDefaultSmsContent = '';
 
     function renderAccountMessagePreviewText(content) {
         const vars = {
@@ -3464,9 +3496,70 @@
         const rendered = renderAccountMessagePreviewText(content);
         if (!rendered.trim()) {
             preview.innerHTML = '<span class="renew-preview-hint">Preview appears here...</span>';
+            updateAccountMessageSmsCounter(content);
             return;
         }
         preview.innerHTML = escapeHtml(rendered).replace(/\n/g, '<br>');
+        updateAccountMessageSmsCounter(content);
+    }
+
+    function isGsm7Text(text) {
+        const basic = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\u001bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+        const extended = "^{}\\[~]|€";
+        return Array.from(String(text || '')).every(ch => basic.includes(ch) || extended.includes(ch));
+    }
+
+    function smsLengthInfo(text) {
+        const value = String(text || '');
+        const gsm = isGsm7Text(value);
+        let units = 0;
+        if (gsm) {
+            const extended = "^{}\\[~]|€";
+            Array.from(value).forEach(ch => { units += extended.includes(ch) ? 2 : 1; });
+        } else {
+            units = Array.from(value).length;
+        }
+        const singleLimit = gsm ? 160 : 70;
+        const segmentLimit = gsm ? 153 : 67;
+        const segments = units <= singleLimit ? 1 : Math.ceil(units / segmentLimit);
+        const usedInSegment = segments === 1 ? units : units % segmentLimit || segmentLimit;
+        return {
+            encoding: gsm ? 'GSM-7' : 'Unicode',
+            units,
+            segments,
+            remaining: (segments === 1 ? singleLimit : segmentLimit) - usedInSegment
+        };
+    }
+
+    function updateAccountMessageSmsCounter(content) {
+        const counter = document.getElementById('account-message-sms-counter');
+        const channel = document.getElementById('account-message-template-channel')?.value || 'whatsapp';
+        if (!counter) return;
+        if (channel !== 'sms') {
+            counter.classList.add('hidden');
+            counter.textContent = '';
+            return;
+        }
+        const info = smsLengthInfo(renderAccountMessagePreviewText(content));
+        counter.classList.remove('hidden');
+        counter.textContent = `${info.encoding} | ${info.units} chars | ${info.segments} SMS | ${info.remaining} chars left`;
+    }
+
+    function handleAccountMessageChannelChange() {
+        const textarea = document.getElementById('account-message-template-content');
+        const id = document.getElementById('edit-account-message-template-id')?.value || '';
+        const channel = document.getElementById('account-message-template-channel')?.value || 'whatsapp';
+        if (!id && textarea) {
+            const whatsappDefault = accountMessageDefaultContent || textarea.value;
+            const smsDefault = accountMessageDefaultSmsContent || '{email}\nTime: {remaining_time}\nVolume: {remaining_volume}\nLink: {dashboard_link}';
+            const current = textarea.value.trim();
+            if (channel === 'sms' && (!current || current === whatsappDefault.trim())) {
+                textarea.value = smsDefault;
+            } else if (channel === 'whatsapp' && (!current || current === smsDefault.trim())) {
+                textarea.value = whatsappDefault;
+            }
+        }
+        updateAccountMessageModalPreview(textarea ? textarea.value : '');
     }
 
     async function loadAccountMessageTemplates() {
@@ -3479,6 +3572,8 @@
             }
             accountMessageTemplatesCache = data.templates || [];
             accountMessageAvailableVars = data.available_vars || [];
+            accountMessageDefaultContent = data.default_content || '';
+            accountMessageDefaultSmsContent = data.default_sms_content || '';
             renderAccountMessageTemplates(accountMessageTemplatesCache);
 
             const modalVarsContainer = document.getElementById('account-message-modal-vars');
@@ -3506,6 +3601,7 @@
                 <div class="template-header">
                     <div class="template-title">
                         ${escapeHtml(t.name)}
+                        <span class="channel-badge">${(t.channel || 'whatsapp').toUpperCase()}</span>
                         ${t.is_active ? '<span class="active-badge">Active</span>' : '<span class="active-badge" style="background:rgba(148,163,184,0.16);color:var(--text-secondary);">Disabled</span>'}
                     </div>
                     <div class="action-buttons">
@@ -3534,6 +3630,7 @@
         document.getElementById('account-message-template-modal-title').textContent = 'Add Account Message Template';
         document.getElementById('edit-account-message-template-id').value = '';
         document.getElementById('account-message-template-name').value = '';
+        document.getElementById('account-message-template-channel').value = 'whatsapp';
         const textarea = document.getElementById('account-message-template-content');
         textarea.value = [
             'اطلاعات اکانت شما',
@@ -3554,6 +3651,7 @@
         document.getElementById('account-message-template-modal-title').textContent = 'Edit Account Message Template';
         document.getElementById('edit-account-message-template-id').value = t.id;
         document.getElementById('account-message-template-name').value = t.name;
+        document.getElementById('account-message-template-channel').value = t.channel || 'whatsapp';
         document.getElementById('account-message-template-content').value = t.content;
         updateAccountMessageModalPreview(t.content);
         document.getElementById('account-message-template-modal').classList.remove('hidden');
@@ -3577,6 +3675,7 @@
     async function saveAccountMessageTemplate() {
         const id = document.getElementById('edit-account-message-template-id').value;
         const name = document.getElementById('account-message-template-name').value.trim();
+        const channel = document.getElementById('account-message-template-channel').value;
         const content = document.getElementById('account-message-template-content').value.trim();
 
         if (!name || !content) {
@@ -3588,7 +3687,7 @@
             const res = await fetch(id ? `/api/account-message-templates/${id}` : '/api/account-message-templates', {
                 method: id ? 'PUT' : 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name, content })
+                body: JSON.stringify({ name, content, channel })
             });
             const data = await res.json();
             if (data.success) {
