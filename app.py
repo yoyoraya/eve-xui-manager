@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.0.5"
+APP_VERSION = "2.1.0"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -2826,6 +2826,7 @@ DEFAULT_RENEW_TEMPLATE = """🔰{email}\n⌛{days_label} 📊{volume_label}\nت�
 MONITOR_SETTINGS_KEY = 'monitor_settings'
 GENERAL_TIMEZONE_SETTING_KEY = 'general_timezone'
 PANEL_UI_LANG_SETTING_KEY = 'panel_ui_lang'
+PANEL_DOMAIN_SETTING_KEY = 'panel_domain'
 GENERAL_EXPIRY_WARNING_DAYS_KEY = 'general_expiry_warning_days'
 GENERAL_EXPIRY_WARNING_HOURS_KEY = 'general_expiry_warning_hours'
 GENERAL_LOW_VOLUME_WARNING_GB_KEY = 'general_low_volume_warning_gb'
@@ -3877,6 +3878,89 @@ _SSL_KNOWN_PATHS = [
     # Self-signed via setup.sh
     ('/etc/ssl/eve-manager/cert.pem',      '/etc/ssl/eve-manager/privkey.pem'),
 ]
+
+def _is_ip_address(value: str) -> bool:
+    import re as _re
+    return bool(_re.match(r'^(\d{1,3}\.){3}\d{1,3}$', (value or '').strip()))
+
+
+def _nginx_conf_path() -> str:
+    return '/etc/nginx/sites-available/eve-manager'
+
+
+def _build_nginx_config(domain: str, app_port: str, cert_path: str = '', key_path: str = '') -> str:
+    """Build nginx config for HTTP or HTTPS depending on whether cert paths are given."""
+    sse_block = f"""
+    location ~* /stream$ {{
+        proxy_pass http://127.0.0.1:{app_port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+    }}"""
+    proxy_block = f"""
+    location / {{
+        proxy_pass http://127.0.0.1:{app_port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_request_buffering off;
+    }}"""
+
+    if cert_path and key_path:
+        return f"""server {{
+    listen 80;
+    server_name {domain};
+    return 301 https://$host$request_uri;
+}}
+
+server {{
+    listen 443 ssl;
+    server_name {domain};
+    ssl_certificate     {cert_path};
+    ssl_certificate_key {key_path};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    client_max_body_size 512m;
+{sse_block}
+{proxy_block}
+}}
+"""
+    else:
+        return f"""server {{
+    listen 80;
+    server_name {domain};
+    client_max_body_size 512m;
+{sse_block}
+{proxy_block}
+}}
+"""
+
+
+def _apply_nginx_config(domain: str, cert_path: str = '', key_path: str = '') -> tuple[bool, str]:
+    """Write nginx config and reload. Returns (ok, error_message)."""
+    app_port = os.environ.get('API_PORT', '5000')
+    config = _build_nginx_config(domain, app_port, cert_path, key_path)
+    conf_path = _nginx_conf_path()
+
+    cmds = [
+        (['sudo', 'tee', conf_path], config),
+        (['sudo', 'nginx', '-t'], None),
+        (['sudo', 'systemctl', 'reload', 'nginx'], None),
+    ]
+    for cmd, stdin in cmds:
+        r = subprocess.run(cmd, input=stdin, text=True, capture_output=True, timeout=15)
+        if r.returncode != 0:
+            return False, f'{" ".join(cmd[:2])} failed: {r.stderr.strip()}'
+    return True, ''
+
 
 def _autodetect_ssl_paths():
     """Return (cert_path, key_path) from well-known locations, or ('', '').
@@ -7616,6 +7700,10 @@ def get_general_settings():
     except Exception:
         last_snapshot_at = None
         total_snapshots = 0
+    panel_domain = (_get_or_create_system_setting(PANEL_DOMAIN_SETTING_KEY, '') or '').strip()
+    ssl_cert = (db.session.get(SystemSetting, 'ssl_cert_path') or SystemSetting(key='', value='')).value or ''
+    has_ssl  = bool(ssl_cert and os.path.isfile(ssl_cert))
+
     return jsonify({
         'success': True,
         'timezone': _get_app_timezone_name(),
@@ -7627,6 +7715,9 @@ def get_general_settings():
         'snapshot_interval_minutes': snapshot_interval,
         'last_snapshot_at': last_snapshot_at,
         'total_snapshots': total_snapshots,
+        'panel_domain': panel_domain,
+        'is_ip': _is_ip_address(panel_domain),
+        'has_ssl': has_ssl,
     })
 
 
@@ -7663,13 +7754,41 @@ def save_general_settings():
 
     snapshot_interval = _parse_int(data.get('snapshot_interval_minutes'), _USAGE_SNAPSHOT_INTERVAL_DEFAULT_MIN, min_value=5, max_value=120)
 
+    # Domain update + nginx reload
+    new_domain = (data.get('panel_domain') or '').strip()
+    old_domain = (_get_or_create_system_setting(PANEL_DOMAIN_SETTING_KEY, '') or '').strip()
+    nginx_updated = False
+    nginx_error = ''
+
+    if new_domain and new_domain != old_domain:
+        cert_path = (db.session.get(SystemSetting, 'ssl_cert_path') or SystemSetting(key='', value='')).value or ''
+        key_path  = (db.session.get(SystemSetting, 'ssl_key_path')  or SystemSetting(key='', value='')).value or ''
+        use_ssl   = bool(cert_path and key_path
+                         and os.path.isfile(cert_path) and os.path.isfile(key_path)
+                         and not _is_ip_address(new_domain))
+        ok, nginx_error = _apply_nginx_config(
+            new_domain,
+            cert_path if use_ssl else '',
+            key_path  if use_ssl else '',
+        )
+        nginx_updated = ok
+        if not ok:
+            app.logger.warning(f"nginx update failed when changing domain to {new_domain}: {nginx_error}")
+
     _set_system_setting_value(GENERAL_TIMEZONE_SETTING_KEY, tz_name)
     _set_system_setting_value(PANEL_UI_LANG_SETTING_KEY, panel_lang)
     _set_system_setting_value(GENERAL_EXPIRY_WARNING_DAYS_KEY, str(near_expiry_days))
     _set_system_setting_value(GENERAL_EXPIRY_WARNING_HOURS_KEY, str(near_expiry_hours))
     _set_system_setting_value(GENERAL_LOW_VOLUME_WARNING_GB_KEY, str(low_volume_gb))
     _set_system_setting_value(USAGE_SNAPSHOT_INTERVAL_KEY, str(snapshot_interval))
+    if new_domain:
+        _set_system_setting_value(PANEL_DOMAIN_SETTING_KEY, new_domain)
     db.session.commit()
+
+    is_ip    = _is_ip_address(new_domain or old_domain)
+    protocol = 'http' if (is_ip or not nginx_updated) else 'https'
+    panel_url = f'{protocol}://{new_domain or old_domain}' if (new_domain or old_domain) else ''
+
     return jsonify({
         'success': True,
         'message': 'General settings saved',
@@ -7680,6 +7799,11 @@ def save_general_settings():
         'near_expiry_hours': near_expiry_hours,
         'low_volume_gb': low_volume_gb,
         'snapshot_interval_minutes': snapshot_interval,
+        'panel_domain': new_domain or old_domain,
+        'is_ip': is_ip,
+        'nginx_updated': nginx_updated,
+        'nginx_error': nginx_error,
+        'panel_url': panel_url,
     })
 
 
