@@ -281,9 +281,37 @@ setup_postgresql_for_install() {
         print_warning "Offline mode: PostgreSQL must already be installed from the apt bundle"
     fi
 
-    # Ensure service is running
+    # Detect installed PostgreSQL version (e.g. 14, 15, 16)
+    local PG_VER=""
+    PG_VER="$(ls /usr/lib/postgresql/ 2>/dev/null | sort -V | tail -1 || true)"
+    [ -z "$PG_VER" ] && PG_VER="14"
+
+    # After offline dpkg install, the post-install cluster creation often fails
+    # because the `postgres` user was just created and getpwuid() returns undef.
+    # We detect this and create the cluster ourselves.
+    if ! pg_lsclusters -h 2>/dev/null | grep -q 'main'; then
+        print_warning "PostgreSQL cluster not found — creating cluster ${PG_VER}/main ..."
+        # Run as root; pg_createcluster will switch to the postgres user internally
+        pg_createcluster "$PG_VER" main --start 2>&1 | tail -5 || true
+    fi
+
+    # Ensure service is enabled and started
     systemctl enable postgresql >/dev/null 2>&1 || true
-    systemctl start  postgresql >/dev/null 2>&1 || true
+    systemctl start  postgresql 2>&1 || true
+
+    # Wait up to 30 s for PostgreSQL to accept connections
+    print_warning "Waiting for PostgreSQL to be ready..."
+    local _attempts=0
+    until sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; do
+        _attempts=$((_attempts + 1))
+        if [ $_attempts -ge 15 ]; then
+            print_error "PostgreSQL is not responding after 30 s"
+            print_warning "Manual fix: pg_createcluster ${PG_VER} main --start"
+            return 1
+        fi
+        sleep 2
+    done
+    print_success "PostgreSQL is accepting connections"
 
     # Regenerate a fresh password for this install
     DB_PASS="$(generate_secret 20 alnum)"
