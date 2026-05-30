@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.0.4"
+APP_VERSION = "2.0.5"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -13721,6 +13721,80 @@ with app.app_context():
         print(f"[startup] WARNING: app-files directory not ready: {_appfiles_err}")
         print("[startup] File uploads will fail. Use the 'Fix Setup' button in File Manager, or run:")
         print(f"[startup]   mkdir -p '{os.path.join(app.static_folder or '', _APP_FILES_DIR_NAME)}' && chmod 755 <dir>")
+
+
+# ── SSL startup migration ─────────────────────────────────────────────────────
+# When upgrading from a version that didn't copy certs to /etc/ssl/eve-manager/,
+# we try to do the copy automatically so the export feature works immediately.
+# This is silent — failure never blocks startup.
+with app.app_context():
+    try:
+        _ssl_dest_cert = '/etc/ssl/eve-manager/fullchain.pem'
+        _ssl_dest_key  = '/etc/ssl/eve-manager/privkey.pem'
+        _need_copy = not (os.path.isfile(_ssl_dest_cert) and os.access(_ssl_dest_cert, os.R_OK)
+                         and os.path.isfile(_ssl_dest_key) and os.access(_ssl_dest_key, os.R_OK))
+
+        if _need_copy:
+            # Try to find source paths (nginx config → letsencrypt glob)
+            import re as _re, glob as _gl
+            _src_cert = _src_key = ''
+
+            # 1. Read nginx config
+            for _nc in ['/etc/nginx/sites-available/eve-manager',
+                        '/etc/nginx/sites-enabled/eve-manager',
+                        '/etc/nginx/sites-available/eve-xui-manager']:
+                if not os.path.isfile(_nc):
+                    continue
+                try:
+                    with open(_nc, 'r', errors='ignore') as _nf:
+                        _conf = _nf.read()
+                    _cm = _re.search(r'ssl_certificate\s+([^;]+);', _conf)
+                    _km = _re.search(r'ssl_certificate_key\s+([^;]+);', _conf)
+                    if _cm and _km:
+                        _src_cert = _cm.group(1).strip()
+                        _src_key  = _km.group(1).strip()
+                        break
+                except Exception:
+                    pass
+
+            # 2. Fallback: letsencrypt glob
+            if not _src_cert:
+                for _lc in sorted(_gl.glob('/etc/letsencrypt/live/*/fullchain.pem')):
+                    _src_cert = _lc
+                    _src_key  = os.path.join(os.path.dirname(_lc), 'privkey.pem')
+                    break
+
+            if _src_cert and _src_key and os.path.isfile(_src_cert) and os.path.isfile(_src_key):
+                _app_user = os.environ.get('APP_USER', 'evemgr')
+                _copy_cmds = [
+                    ['sudo', 'mkdir', '-p', '/etc/ssl/eve-manager'],
+                    ['sudo', 'cp', '-f', _src_cert, _ssl_dest_cert],
+                    ['sudo', 'cp', '-f', _src_key,  _ssl_dest_key],
+                    ['sudo', 'chown', f'{_app_user}:{_app_user}', _ssl_dest_cert, _ssl_dest_key],
+                    ['sudo', 'chmod', '644', _ssl_dest_cert],
+                    ['sudo', 'chmod', '600', _ssl_dest_key],
+                ]
+                _copy_ok = True
+                for _cmd in _copy_cmds:
+                    _r = subprocess.run(_cmd, capture_output=True, timeout=10)
+                    if _r.returncode != 0:
+                        _copy_ok = False
+                        break
+
+                if _copy_ok:
+                    # Update DB paths to the new readable location
+                    for _k, _v in [('ssl_cert_path', _ssl_dest_cert), ('ssl_key_path', _ssl_dest_key)]:
+                        _row = db.session.get(SystemSetting, _k) or SystemSetting(key=_k, value=_v)
+                        _row.value = _v
+                        db.session.merge(_row)
+                    db.session.commit()
+                    print(f"[startup] SSL certs migrated → {'/etc/ssl/eve-manager/'}")
+                else:
+                    print("[startup] SSL cert migration failed (sudo not configured yet — use Settings → SSL → Sync)")
+            else:
+                print("[startup] SSL not detected or not yet configured — skipping cert migration")
+    except Exception as _ssl_migrate_err:
+        print(f"[startup] SSL migration skipped: {_ssl_migrate_err}")
 
 
 @app.route('/api/system-config', methods=['POST'])
