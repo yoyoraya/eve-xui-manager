@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.5"
+APP_VERSION = "2.1.6"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -15857,18 +15857,54 @@ def save_ssl_settings():
 @app.route('/api/settings/ssl/sync', methods=['POST'])
 @login_required
 def ssl_sync():
-    """Copy LetsEncrypt cert+key to /etc/ssl/eve-manager/ (needs sudoers entry)."""
+    """Copy LetsEncrypt cert+key to /etc/ssl/eve-manager/.
+
+    Strategy (no broad sudo needed):
+    - /etc/ssl/eve-manager/ must be owned by evemgr (one-time admin setup)
+    - Only `sudo cat` is used to read the protected privkey.pem
+    - Everything else is done directly as evemgr
+
+    If the destination dir isn't writable, a clear fix command is returned.
+    """
     import glob as _glob, re as _re
 
-    # Find cert paths from nginx config (most reliable — nginx IS serving HTTPS)
-    cert_src = key_src = ''
+    FIX_CMD = (
+        "sudo bash -c '"
+        "mkdir -p /etc/ssl/eve-manager && "
+        "chown evemgr:evemgr /etc/ssl/eve-manager && "
+        "chmod 700 /etc/ssl/eve-manager && "
+        "cat > /etc/sudoers.d/eve-ssl <<EOF\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/fullchain.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/privkey.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/fullchain*.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/privkey*.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/systemctl reload nginx\n"
+        "evemgr ALL=(root) NOPASSWD: /usr/sbin/nginx -t\n"
+        "evemgr ALL=(root) NOPASSWD: /usr/bin/tee /etc/nginx/sites-available/eve-manager\n"
+        "EOF\n"
+        "chmod 440 /etc/sudoers.d/eve-ssl'"
+    )
 
-    _nginx_files = [
-        '/etc/nginx/sites-available/eve-manager',
-        '/etc/nginx/sites-enabled/eve-manager',
-        '/etc/nginx/sites-available/eve-xui-manager',
-    ]
-    for _nc in _nginx_files:
+    dest_dir  = '/etc/ssl/eve-manager'
+    cert_dest = os.path.join(dest_dir, 'fullchain.pem')
+    key_dest  = os.path.join(dest_dir, 'privkey.pem')
+
+    # Check destination directory is writable (owned by evemgr)
+    if not os.path.isdir(dest_dir) or not os.access(dest_dir, os.W_OK):
+        return jsonify({
+            'success': False,
+            'error': (
+                f'/etc/ssl/eve-manager/ does not exist or is not writable by the app user.\n'
+                f'Run this command on the server once, then try again:\n\n{FIX_CMD}'
+            ),
+            'fix_command': FIX_CMD,
+        }), 500
+
+    # Find source cert paths
+    cert_src = key_src = ''
+    for _nc in ['/etc/nginx/sites-available/eve-manager',
+                '/etc/nginx/sites-enabled/eve-manager',
+                '/etc/nginx/sites-available/eve-xui-manager']:
         if not os.path.isfile(_nc):
             continue
         try:
@@ -15883,7 +15919,6 @@ def ssl_sync():
         except Exception:
             pass
 
-    # Fallback: glob letsencrypt
     if not cert_src:
         for _lc in sorted(_glob.glob('/etc/letsencrypt/live/*/fullchain.pem')):
             cert_src = _lc
@@ -15892,28 +15927,46 @@ def ssl_sync():
 
     if not cert_src or not key_src:
         return jsonify({'success': False,
-                        'error': 'Cannot locate SSL certificate. Is nginx configured with SSL?'}), 400
+                        'error': 'Cannot find SSL cert paths. Is nginx configured with SSL?'}), 400
 
-    dest_dir  = '/etc/ssl/eve-manager'
-    cert_dest = f'{dest_dir}/fullchain.pem'
-    key_dest  = f'{dest_dir}/privkey.pem'
-
-    app_user = os.environ.get('APP_USER', 'evemgr')
-
-    # Use sudo to create dir, copy files, and fix ownership — requires sudoers entry
-    cmds = [
-        ['sudo', 'mkdir', '-p', dest_dir],
-        ['sudo', 'cp', '-f', cert_src, cert_dest],
-        ['sudo', 'cp', '-f', key_src,  key_dest],
-        ['sudo', 'chown', f'{app_user}:{app_user}', cert_dest, key_dest],
-        ['sudo', 'chmod', '644', cert_dest],
-        ['sudo', 'chmod', '600', key_dest],
-    ]
-    for cmd in cmds:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    # Read cert — usually world-readable
+    try:
+        with open(cert_src, 'rb') as _f:
+            cert_data = _f.read()
+    except PermissionError:
+        r = subprocess.run(['sudo', 'cat', cert_src], capture_output=True, timeout=10)
         if r.returncode != 0:
             return jsonify({'success': False,
-                            'error': f'Command failed ({" ".join(cmd[:3])}): {r.stderr.strip()}'}), 500
+                            'error': f'Cannot read certificate: {r.stderr.decode().strip()}\n\nRun: {FIX_CMD}',
+                            'fix_command': FIX_CMD}), 500
+        cert_data = r.stdout
+
+    # Read private key — typically mode 600, needs sudo cat
+    try:
+        with open(key_src, 'rb') as _f:
+            key_data = _f.read()
+    except PermissionError:
+        r = subprocess.run(['sudo', 'cat', key_src], capture_output=True, timeout=10)
+        if r.returncode != 0:
+            err = r.stderr.decode().strip()
+            if 'password' in err or 'askpass' in err:
+                return jsonify({
+                    'success': False,
+                    'error': f'sudo not configured for this app user.\n\nRun this on the server:\n\n{FIX_CMD}',
+                    'fix_command': FIX_CMD,
+                }), 500
+            return jsonify({'success': False,
+                            'error': f'Cannot read private key: {err}'}), 500
+        key_data = r.stdout
+
+    # Write directly — evemgr owns the dir, no sudo needed
+    with open(cert_dest, 'wb') as _f:
+        _f.write(cert_data)
+    os.chmod(cert_dest, 0o644)
+
+    with open(key_dest, 'wb') as _f:
+        _f.write(key_data)
+    os.chmod(key_dest, 0o600)
 
     # Persist paths in DB
     for k, v in [('ssl_cert_path', cert_dest), ('ssl_key_path', key_dest)]:
@@ -15924,7 +15977,7 @@ def ssl_sync():
 
     return jsonify({
         'success': True,
-        'message': f'Copied from LetsEncrypt → {dest_dir}/ (evemgr now owns the files)',
+        'message': f'Synced → {dest_dir}/',
         'cert_path': cert_dest,
         'key_path':  key_dest,
         'source_cert': cert_src,

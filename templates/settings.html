@@ -2680,18 +2680,27 @@
             const res  = await fetch('/api/settings/ssl/sync', { method: 'POST' });
             const data = await res.json();
             if (data.success) {
+                statusEl.style.display = 'block';
                 statusEl.style.background = 'rgba(34,197,94,0.12)';
                 statusEl.style.color = '#22c55e';
                 statusEl.textContent = `✓ ${data.message}`;
                 loadSSLSettings();
                 showToast('Synced! Now click "Download zip"', 'success', 5000);
             } else {
-                statusEl.style.background = 'rgba(239,68,68,0.1)';
+                statusEl.style.display = 'block';
+                statusEl.style.background = 'rgba(239,68,68,0.08)';
                 statusEl.style.color = '#ef4444';
-                statusEl.textContent = `✗ ${data.error}`;
-                showToast(data.error, 'error', 8000);
+                if (data.fix_command) {
+                    statusEl.innerHTML = `<div style="margin-bottom:8px;">✗ ${escapeHtml(data.error.split('\n')[0])}</div>`
+                        + `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:6px;">Run this command on the server once, then retry:</div>`
+                        + `<code style="display:block;background:#0d0d1a;padding:10px;border-radius:6px;font-size:0.75rem;white-space:pre-wrap;color:#7eb8f7;word-break:break-all;">${escapeHtml(data.fix_command)}</code>`;
+                } else {
+                    statusEl.textContent = `✗ ${data.error}`;
+                }
+                showToast('Setup required — see instructions below', 'warning', 6000);
             }
         } catch (e) {
+            statusEl.style.display = 'block';
             statusEl.style.background = 'rgba(239,68,68,0.1)';
             statusEl.style.color = '#ef4444';
             statusEl.textContent = `✗ Network error: ${e.message}`;

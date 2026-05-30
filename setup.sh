@@ -1864,22 +1864,28 @@ install_eve_cli() {
         print_warning "Could not install eve CLI (permission denied?)"
     fi
 
-    # Allow the app user to reload nginx and manage SSL files without a password
-    local SUDOERS_FILE="/etc/sudoers.d/eve-nginx"
+    # Create /etc/ssl/eve-manager/ owned by app user so the panel can write there directly
+    mkdir -p /etc/ssl/eve-manager
+    chown "${APP_USER}:${APP_USER}" /etc/ssl/eve-manager
+    chmod 700 /etc/ssl/eve-manager
+    print_success "/etc/ssl/eve-manager/ ready (owned by $APP_USER)"
+
+    # Minimal sudoers: only what the panel actually needs
+    # - sudo cat to read LetsEncrypt private keys (mode 600, root-owned)
+    # - nginx reload/test/config-write for SSL apply and domain changes
+    local SUDOERS_FILE="/etc/sudoers.d/eve-ssl"
     cat > "$SUDOERS_FILE" <<EOF
-# Eve Manager — allow evemgr to manage nginx and SSL certs
+# Eve Manager — minimal sudo for SSL + nginx management
+${APP_USER} ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/fullchain.pem
+${APP_USER} ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/privkey.pem
+${APP_USER} ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/fullchain*.pem
+${APP_USER} ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/privkey*.pem
 ${APP_USER} ALL=(root) NOPASSWD: /bin/systemctl reload nginx
 ${APP_USER} ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 ${APP_USER} ALL=(root) NOPASSWD: /usr/bin/tee /etc/nginx/sites-available/${SERVICE_NAME}
-${APP_USER} ALL=(root) NOPASSWD: /bin/mkdir -p /etc/ssl/eve-manager
-${APP_USER} ALL=(root) NOPASSWD: /bin/cp -f * /etc/ssl/eve-manager/fullchain.pem
-${APP_USER} ALL=(root) NOPASSWD: /bin/cp -f * /etc/ssl/eve-manager/privkey.pem
-${APP_USER} ALL=(root) NOPASSWD: /bin/chown ${APP_USER}\:${APP_USER} /etc/ssl/eve-manager/fullchain.pem /etc/ssl/eve-manager/privkey.pem
-${APP_USER} ALL=(root) NOPASSWD: /bin/chmod 644 /etc/ssl/eve-manager/fullchain.pem
-${APP_USER} ALL=(root) NOPASSWD: /bin/chmod 600 /etc/ssl/eve-manager/privkey.pem
 EOF
     chmod 440 "$SUDOERS_FILE"
-    print_success "Sudoers entry created for nginx + SSL management"
+    print_success "Sudoers entry created: /etc/sudoers.d/eve-ssl"
 }
 
 # ──────────────────────────────────────────────────────────────
