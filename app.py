@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.0.2"
+APP_VERSION = "2.0.3"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -15468,6 +15468,221 @@ def save_ssl_settings():
     if cert_path and key_path:
         return jsonify({'success': True, 'message': 'SSL settings saved. Certificate and key files verified.'})
     return jsonify({'success': True, 'message': 'SSL configuration cleared.'})
+
+
+# ── SSL Export — download cert + key as a zip ───────────────────────────────
+@app.route('/api/settings/ssl/export')
+@login_required
+def ssl_export():
+    """Return a zip containing the SSL certificate and private key."""
+    import zipfile, io as _io
+
+    cert = db.session.get(SystemSetting, 'ssl_cert_path')
+    key = db.session.get(SystemSetting, 'ssl_key_path')
+    cert_path = (cert.value if cert else '').strip()
+    key_path  = (key.value  if key  else '').strip()
+
+    if not cert_path and not key_path:
+        cert_path, key_path = _autodetect_ssl_paths()
+
+    errors = []
+    if not cert_path or not os.path.isfile(cert_path):
+        errors.append(f'Certificate not found: {cert_path or "(not configured)"}')
+    if not key_path or not os.path.isfile(key_path):
+        errors.append(f'Private key not found: {key_path or "(not configured)"}')
+    if errors:
+        return jsonify({'success': False, 'error': ' | '.join(errors)}), 400
+
+    buf = _io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.write(cert_path, 'ssl/fullchain.pem')
+        zf.write(key_path,  'ssl/privkey.pem')
+    buf.seek(0)
+
+    return send_file(
+        buf,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name='eve-ssl-bundle.zip',
+    )
+
+
+# ── SSL Upload — receive zip, extract cert+key ──────────────────────────────
+SSL_UPLOAD_DIR = '/etc/ssl/eve-manager'
+
+@app.route('/api/settings/ssl/upload', methods=['POST'])
+@login_required
+def ssl_upload():
+    """Accept a zip (with fullchain.pem + privkey.pem) or two individual files."""
+    import zipfile
+
+    os.makedirs(SSL_UPLOAD_DIR, mode=0o700, exist_ok=True)
+
+    cert_dest = os.path.join(SSL_UPLOAD_DIR, 'fullchain.pem')
+    key_dest  = os.path.join(SSL_UPLOAD_DIR, 'privkey.pem')
+
+    if 'ssl_zip' in request.files:
+        zf_file = request.files['ssl_zip']
+        if not zf_file.filename.lower().endswith('.zip'):
+            return jsonify({'success': False, 'error': 'Expected a .zip file'}), 400
+        raw = zf_file.read()
+        try:
+            with zipfile.ZipFile(_io_BytesIO(raw)) as zf:
+                names = zf.namelist()
+                cert_member = next((n for n in names if n.endswith('fullchain.pem') or n.endswith('.crt') or n.endswith('.cer')), None)
+                key_member  = next((n for n in names if n.endswith('privkey.pem') or n.endswith('.key')), None)
+                if not cert_member or not key_member:
+                    return jsonify({'success': False,
+                                    'error': 'Zip must contain fullchain.pem (or .crt) and privkey.pem (or .key)'}), 400
+                with open(cert_dest, 'wb') as f:
+                    f.write(zf.read(cert_member))
+                with open(key_dest, 'wb') as f:
+                    f.write(zf.read(key_member))
+        except zipfile.BadZipFile:
+            return jsonify({'success': False, 'error': 'Invalid zip file'}), 400
+
+    elif 'cert_file' in request.files and 'key_file' in request.files:
+        request.files['cert_file'].save(cert_dest)
+        request.files['key_file'].save(key_dest)
+    else:
+        return jsonify({'success': False, 'error': 'Send ssl_zip OR cert_file+key_file'}), 400
+
+    os.chmod(cert_dest, 0o644)
+    os.chmod(key_dest,  0o600)
+
+    # Persist paths
+    for k, v in [('ssl_cert_path', cert_dest), ('ssl_key_path', key_dest)]:
+        row = db.session.get(SystemSetting, k) or SystemSetting(key=k, value=v)
+        row.value = v
+        db.session.merge(row)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'message': 'SSL files uploaded successfully.',
+        'cert_path': cert_dest,
+        'key_path': key_dest,
+    })
+
+
+def _io_BytesIO(data):
+    import io
+    return io.BytesIO(data)
+
+
+# ── SSL Apply — write nginx config + reload ─────────────────────────────────
+@app.route('/api/settings/ssl/apply', methods=['POST'])
+@login_required
+def ssl_apply():
+    """Write HTTPS nginx config and reload nginx."""
+    import re as _re
+
+    cert = db.session.get(SystemSetting, 'ssl_cert_path')
+    key  = db.session.get(SystemSetting, 'ssl_key_path')
+    cert_path = (cert.value if cert else '').strip()
+    key_path  = (key.value  if key  else '').strip()
+
+    if not cert_path or not key_path:
+        return jsonify({'success': False, 'error': 'SSL paths not configured. Upload or enter paths first.'}), 400
+
+    if not os.path.isfile(cert_path):
+        return jsonify({'success': False, 'error': f'Certificate not found: {cert_path}'}), 400
+    if not os.path.isfile(key_path):
+        return jsonify({'success': False, 'error': f'Private key not found: {key_path}'}), 400
+
+    # Detect domain from existing nginx config
+    domain = ''
+    nginx_conf_path = '/etc/nginx/sites-available/eve-manager'
+    try:
+        with open(nginx_conf_path, 'r', errors='ignore') as _f:
+            _m = _re.search(r'server_name\s+([^;]+);', _f.read())
+            if _m:
+                domain = _m.group(1).strip().split()[0]
+    except Exception:
+        pass
+
+    if not domain:
+        data = request.get_json(silent=True) or {}
+        domain = data.get('domain', '').strip()
+    if not domain:
+        return jsonify({'success': False, 'error': 'Cannot detect domain. Pass {"domain":"your.domain"} in request body.'}), 400
+
+    app_port = os.environ.get('API_PORT', '5000')
+
+    nginx_config = f"""server {{
+    listen 80;
+    server_name {domain};
+    return 301 https://$host$request_uri;
+}}
+
+server {{
+    listen 443 ssl;
+    server_name {domain};
+
+    ssl_certificate     {cert_path};
+    ssl_certificate_key {key_path};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    client_max_body_size 512m;
+
+    location ~* /stream$ {{
+        proxy_pass http://127.0.0.1:{app_port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+    }}
+
+    location / {{
+        proxy_pass http://127.0.0.1:{app_port};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_request_buffering off;
+    }}
+}}
+"""
+
+    # Write config via sudo tee (evemgr needs sudo tee permission — added in setup.sh)
+    try:
+        result = subprocess.run(
+            ['sudo', 'tee', nginx_conf_path],
+            input=nginx_config, text=True,
+            capture_output=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return jsonify({'success': False,
+                            'error': f'Could not write nginx config: {result.stderr.strip()}'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Failed to write nginx config: {e}'}), 500
+
+    # Test nginx config
+    test = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True, timeout=10)
+    if test.returncode != 0:
+        return jsonify({'success': False,
+                        'error': f'nginx config test failed:\n{test.stderr.strip()}'}), 500
+
+    # Reload nginx
+    reload_r = subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'],
+                              capture_output=True, text=True, timeout=15)
+    if reload_r.returncode != 0:
+        return jsonify({'success': False,
+                        'error': f'nginx reload failed: {reload_r.stderr.strip()}'}), 500
+
+    return jsonify({
+        'success': True,
+        'message': f'SSL applied — nginx reloaded. Site is now HTTPS on {domain}',
+        'domain': domain,
+    })
+
 
 @app.route('/api/settings/session', methods=['GET'])
 @login_required

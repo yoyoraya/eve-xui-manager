@@ -1798,6 +1798,15 @@ install_eve_cli() {
     else
         print_warning "Could not install eve CLI (permission denied?)"
     fi
+
+    # Allow the app user to reload nginx without a password (needed for SSL apply)
+    local SUDOERS_FILE="/etc/sudoers.d/eve-nginx"
+    cat > "$SUDOERS_FILE" <<EOF
+# Allow ${APP_USER} to reload/test nginx for SSL management
+${APP_USER} ALL=(root) NOPASSWD: /bin/systemctl reload nginx, /usr/sbin/nginx -t, /usr/bin/tee /etc/nginx/sites-available/${SERVICE_NAME}
+EOF
+    chmod 440 "$SUDOERS_FILE"
+    print_success "Sudoers entry created for nginx reload"
 }
 
 # ──────────────────────────────────────────────────────────────

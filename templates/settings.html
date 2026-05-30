@@ -554,38 +554,101 @@
         </div>
 
         <div id="tab-ssl" class="tab-pane">
+
+            <!-- Status card -->
+            <div class="panel-card" style="margin-bottom:16px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>SSL Certificate</h2>
+                        <p class="text-secondary">Current certificate status</p>
+                    </div>
+                    <button class="btn btn-secondary" onclick="loadSSLSettings()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                        Refresh
+                    </button>
+                </div>
+                <div id="ssl-status-panel" style="padding:10px 14px;border-radius:8px;font-size:0.875rem;display:flex;align-items:center;gap:8px;background:#1e293b;color:#94a3b8;">
+                    Loading…
+                </div>
+                <div id="ssl-paths-display" style="margin-top:10px;display:none;">
+                    <div style="font-size:0.8rem;color:#64748b;line-height:1.8;">
+                        <div>📄 Cert: <span id="ssl-cert-path-display" style="color:#94a3b8;font-family:monospace;"></span></div>
+                        <div>🔑 Key: <span id="ssl-key-path-display" style="color:#94a3b8;font-family:monospace;"></span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Export — for the server that HAS the cert (foreign server) -->
+            <div class="panel-card" style="margin-bottom:16px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>📦 Export SSL Bundle</h2>
+                        <p class="text-secondary">Download cert + key as a zip — use on servers that already have a valid certificate</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="exportSSL()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        Download eve-ssl-bundle.zip
+                    </button>
+                </div>
+            </div>
+
+            <!-- Upload — for the Iran server -->
+            <div class="panel-card" style="margin-bottom:16px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>⬆️ Upload SSL Bundle</h2>
+                        <p class="text-secondary">Upload the zip downloaded from the foreign server — extracts to <code>/etc/ssl/eve-manager/</code></p>
+                    </div>
+                </div>
+                <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:200px;">
+                        <label style="font-size:0.85rem;color:#94a3b8;margin-bottom:4px;display:block;">eve-ssl-bundle.zip</label>
+                        <input type="file" id="ssl-zip-input" accept=".zip" class="form-control" style="padding:6px;">
+                    </div>
+                    <button class="btn btn-primary" onclick="uploadSSL()" style="white-space:nowrap;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        Upload &amp; Extract
+                    </button>
+                </div>
+                <div id="ssl-upload-status" style="display:none;margin-top:10px;font-size:0.85rem;"></div>
+            </div>
+
+            <!-- Manual paths + Apply to nginx -->
             <div class="panel-card">
                 <div class="panel-card-header">
                     <div class="header-content">
-                        <h2>SSL Configuration</h2>
-                        <p class="text-secondary">Configure SSL certificate paths for HTTPS.</p>
+                        <h2>⚙️ Configure &amp; Apply</h2>
+                        <p class="text-secondary">Set certificate paths and apply to nginx — panel becomes HTTPS instantly</p>
                     </div>
-                    <button class="btn btn-primary" onclick="saveSSLSettings()">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                        Save Settings
-                    </button>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn btn-secondary" onclick="saveSSLSettings()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                            Save Paths
+                        </button>
+                        <button class="btn btn-primary" onclick="applySSL()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                            Apply SSL to nginx
+                        </button>
+                    </div>
                 </div>
 
-                <div id="ssl-status-panel" style="display:none; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 0.875rem; display: flex; align-items: center; gap: 8px;"></div>
-
                 <div class="form-group">
-                    <label>Public Key Path (Certificate)</label>
+                    <label>Certificate Path (fullchain.pem / .crt)</label>
                     <div style="position:relative;">
-                        <input type="text" id="ssl-cert-path" class="form-control" placeholder="/etc/ssl/certs/your_cert.crt">
+                        <input type="text" id="ssl-cert-path" class="form-control" placeholder="/etc/ssl/eve-manager/fullchain.pem">
                         <span id="ssl-cert-icon" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:1rem;display:none;"></span>
                     </div>
-                    <small class="text-secondary">Absolute path to your .crt or .pem file</small>
-                    <small id="ssl-cert-feedback" style="display:none; margin-top:2px;"></small>
+                    <small id="ssl-cert-feedback" style="display:none;margin-top:2px;"></small>
                 </div>
                 <div class="form-group">
-                    <label>Private Key Path</label>
+                    <label>Private Key Path (privkey.pem / .key)</label>
                     <div style="position:relative;">
-                        <input type="text" id="ssl-key-path" class="form-control" placeholder="/etc/ssl/private/your_key.key">
+                        <input type="text" id="ssl-key-path" class="form-control" placeholder="/etc/ssl/eve-manager/privkey.pem">
                         <span id="ssl-key-icon" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:1rem;display:none;"></span>
                     </div>
-                    <small class="text-secondary">Absolute path to your .key file</small>
-                    <small id="ssl-key-feedback" style="display:none; margin-top:2px;"></small>
+                    <small id="ssl-key-feedback" style="display:none;margin-top:2px;"></small>
                 </div>
+                <div id="ssl-apply-status" style="display:none;margin-top:10px;padding:10px;border-radius:6px;font-size:0.875rem;"></div>
             </div>
         </div>
 
@@ -2482,6 +2545,15 @@
                 document.getElementById('ssl-cert-path').value = data.cert_path || '';
                 document.getElementById('ssl-key-path').value = data.key_path || '';
                 renderSSLStatus(data);
+                // Show paths in status card
+                const pd = document.getElementById('ssl-paths-display');
+                if (data.cert_path || data.key_path) {
+                    pd.style.display = 'block';
+                    document.getElementById('ssl-cert-path-display').textContent = data.cert_path || '—';
+                    document.getElementById('ssl-key-path-display').textContent  = data.key_path  || '—';
+                } else {
+                    pd.style.display = 'none';
+                }
             }
         } catch (e) {
             console.error('Error loading SSL settings', e);
@@ -2490,8 +2562,7 @@
 
     async function saveSSLSettings() {
         const certPath = document.getElementById('ssl-cert-path').value.trim();
-        const keyPath = document.getElementById('ssl-key-path').value.trim();
-
+        const keyPath  = document.getElementById('ssl-key-path').value.trim();
         try {
             const res = await fetch('/api/settings/ssl', {
                 method: 'POST',
@@ -2499,14 +2570,86 @@
                 body: JSON.stringify({ cert_path: certPath, key_path: keyPath })
             });
             const data = await res.json();
+            if (data.success) { showToast(data.message || 'SSL paths saved'); loadSSLSettings(); }
+            else               { showToast(data.error || 'Error saving SSL settings', 'error'); }
+        } catch (e) { showToast('Network error', 'error'); }
+    }
+
+    // ── Export: download cert+key zip from this server ────────────────────
+    function exportSSL() {
+        window.location.href = '/api/settings/ssl/export';
+    }
+
+    // ── Upload: send zip to this server ──────────────────────────────────
+    async function uploadSSL() {
+        const input = document.getElementById('ssl-zip-input');
+        const statusEl = document.getElementById('ssl-upload-status');
+
+        if (!input.files.length) {
+            showToast('Please select a zip file first', 'warning');
+            return;
+        }
+
+        const fd = new FormData();
+        fd.append('ssl_zip', input.files[0]);
+
+        statusEl.style.display = 'block';
+        statusEl.style.background = 'rgba(148,163,184,0.1)';
+        statusEl.style.color = '#94a3b8';
+        statusEl.textContent = '⏳ Uploading and extracting…';
+
+        try {
+            const res  = await fetch('/api/settings/ssl/upload', { method: 'POST', body: fd });
+            const data = await res.json();
             if (data.success) {
-                showToast(data.message || 'SSL settings saved');
+                statusEl.style.background = 'rgba(34,197,94,0.12)';
+                statusEl.style.color = '#22c55e';
+                statusEl.textContent = `✓ ${data.message} — cert: ${data.cert_path}`;
                 loadSSLSettings();
+                showToast('SSL files uploaded. Click "Apply SSL to nginx" to enable HTTPS.', 'success', 6000);
             } else {
-                showToast(data.error || 'Error saving SSL settings', 'error');
+                statusEl.style.background = 'rgba(239,68,68,0.1)';
+                statusEl.style.color = '#ef4444';
+                statusEl.textContent = `✗ ${data.error}`;
             }
         } catch (e) {
-            showToast('Network error', 'error');
+            statusEl.style.background = 'rgba(239,68,68,0.1)';
+            statusEl.style.color = '#ef4444';
+            statusEl.textContent = `✗ Network error: ${e.message}`;
+        }
+    }
+
+    // ── Apply: write nginx config + reload ───────────────────────────────
+    async function applySSL() {
+        const statusEl = document.getElementById('ssl-apply-status');
+        statusEl.style.display = 'block';
+        statusEl.style.background = 'rgba(148,163,184,0.1)';
+        statusEl.style.color = '#94a3b8';
+        statusEl.textContent = '⏳ Applying SSL to nginx…';
+
+        try {
+            const res  = await fetch('/api/settings/ssl/apply', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
+            });
+            const data = await res.json();
+            if (data.success) {
+                statusEl.style.background = 'rgba(34,197,94,0.12)';
+                statusEl.style.color = '#22c55e';
+                statusEl.textContent = `✓ ${data.message}`;
+                loadSSLSettings();
+                showToast(data.message, 'success', 6000);
+            } else {
+                statusEl.style.background = 'rgba(239,68,68,0.1)';
+                statusEl.style.color = '#ef4444';
+                statusEl.textContent = `✗ ${data.error}`;
+                showToast(data.error, 'error', 8000);
+            }
+        } catch (e) {
+            statusEl.style.background = 'rgba(239,68,68,0.1)';
+            statusEl.style.color = '#ef4444';
+            statusEl.textContent = `✗ Network error: ${e.message}`;
         }
     }
 
