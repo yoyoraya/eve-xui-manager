@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.7"
+APP_VERSION = "2.1.8"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -16001,22 +16001,41 @@ def ssl_upload():
 
         cert_dest = f'{SSL_DEST_DIR}/fullchain.pem'
         key_dest  = f'{SSL_DEST_DIR}/privkey.pem'
-        app_user  = os.environ.get('APP_USER', 'evemgr')
 
-        # Use sudo to move files into the protected /etc/ssl/eve-manager/ dir
-        cmds = [
-            ['sudo', 'mkdir', '-p', SSL_DEST_DIR],
-            ['sudo', 'cp', '-f', tmp_cert, cert_dest],
-            ['sudo', 'cp', '-f', tmp_key,  key_dest],
-            ['sudo', 'chown', f'{app_user}:{app_user}', cert_dest, key_dest],
-            ['sudo', 'chmod', '644', cert_dest],
-            ['sudo', 'chmod', '600', key_dest],
-        ]
-        for cmd in cmds:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if r.returncode != 0:
-                return jsonify({'success': False,
-                                'error': f'Install failed ({" ".join(cmd[:3])}): {r.stderr.strip()}'}), 500
+        FIX_CMD = (
+            "sudo bash -c '"
+            "mkdir -p /etc/ssl/eve-manager && "
+            "chown evemgr:evemgr /etc/ssl/eve-manager && "
+            "chmod 700 /etc/ssl/eve-manager && "
+            "cat > /etc/sudoers.d/eve-ssl <<EOF\n"
+            "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/fullchain.pem\n"
+            "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/privkey.pem\n"
+            "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/fullchain*.pem\n"
+            "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/privkey*.pem\n"
+            "evemgr ALL=(root) NOPASSWD: /bin/systemctl reload nginx\n"
+            "evemgr ALL=(root) NOPASSWD: /usr/sbin/nginx -t\n"
+            "evemgr ALL=(root) NOPASSWD: /usr/bin/tee /etc/nginx/sites-available/eve-manager\n"
+            "EOF\n"
+            "chmod 440 /etc/sudoers.d/eve-ssl'"
+        )
+
+        # /etc/ssl/eve-manager/ must be owned by evemgr (one-time setup).
+        # Then we write directly — no sudo needed at all for upload.
+        if not os.path.isdir(SSL_DEST_DIR) or not os.access(SSL_DEST_DIR, os.W_OK):
+            return jsonify({
+                'success': False,
+                'error': (
+                    f'{SSL_DEST_DIR}/ does not exist or is not writable.\n'
+                    f'Run this on the server once:\n\n{FIX_CMD}'
+                ),
+                'fix_command': FIX_CMD,
+            }), 500
+
+        import shutil as _shutil
+        _shutil.copy2(tmp_cert, cert_dest)
+        os.chmod(cert_dest, 0o644)
+        _shutil.copy2(tmp_key, key_dest)
+        os.chmod(key_dest, 0o600)
 
     finally:
         # Always clean up temp files

@@ -2742,11 +2742,19 @@
                 loadSSLSettings();
                 showToast('SSL files uploaded. Click "Apply SSL to nginx" to enable HTTPS.', 'success', 6000);
             } else {
-                statusEl.style.background = 'rgba(239,68,68,0.1)';
+                statusEl.style.display = 'block';
+                statusEl.style.background = 'rgba(239,68,68,0.08)';
                 statusEl.style.color = '#ef4444';
-                statusEl.textContent = `✗ ${data.error}`;
+                if (data.fix_command) {
+                    statusEl.innerHTML = `<div style="margin-bottom:8px;">✗ ${escapeHtml(data.error.split('\n')[0])}</div>`
+                        + `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:6px;">Run this command on the server once, then retry:</div>`
+                        + `<code style="display:block;background:#0d0d1a;padding:10px;border-radius:6px;font-size:0.75rem;white-space:pre-wrap;color:#7eb8f7;word-break:break-all;">${escapeHtml(data.fix_command)}</code>`;
+                } else {
+                    statusEl.textContent = `✗ ${data.error}`;
+                }
             }
         } catch (e) {
+            statusEl.style.display = 'block';
             statusEl.style.background = 'rgba(239,68,68,0.1)';
             statusEl.style.color = '#ef4444';
             statusEl.textContent = `✗ Network error: ${e.message}`;
