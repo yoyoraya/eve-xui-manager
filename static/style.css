@@ -1625,6 +1625,17 @@ html[data-theme="light"] .package-price {
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.inbound-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .inbound-title h3 {
@@ -3716,13 +3727,23 @@ html[data-theme="light"] .server-icon {
     }
     
     .inbound-header {
-        flex-direction: column;
+        /* Keep title + status on one row even on narrow phones.
+           Status (Active + Select All) stays pinned top-right while the
+           title badges wrap underneath — matches the wide-screen layout. */
+        flex-direction: row;
         align-items: flex-start;
+        flex-wrap: nowrap;
+        gap: 8px;
     }
-    
+
     .inbound-title {
-        width: 100%;
+        flex: 1 1 auto;
+        min-width: 0;
         flex-wrap: wrap;
+    }
+
+    .inbound-status {
+        flex: 0 0 auto;
     }
     
     .inbound-meta-compact {
