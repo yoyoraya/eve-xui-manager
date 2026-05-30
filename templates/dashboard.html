@@ -963,6 +963,11 @@
 
     jdp-overlay {
         z-index: 99998 !important;
+        /* disable the mobile backdrop-blur from jalalidatepicker.min.css
+           which blurs the entire dashboard page on small screens */
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background-color: rgba(0, 0, 0, 0.45) !important;
     }
 
     jdp-container, jdp-container * {
