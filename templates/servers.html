@@ -148,9 +148,13 @@
             return el;
         }
 
+        const EYE_OPEN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+        const EYE_OFF_SVG  = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
         function createServerCard(server) {
+            const isHidden = Boolean(server.hidden);
             const card = document.createElement('div');
-            card.className = `server-card${!server.enabled ? ' disabled' : ''}`;
+            card.className = `server-card${!server.enabled ? ' disabled' : ''}${isHidden ? ' server-hidden' : ''}`;
 
             const header = document.createElement('div');
             header.className = 'server-header';
@@ -174,7 +178,13 @@
 
             const badges = document.createElement('div');
             badges.className = 'server-badges';
+            // ID badge
+            const idBadge = createBadge(`#${server.id}`, 'badge panel-type');
+            idBadge.style.fontFamily = 'monospace';
+            idBadge.title = `Server ID used in dash-sub URLs (e.g. /s/${server.id}/...)`;
+            badges.appendChild(idBadge);
             badges.appendChild(createBadge(server.enabled ? 'Enabled' : 'Disabled', `badge ${server.enabled ? 'active' : 'inactive'}`));
+            if (isHidden) badges.appendChild(createBadge('Hidden', 'badge inactive'));
             badges.appendChild(createBadge(server.panel_type || 'Unknown', 'badge panel-type'));
 
             const statusMeta = document.createElement('div');
@@ -212,6 +222,16 @@
 
             const actions = document.createElement('div');
             actions.className = 'server-actions';
+
+            // Eye / hide-show toggle
+            const eyeBtn = document.createElement('button');
+            eyeBtn.type = 'button';
+            eyeBtn.className = 'action-btn';
+            eyeBtn.title = isHidden ? 'Show server (resume fetching)' : 'Hide server (pause fetching, kept in backups)';
+            eyeBtn.innerHTML = isHidden ? EYE_OFF_SVG : EYE_OPEN_SVG;
+            if (isHidden) eyeBtn.style.color = '#94a3b8';
+            eyeBtn.addEventListener('click', () => toggleServerHidden(server.id));
+            actions.appendChild(eyeBtn);
 
             const testBtn = document.createElement('button');
             testBtn.type = 'button';
@@ -354,6 +374,21 @@
         }
     }
     
+    async function toggleServerHidden(id) {
+        try {
+            const res = await fetch(`/api/servers/${id}/hidden`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.hidden ? 'Server hidden — no longer fetched' : 'Server visible — will be fetched on next refresh', 'success', 4000);
+                loadServers();
+            } else {
+                showToast(data.error || 'Failed to toggle', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
     async function deleteServer(id) {
         if (!confirm('Are you sure you want to delete this server?')) return;
         

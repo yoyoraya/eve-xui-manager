@@ -3283,6 +3283,12 @@ select optgroup {
     opacity: 0.6;
 }
 
+.server-card.server-hidden {
+    opacity: 0.55;
+    border-style: dashed;
+    border-color: rgba(100, 116, 139, 0.4);
+}
+
 .server-header {
     display: flex;
     gap: 12px;
