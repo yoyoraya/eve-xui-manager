@@ -1376,29 +1376,47 @@
             ].join('\n');
         let accountInfoTemplateCache = {};
 
+        // Cache stores { content, telegram_channel, whatsapp_channel }
         async function getAccountInfoTemplate(channel = 'whatsapp') {
             if (accountInfoTemplateCache[channel] !== undefined) return accountInfoTemplateCache[channel];
             try {
                 const res = await fetch(`/api/account-message-templates/active?channel=${encodeURIComponent(channel)}`);
                 const data = await res.json();
-                accountInfoTemplateCache[channel] = (data && data.content) ? data.content : DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE;
+                accountInfoTemplateCache[channel] = {
+                    content:           (data && data.content)           ? data.content           : DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE,
+                    telegram_channel:  (data && data.telegram_channel)  ? data.telegram_channel  : '',
+                    whatsapp_channel:  (data && data.whatsapp_channel)  ? data.whatsapp_channel  : '',
+                };
             } catch (e) {
-                accountInfoTemplateCache[channel] = DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE;
+                accountInfoTemplateCache[channel] = {
+                    content: DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE,
+                    telegram_channel: '',
+                    whatsapp_channel: '',
+                };
             }
             return accountInfoTemplateCache[channel];
         }
 
-        function renderClientAccountMessage(template, client) {
+        function renderClientAccountMessage(templateObj, client) {
+            // templateObj may be a plain string (legacy) or { content, telegram_channel, whatsapp_channel }
+            const templateStr = (typeof templateObj === 'string')
+                ? templateObj
+                : (templateObj?.content || DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE);
+            const telegramCh = (typeof templateObj === 'object') ? (templateObj?.telegram_channel || '') : '';
+            const whatsappCh = (typeof templateObj === 'object') ? (templateObj?.whatsapp_channel || '') : '';
+
             const values = {
-                email: client?.email || '-',
-                account_name: client?.email || '-',
-                remaining_time: client?.expiryTime || '-',
-                remaining_volume: client?.remaining_formatted || '-',
-                dashboard_link: absolutePanelUrl(client?.dash_sub_url || client?.sub_url || ''),
-                sub_link: absolutePanelUrl(client?.sub_url || ''),
-                server_name: client?.server_name || ''
+                email:             client?.email || '-',
+                account_name:      client?.email || '-',
+                remaining_time:    client?.expiryTime || '-',
+                remaining_volume:  client?.remaining_formatted || '-',
+                dashboard_link:    absolutePanelUrl(client?.dash_sub_url || client?.sub_url || ''),
+                sub_link:          absolutePanelUrl(client?.sub_url || ''),
+                server_name:       client?.server_name || '',
+                telegram_channel:  telegramCh,
+                whatsapp_channel:  whatsappCh,
             };
-            return String(template || DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE).replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => (
+            return String(templateStr).replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => (
                 Object.prototype.hasOwnProperty.call(values, key) ? values[key] : match
             ));
         }

@@ -1030,11 +1030,14 @@
                 <label>Content</label>
                 <div class="variables-chips" id="account-message-modal-vars">
                     <span class="var-chip" onclick="insertAccountMessageVar('{email}')">{email}</span>
+                    <span class="var-chip" onclick="insertAccountMessageVar('{account_name}')">{account_name}</span>
                     <span class="var-chip" onclick="insertAccountMessageVar('{remaining_time}')">{remaining_time}</span>
                     <span class="var-chip" onclick="insertAccountMessageVar('{remaining_volume}')">{remaining_volume}</span>
                     <span class="var-chip" onclick="insertAccountMessageVar('{dashboard_link}')">{dashboard_link}</span>
                     <span class="var-chip" onclick="insertAccountMessageVar('{sub_link}')">{sub_link}</span>
                     <span class="var-chip" onclick="insertAccountMessageVar('{server_name}')">{server_name}</span>
+                    <span class="var-chip" onclick="insertAccountMessageVar('{telegram_channel}')" title="Telegram channel — uses reseller's if reseller, otherwise panel owner's">{telegram_channel}</span>
+                    <span class="var-chip" onclick="insertAccountMessageVar('{whatsapp_channel}')" title="WhatsApp channel — uses reseller's if reseller, otherwise panel owner's">{whatsapp_channel}</span>
                 </div>
                 <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px;">
                     <textarea id="account-message-template-content" class="form-input" rows="15" style="font-family: 'Vazirmatn', sans-serif; direction: rtl;" oninput="updateAccountMessageModalPreview(this.value)"></textarea>
@@ -3813,16 +3816,19 @@
     let accountMessageAvailableVars = [];
     let accountMessageDefaultContent = '';
     let accountMessageDefaultSmsContent = '';
+    let accountMessageChannelLinks = { telegram_channel: '', whatsapp_channel: '' };
 
     function renderAccountMessagePreviewText(content) {
         const vars = {
-            '{email}': 'client@example.com',
-            '{account_name}': 'client@example.com',
-            '{remaining_time}': '30 Days',
-            '{remaining_volume}': '110GB',
-            '{dashboard_link}': 'https://example.com/s/1/uuid',
-            '{sub_link}': 'https://example.com/sub/uuid',
-            '{server_name}': 'Germany 1'
+            '{email}':             'client@example.com',
+            '{account_name}':      'client@example.com',
+            '{remaining_time}':    '30 Days',
+            '{remaining_volume}':  '110GB',
+            '{dashboard_link}':    'https://example.com/s/1/uuid',
+            '{sub_link}':          'https://example.com/sub/uuid',
+            '{server_name}':       'Germany 1',
+            '{telegram_channel}':  accountMessageChannelLinks?.telegram_channel || 't.me/yourchannel',
+            '{whatsapp_channel}':  accountMessageChannelLinks?.whatsapp_channel || 'wa.me/yourchannel',
         };
         return String(content || '').replace(/\{[a-zA-Z0-9_]+\}/g, match => (
             Object.prototype.hasOwnProperty.call(vars, match) ? vars[match] : match
@@ -3913,6 +3919,19 @@
             accountMessageAvailableVars = data.available_vars || [];
             accountMessageDefaultContent = data.default_content || '';
             accountMessageDefaultSmsContent = data.default_sms_content || '';
+
+            // Load channel links for preview (from active template endpoint which resolves per-user)
+            try {
+                const chRes = await fetch('/api/account-message-templates/active?channel=whatsapp');
+                const chData = await chRes.json();
+                if (chData.success) {
+                    accountMessageChannelLinks = {
+                        telegram_channel: chData.telegram_channel || '',
+                        whatsapp_channel: chData.whatsapp_channel || '',
+                    };
+                }
+            } catch (_) {}
+
             renderAccountMessageTemplates(accountMessageTemplatesCache);
 
             const modalVarsContainer = document.getElementById('account-message-modal-vars');

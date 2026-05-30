@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.1.4"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -14574,8 +14574,22 @@ def get_active_template():
 def _account_info_template_vars():
     return [
         '{email}', '{account_name}', '{remaining_time}', '{remaining_volume}',
-        '{dashboard_link}', '{sub_link}', '{server_name}'
+        '{dashboard_link}', '{sub_link}', '{server_name}',
+        '{telegram_channel}', '{whatsapp_channel}',
     ]
+
+
+def _account_info_channel_links(admin: 'Admin') -> dict:
+    """Return telegram_channel / whatsapp_channel for an admin/reseller.
+
+    - superadmin / admin  → uses their own channel fields
+    - reseller            → uses the reseller's own channel fields
+    - not set             → empty string (template var stays blank, not shown)
+    """
+    return {
+        'telegram_channel': (admin.channel_telegram or '').strip(),
+        'whatsapp_channel': (admin.channel_whatsapp or '').strip(),
+    }
 
 def _account_info_template_type(channel='whatsapp'):
     channel = (channel or 'whatsapp').strip().lower()
@@ -14637,11 +14651,19 @@ def get_active_account_message_template():
     template_data = template.to_dict() if template else None
     if template_data:
         template_data['channel'] = _account_info_channel_from_type(template.type)
+
+    # Resolve channel links based on the logged-in user's role
+    current_admin = db.session.get(Admin, session.get('admin_id'))
+    channel_links = _account_info_channel_links(current_admin) if current_admin else {
+        'telegram_channel': '', 'whatsapp_channel': ''
+    }
+
     return jsonify({
         'success': True,
         'template': template_data,
         'content': template.content if template else default_content,
         'available_vars': _account_info_template_vars(),
+        **channel_links,
     })
 
 @app.route('/api/account-message-templates', methods=['POST'])
