@@ -1181,7 +1181,21 @@
 
             <div class="form-group">
                 <label>Message</label>
-                <textarea id="announcement-message" class="form-input" rows="4" placeholder="Write announcement text..."></textarea>
+                <div id="ann-editor-toolbar" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;">
+                    <button type="button" onclick="annFmt('bold')" title="Bold" style="min-width:32px;padding:4px 8px;border:1px solid var(--border-color);background:var(--bg-dark);color:var(--text-primary);border-radius:5px;cursor:pointer;font-weight:700;font-size:0.85rem;">B</button>
+                    <button type="button" onclick="annFmt('italic')" title="Italic" style="min-width:32px;padding:4px 8px;border:1px solid var(--border-color);background:var(--bg-dark);color:var(--text-primary);border-radius:5px;cursor:pointer;font-style:italic;font-size:0.85rem;">I</button>
+                    <button type="button" onclick="annFmt('underline')" title="Underline" style="min-width:32px;padding:4px 8px;border:1px solid var(--border-color);background:var(--bg-dark);color:var(--text-primary);border-radius:5px;cursor:pointer;text-decoration:underline;font-size:0.85rem;">U</button>
+                    <button type="button" onclick="annInsertLine()" title="New line" style="padding:4px 10px;border:1px solid var(--border-color);background:var(--bg-dark);color:var(--text-secondary);border-radius:5px;cursor:pointer;font-size:0.8rem;">↵ Line</button>
+                    <button type="button" onclick="annClearFormat()" title="Clear formatting" style="padding:4px 10px;border:1px solid var(--border-color);background:var(--bg-dark);color:var(--text-secondary);border-radius:5px;cursor:pointer;font-size:0.8rem;">✕ Clear</button>
+                </div>
+                <!-- contentEditable rich editor, hidden textarea syncs the HTML value -->
+                <div id="ann-editor"
+                    contenteditable="true"
+                    class="form-input"
+                    style="min-height:100px;white-space:pre-wrap;line-height:1.6;direction:rtl;text-align:right;outline:none;cursor:text;"
+                    oninput="annSyncToHidden()"
+                    placeholder="Write announcement text..."></div>
+                <textarea id="announcement-message" style="display:none;"></textarea>
             </div>
 
             <div style="display:flex; gap: 12px;">
@@ -1929,7 +1943,7 @@
     async function openAddAnnouncementModal() {
         document.getElementById('announcement-id').value = '';
         document.getElementById('announcement-modal-title').textContent = 'Add Announcement';
-        document.getElementById('announcement-message').value = '';
+        annSetContent('');
 
         // Default: all targets
         const hidden = document.getElementById('announcement-targets');
@@ -1950,7 +1964,7 @@
 
         document.getElementById('announcement-id').value = String(a.id);
         document.getElementById('announcement-modal-title').textContent = 'Edit Announcement';
-        document.getElementById('announcement-message').value = a.message || '';
+        annSetContent(a.message || '');
 
         document.getElementById('announcement-start').value = a.start_at_jalali || '';
         document.getElementById('announcement-end').value = a.end_at_jalali || '';
@@ -1966,9 +1980,43 @@
         document.getElementById('announcement-modal').classList.remove('hidden');
     }
 
+    // ── Announcement rich-text editor helpers ──────────────────────────────
+    function annFmt(cmd) {
+        document.getElementById('ann-editor').focus();
+        document.execCommand(cmd, false, null);
+        annSyncToHidden();
+    }
+    function annInsertLine() {
+        document.getElementById('ann-editor').focus();
+        document.execCommand('insertHTML', false, '<br>');
+        annSyncToHidden();
+    }
+    function annClearFormat() {
+        document.getElementById('ann-editor').focus();
+        document.execCommand('removeFormat', false, null);
+        annSyncToHidden();
+    }
+    function annSyncToHidden() {
+        const editor = document.getElementById('ann-editor');
+        const hidden = document.getElementById('announcement-message');
+        if (editor && hidden) hidden.value = editor.innerHTML;
+    }
+    function annSetContent(html) {
+        const editor = document.getElementById('ann-editor');
+        const hidden = document.getElementById('announcement-message');
+        if (editor) editor.innerHTML = html || '';
+        if (hidden) hidden.value = html || '';
+    }
+    function annGetContent() {
+        // Strip empty editor (just a <br> or whitespace)
+        const editor = document.getElementById('ann-editor');
+        const raw = (editor ? editor.innerHTML : '').trim();
+        return raw === '<br>' ? '' : raw;
+    }
+
     async function saveAnnouncement() {
         const id = (document.getElementById('announcement-id').value || '').trim();
-        const message = (document.getElementById('announcement-message').value || '').trim();
+        const message = annGetContent().trim();
         const startAtJalali = (document.getElementById('announcement-start').value || '').trim();
         const endAtJalali = (document.getElementById('announcement-end').value || '').trim();
         const targets = (document.getElementById('announcement-targets').value || '').trim() || '*';

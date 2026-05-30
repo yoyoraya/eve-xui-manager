@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.11"
+APP_VERSION = "2.1.12"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -13433,8 +13433,10 @@ def create_announcement():
     user = db.session.get(Admin, session.get('admin_id')) if session.get('admin_id') else None
     created_by = (getattr(user, 'username', None) or session.get('admin_username') or '').strip() or None
 
+    _ANN_TAGS = ['b','strong','i','em','u','br','p','span','ul','ol','li','a']
+    _ANN_ATTRS = {'a': ['href'], 'span': ['style'], '*': []}
     ann = Announcement(
-        message=sanitize_html(payload['message']),
+        message=sanitize_html(payload['message'], tags=_ANN_TAGS, attributes=_ANN_ATTRS),
         all_servers=payload['all_servers'],
         targets=payload['targets'],
         start_at=payload['start_at'],
@@ -13467,7 +13469,9 @@ def update_announcement(announcement_id):
     if err:
         return jsonify({'success': False, 'error': err}), 400
 
-    ann.message = sanitize_html(payload['message'])
+    _ANN_TAGS = ['b','strong','i','em','u','br','p','span','ul','ol','li','a']
+    _ANN_ATTRS = {'a': ['href'], 'span': ['style'], '*': []}
+    ann.message = sanitize_html(payload['message'], tags=_ANN_TAGS, attributes=_ANN_ATTRS)
     ann.all_servers = payload['all_servers']
     ann.targets = payload['targets']
     ann.start_at = payload['start_at']

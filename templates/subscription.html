@@ -85,7 +85,7 @@
                 {% for a in announcements %}
                 <div class="px-4 py-3 rounded-xl bg-[#fb923c]/10 border border-[#fb923c]/20">
                     <div class="text-sm font-semibold text-[#fb923c]">⚠️ {{ 'یه نکته' if is_fa else 'Attention' }}</div>
-                    <div class="mt-1 text-sm text-white/90" style="direction: rtl; text-align: right;">{{ a.message }}</div>
+                    <div class="mt-1 text-sm text-white/90" style="direction: rtl; text-align: right;">{{ a.message | safe }}</div>
                 </div>
                 {% endfor %}
             </div>
