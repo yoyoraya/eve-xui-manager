@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for git log in release notes
 
       - name: Build offline bundle
         env:
@@ -33,6 +35,27 @@ jobs:
           SIZE=$(du -sh dist/eve-xui-manager-offline.tar.gz | awk '{print $1}')
           echo "size=$SIZE" >> "$GITHUB_OUTPUT"
           echo "Bundle size: $SIZE"
+
+          # Extract version from app.py
+          VER=$(grep -m1 'APP_VERSION' app.py | grep -oP '"[^"]+"' | tr -d '"' || echo "${{ github.ref_name }}")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+          # Get previous tag for changelog range
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "${{ github.ref_name }}" | head -1 || echo "")
+          echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+
+          # Build changelog from commit messages since previous tag
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "${PREV_TAG}..${{ github.ref_name }}" --pretty=format:"- %s" | grep -v "^- Bump version" || echo "- See commit history")
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s" -10 | grep -v "^- Bump version" || echo "- See commit history")
+          fi
+          # Save multi-line to output
+          {
+            echo 'changelog<<EOF'
+            echo "$CHANGELOG"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact (all runs)
         uses: actions/upload-artifact@v4
@@ -47,22 +70,52 @@ jobs:
         with:
           files: dist/eve-xui-manager-offline.tar.gz
           body: |
+            ## Eve X-UI Manager ${{ steps.info.outputs.version }}
+
+            ### Changes in this release
+            ${{ steps.info.outputs.changelog }}
+
+            ---
+
             ## Offline Bundle — Ubuntu 22.04 (Jammy) amd64
 
-            Contains **everything** needed to install Eve on a server with no internet:
-            - All system packages (.deb files, Ubuntu 22.04 Jammy)
-            - Python 3.11 portable runtime
-            - All Python packages (pre-built wheels, CPython 3.11 / x86_64)
-            - Full application source code
+            Contains **everything** needed to install Eve on a server with **no internet access**:
 
-            ### Install (no internet needed on target server)
+            | Included | Description |
+            |----------|-------------|
+            | 📦 System packages | All `.deb` files for Ubuntu 22.04 Jammy amd64 |
+            | 🐍 Python 3.11 runtime | Portable, no system Python needed |
+            | 📚 Python packages | Pre-built wheels (CPython 3.11 / x86_64) |
+            | 📂 Application | Full source code |
+
+            Bundle size: **${{ steps.info.outputs.size }}**
+
+            ---
+
+            ### Fresh Install (no internet needed)
 
             ```bash
-            # Upload to server via SCP first, then:
-            tar -xzf eve-xui-manager-offline.tar.gz
-            cd eve-xui-manager
+            # 1. Upload to server via SCP
+            scp eve-xui-manager-offline.tar.gz root@YOUR_SERVER:/root/
+
+            # 2. On the server:
+            tar -xzf /root/eve-xui-manager-offline.tar.gz -C /root/
+            cd /root/eve-xui-manager
             sudo bash setup.sh
             # → Choose:  [o] Setup Full Offline
             ```
 
-            Bundle size: ${{ steps.info.outputs.size }}
+            ### Update Existing Install
+
+            ```bash
+            cd /opt/eve-xui-manager
+            git pull
+            sudo systemctl restart eve-manager
+            ```
+
+            ### After Install
+
+            ```bash
+            sudo eve          # management menu
+            sudo journalctl -u eve-manager -f   # live logs
+            ```
