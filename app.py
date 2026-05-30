@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.8"
+APP_VERSION = "2.1.9"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -7417,6 +7417,7 @@ def api_refresh():
 
 @app.route('/api/refresh/job/<job_id>')
 @login_required
+@limiter.exempt
 def api_refresh_job(job_id):
     with REFRESH_JOBS_LOCK:
         job = REFRESH_JOBS.get(job_id)
@@ -8641,6 +8642,7 @@ def bulk_client_action():
 
 @app.route('/api/client/bulk/job/<job_id>', methods=['GET'])
 @login_required
+@limiter.exempt
 def bulk_client_job(job_id):
     user = db.session.get(Admin, session['admin_id'])
     if not user:
