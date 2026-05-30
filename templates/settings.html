@@ -3335,6 +3335,9 @@
 
             if (data.type === 'log') {
                 appendLog(data.message);
+            } else if (data.type === 'progress') {
+                // Update status line without adding a log entry (keeps log clean during parallel restore)
+                statusTxt.textContent = data.message;
             } else if (data.type === 'error') {
                 es.close();
                 appendLog('✗ ' + data.message, '#ff6b6b');

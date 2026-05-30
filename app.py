@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.2"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -1761,11 +1761,17 @@ def _pg_dump_backup(dest_path: str) -> None:
         raise RuntimeError(f"pg_dump exited with code {result.returncode}")
 
 
+def _pg_restore_jobs() -> int:
+    """Number of parallel pg_restore workers — half of CPUs, min 1, max 8."""
+    cpus = os.cpu_count() or 1
+    return max(1, min(cpus, 8))
+
+
 def _pg_restore_backup(backup_path: str) -> None:
     """Restore a PostgreSQL database from a pg_dump file.
 
     Supports:
-    - .dump  (pg_dump --format=custom)  → pg_restore
+    - .dump  (pg_dump --format=custom)  → pg_restore --jobs=N (parallel)
     - .sql   (pg_dump --format=plain)   → psql
     Requires postgresql-client tools (pg_restore / psql) on the server.
     """
@@ -1784,10 +1790,12 @@ def _pg_restore_backup(backup_path: str) -> None:
                 "pg_restore not found in PATH. "
                 "Install postgresql-client:  apt install postgresql-client"
             )
+        jobs = _pg_restore_jobs()
         cmd = [
             bin_,
             '--clean', '--if-exists',
             '--no-owner', '--no-acl',
+            f'--jobs={jobs}',
             '--dbname', uri,
             backup_path,
         ]
@@ -16258,9 +16266,10 @@ def restore_backup_stream(filename):
                     if not tool_bin:
                         yield _sse('error', 'pg_restore not found.\n  Fix: sudo apt install postgresql-client')
                         return
+                    jobs = _pg_restore_jobs()
                     tool = 'pg_restore'
                     cmd = [tool_bin, '--clean', '--if-exists', '--no-owner', '--no-acl',
-                           '--dbname', _db_uri(), '--verbose', backup_path]
+                           f'--jobs={jobs}', '--dbname', _db_uri(), backup_path]
                 else:
                     tool_bin = shutil.which('psql')
                     if not tool_bin:
@@ -16291,31 +16300,51 @@ def restore_backup_stream(filename):
 
                 db.engine.dispose()
 
+                # --jobs=N means pg_restore spawns parallel workers — no stdout
+                # lines will flow during restore. We run it in the background and
+                # send heartbeats every 2 s so the SSE connection stays alive.
+                import threading as _threading
+                import time as _time
+
                 proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    bufsize=1,
                     env=env,
                 )
 
-                line_count = 0
-                for raw_line in proc.stdout:
-                    line = raw_line.rstrip()
-                    if line:
-                        line_count += 1
-                        yield _sse('log', line)
-                        # Heartbeat every 20 lines to keep nginx from timing out
-                        if line_count % 20 == 0:
-                            yield _heartbeat()
+                # Collect stderr in a background thread so we can show errors
+                stderr_lines = []
+                def _read_stderr():
+                    for _l in proc.stderr:
+                        stderr_lines.append(_l.rstrip())
+                _t = _threading.Thread(target=_read_stderr, daemon=True)
+                _t.start()
 
-                proc.wait(timeout=600)
+                # Stream heartbeats + elapsed time while waiting
+                start = _time.monotonic()
+                yield _sse('log', f'Running {tool} with --jobs={jobs} (parallel)…')
+                while proc.poll() is None:
+                    _time.sleep(2)
+                    elapsed = int(_time.monotonic() - start)
+                    yield _sse('progress', f'Restoring… {elapsed}s elapsed')
+                    yield _heartbeat()
+
+                _t.join(timeout=5)
+                proc.wait(timeout=10)
+
+                elapsed = int(_time.monotonic() - start)
+                # Show last few stderr lines (errors / warnings)
+                visible = [l for l in stderr_lines if l and not l.startswith('pg_restore:')]
+                errors  = [l for l in stderr_lines if 'error' in l.lower()]
+                for line in (errors or visible)[-10:]:
+                    yield _sse('log', line)
 
                 if proc.returncode != 0:
-                    yield _sse('error', f'{tool} exited with code {proc.returncode}')
+                    yield _sse('error', f'{tool} exited with code {proc.returncode} after {elapsed}s')
                 else:
-                    yield _sse('log', f'✓ {tool} finished ({line_count} lines processed)')
+                    yield _sse('log', f'✓ {tool} finished in {elapsed}s (--jobs={jobs})')
                     yield _sse('done', '✓ Restore complete — logging you out.',
                                redirect=url_for('logout'))
             else:
