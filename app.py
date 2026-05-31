@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.16"
+APP_VERSION = "2.1.17"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -10298,13 +10298,15 @@ def add_client(server_id, inbound_id):
             app_base = request.url_root.rstrip('/')
             dash_sub_url = f"{app_base}/s/{server.id}/{final_id}"
             
-            # Fetch direct link from upstream subscription instead of generating manually
+            # Fetch direct link from upstream subscription instead of generating manually.
+            # Short timeout so a slow/overloaded panel doesn't add seconds to every
+            # "add client" call — we fall back to local generation immediately.
             direct_link = None
             try:
                 sub_resp = requests.get(
-                    sub_url, 
-                    headers={'User-Agent': 'v2rayng'}, 
-                    timeout=10, 
+                    sub_url,
+                    headers={'User-Agent': 'v2rayng'},
+                    timeout=(2, 3),
                     verify=False,
                     allow_redirects=False
                 )

@@ -1652,6 +1652,7 @@
         applyDisabledVisibility();
         getAccountInfoTemplate('whatsapp');
         getAccountInfoTemplate('sms');
+        getClientCreatedTemplate();   // warm cache so the first "new service" modal is instant
         // Load servers first to know if we have any
         loadServers().then(() => {
             // Kick off a background refresh (non-blocking) and render cached data immediately.
@@ -4004,11 +4005,17 @@
                 _lastUserOverrides.set(`${sid}_${iid}`, { email, until: Date.now() + 120000 });
 
                 closeAddClientModal();
-                // Always refresh only the affected server immediately
-                refreshData(true, { force: true, wait: true, serverId: inboundData.server_id });
+                // Show the success modal FIRST so copy/QR are instantly available.
                 if (data.client) {
                     showNewClientModal(data.client);
                 }
+                // Defer the server refresh so it doesn't compete with the modal
+                // render. Non-blocking (no wait:true) — on large panels (10k+
+                // clients) a synchronous re-render would freeze mobile. The new
+                // client is already in the optimistic last-user cache above.
+                setTimeout(() => {
+                    refreshData(true, { force: true, serverId: inboundData.server_id });
+                }, 1200);
             } else {
                 showCreditAwareError(data.error || 'Error creating client', response.status);
             }
@@ -4031,25 +4038,21 @@
         showToast('Details copied to clipboard');
     }
 
-    async function showNewClientModal(client) {
-        const modal = document.getElementById('new-client-modal');
-        const detailsText = document.getElementById('new-client-details');
-        
-        // Fetch active template
-        let templateContent = '';
+    // Cache the client-created template so we don't re-fetch it on every add.
+    let _clientCreatedTemplateCache = null;
+    async function getClientCreatedTemplate() {
+        if (_clientCreatedTemplateCache !== null) return _clientCreatedTemplateCache;
         try {
             const res = await fetch('/api/templates/active?type=client_created');
             const data = await res.json();
-            if (data.success) {
-                templateContent = data.content;
-            }
+            _clientCreatedTemplateCache = (data && data.success && data.content) ? data.content : '';
         } catch (e) {
-            console.error('Failed to load template', e);
+            _clientCreatedTemplateCache = '';
         }
+        return _clientCreatedTemplateCache;
+    }
 
-        // Fallback if fetch fails or returns empty
-        if (!templateContent) {
-            templateContent = `😍 سفارش جدید شما
+    const DEFAULT_NEW_CLIENT_TEMPLATE = `😍 سفارش جدید شما
 
 اطلاعات سرویس
 📡 پروتکل: {protocol}
@@ -4064,49 +4067,61 @@
 
 🌐 Dashboard:
 {dashboard_link}`;
-        }
 
-        // Replace variables (0 = unlimited → ♾️)
-        const text = templateContent
+    function buildNewClientText(templateContent, client) {
+        return (templateContent || DEFAULT_NEW_CLIENT_TEMPLATE)
             .replace(/{protocol}/g, client.protocol || 'vless')
             .replace(/{service_name}/g, client.email)
             .replace(/{volume}/g, (client.volume == 0 || client.volume == null) ? '♾️' : client.volume)
             .replace(/{days}/g,   (client.days   == 0 || client.days   == null) ? '♾️' : client.days)
             .replace(/{sub_link}/g, client.sub_link || '')
             .replace(/{dashboard_link}/g, client.dashboard_link || '');
+    }
 
-        detailsText.value = text;
-        
-        // Generate QRs
-        try {
-            if (client.sub_link) {
-                const subResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(client.sub_link)}`);
-                const subData = await subResp.json();
-                if (subData.success) {
-                    document.getElementById('new-client-img-sub').src = subData.qrcode;
-                    document.getElementById('new-client-sub-link').value = client.sub_link;
-                    document.getElementById('new-client-qr-sub').style.display = 'flex';
-                }
-            } else {
-                document.getElementById('new-client-qr-sub').style.display = 'none';
-            }
-            
-            if (client.dashboard_link) {
-                const dashResp = await fetch(`/api/client/qrcode?link=${encodeURIComponent(client.dashboard_link)}`);
-                const dashData = await dashResp.json();
-                if (dashData.success) {
-                    document.getElementById('new-client-img-dash').src = dashData.qrcode;
-                    document.getElementById('new-client-dash-link').value = client.dashboard_link;
-                    document.getElementById('new-client-qr-dash').style.display = 'flex';
-                }
-            } else {
-                document.getElementById('new-client-qr-dash').style.display = 'none';
-            }
-        } catch (e) {
-            console.error(e);
+    async function showNewClientModal(client) {
+        const modal = document.getElementById('new-client-modal');
+        const detailsText = document.getElementById('new-client-details');
+
+        // 1) Show the modal + copyable details IMMEDIATELY.
+        //    Use cached template if available so there's zero network wait;
+        //    fall back to the bundled default otherwise. The copy button is
+        //    usable the instant the modal appears.
+        const cachedTpl = (_clientCreatedTemplateCache !== null) ? _clientCreatedTemplateCache : null;
+        detailsText.value = buildNewClientText(cachedTpl, client);
+        // Reset QR boxes to a loading-neutral state
+        document.getElementById('new-client-qr-sub').style.display = client.sub_link ? 'flex' : 'none';
+        document.getElementById('new-client-qr-dash').style.display = client.dashboard_link ? 'flex' : 'none';
+        if (client.sub_link)  document.getElementById('new-client-sub-link').value = client.sub_link;
+        if (client.dashboard_link) document.getElementById('new-client-dash-link').value = client.dashboard_link;
+        modal.classList.remove('hidden');
+
+        // 2) If the template wasn't cached yet, fetch it once and refine the text.
+        if (cachedTpl === null) {
+            getClientCreatedTemplate().then((tpl) => {
+                // Only overwrite if the user hasn't edited the textarea
+                detailsText.value = buildNewClientText(tpl, client);
+            });
         }
 
-        modal.classList.remove('hidden');
+        // 3) Generate QR codes in parallel (non-blocking), after the modal is up.
+        const qrJobs = [];
+        if (client.sub_link) {
+            qrJobs.push(
+                fetch(`/api/client/qrcode?link=${encodeURIComponent(client.sub_link)}`)
+                    .then(r => r.json())
+                    .then(d => { if (d.success) document.getElementById('new-client-img-sub').src = d.qrcode; })
+                    .catch(() => {})
+            );
+        }
+        if (client.dashboard_link) {
+            qrJobs.push(
+                fetch(`/api/client/qrcode?link=${encodeURIComponent(client.dashboard_link)}`)
+                    .then(r => r.json())
+                    .then(d => { if (d.success) document.getElementById('new-client-img-dash').src = d.qrcode; })
+                    .catch(() => {})
+            );
+        }
+        Promise.allSettled(qrJobs);
     }
 
     let selectedServerIds = new Set();
