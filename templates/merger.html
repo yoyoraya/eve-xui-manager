@@ -47,15 +47,34 @@
 
         <div class="merger-metrics" id="merger-metrics">
             <div class="merger-metric">
-                <span>Inbounds</span>
+                <span class="merger-metric-icon purple">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                </span>
+                <span class="merger-metric-label">Inbounds</span>
                 <strong id="metric-inbounds">0</strong>
             </div>
             <div class="merger-metric">
-                <span>Clients</span>
+                <span class="merger-metric-icon green">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                    </svg>
+                </span>
+                <span class="merger-metric-label">Clients</span>
                 <strong id="metric-clients">0</strong>
             </div>
             <div class="merger-metric">
-                <span>Traffic Rows</span>
+                <span class="merger-metric-icon orange">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                    </svg>
+                </span>
+                <span class="merger-metric-label">Traffic Rows</span>
                 <strong id="metric-traffic">0</strong>
             </div>
         </div>
@@ -181,7 +200,7 @@
     </section>
 </div>
 
-<style>
+<style nonce="{{ csp_nonce }}">
     .merger-page {
         display: grid;
         gap: 18px;
@@ -192,16 +211,30 @@
     .merger-card {
         border: 1px solid var(--border-color);
         background: var(--bg-card);
-        border-radius: 8px;
+        border-radius: 16px;
         box-shadow: var(--shadow);
     }
 
     .merger-console {
+        position: relative;
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(360px, 0.55fr);
         gap: 18px;
-        padding: 18px;
+        padding: 22px;
         overflow: hidden;
+        /* subtle indigo glow accent, consistent with the dashboard's primary tint */
+        background:
+            radial-gradient(120% 140% at 0% 0%, rgba(99, 102, 241, 0.10), transparent 45%),
+            var(--bg-card);
+    }
+
+    /* top accent strip echoing the primary color */
+    .merger-console::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--primary), rgba(99, 102, 241, 0));
     }
 
     .merger-console-main {
@@ -310,26 +343,56 @@
     }
 
     .merger-metric {
-        min-height: 86px;
+        position: relative;
+        min-height: 92px;
         padding: 14px;
         border: 1px solid var(--border-color);
-        border-radius: 8px;
+        border-radius: 12px;
         background: var(--bg-dark);
         display: grid;
-        align-content: space-between;
+        grid-template-columns: auto 1fr;
+        grid-template-rows: auto auto;
+        align-content: center;
+        gap: 2px 12px;
+        transition: transform 0.18s ease, border-color 0.18s ease;
     }
 
-    .merger-metric span {
+    .merger-metric:hover {
+        transform: translateY(-2px);
+        border-color: rgba(99, 102, 241, 0.4);
+    }
+
+    .merger-metric-icon {
+        grid-row: 1 / span 2;
+        align-self: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .merger-metric-icon.purple { background: rgba(168, 85, 247, 0.18); color: #c084fc; }
+    .merger-metric-icon.green  { background: rgba(34, 197, 94, 0.18);  color: #4ade80; }
+    .merger-metric-icon.orange { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+
+    .merger-metric-label {
+        align-self: flex-end;
         color: var(--text-secondary);
-        font-size: 0.76rem;
+        font-size: 0.72rem;
         font-weight: 600;
         text-transform: uppercase;
+        letter-spacing: 0.03em;
     }
 
     .merger-metric strong {
+        align-self: flex-start;
         color: var(--text-primary);
         font-size: 1.55rem;
-        line-height: 1;
+        line-height: 1.1;
+        font-variant-numeric: tabular-nums;
     }
 
     .merger-workbench {
@@ -389,6 +452,13 @@
         border-radius: 8px;
         background: var(--bg-dark);
         color: var(--text-secondary);
+        transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .merger-search:focus-within {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+        color: var(--primary);
     }
 
     .merger-search input {
@@ -435,11 +505,16 @@
         vertical-align: middle;
     }
 
-    .merger-table th {
+    .merger-table thead th {
+        position: sticky;
+        top: 0;
+        background: var(--bg-dark);
         color: var(--text-secondary);
         font-size: 0.72rem;
         text-transform: uppercase;
         font-weight: 700;
+        letter-spacing: 0.04em;
+        z-index: 1;
     }
 
     .merger-table tbody tr {
