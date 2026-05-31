@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.15"
+APP_VERSION = "2.1.16"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -185,9 +185,11 @@ REFRESH_MAX_JOBS = 50
 # Bulk job tracking. Persist to a shared file so progress polling works across
 # gunicorn workers while the background worker updates the job.
 BULK_JOBS_FILE = os.path.join(tempfile.gettempdir(), 'eve_bulk_jobs.json')
-BULK_JOBS = {}  # job_id -> job dict
+BULK_JOBS = {}  # job_id -> job dict (status/progress only — client list kept in BULK_JOBS_CLIENTS)
+BULK_JOBS_CLIENTS = {}  # job_id -> client list (in-memory only; NOT persisted to avoid huge files)
 BULK_JOBS_LOCK = threading.Lock()
 BULK_MAX_JOBS = 50
+BULK_SAVE_EVERY = 25   # write progress to disk every N clients (not every single one)
 
 # Manual snapshot progress tracking
 # Written to a shared file so all gunicorn workers see the same state.
@@ -469,28 +471,124 @@ def _prune_bulk_jobs_locked():
 
 
 def _load_bulk_jobs_locked():
+    """Merge the on-disk snapshot into the in-memory BULK_JOBS.
+
+    With gunicorn --workers 3, a bulk job runs as a thread in ONE worker while
+    polling requests are load-balanced across all workers. The old code did
+    `BULK_JOBS = data` (full replace), which in a multi-worker race could drop
+    a job a worker was actively tracking → "Job not found". We now MERGE:
+    for each job, keep whichever copy has more progress, and never drop an
+    in-memory job that the disk snapshot happens to lack.
+    """
     global BULK_JOBS
     try:
         with open(BULK_JOBS_FILE, 'r', encoding='utf-8') as fh:
             data = json.load(fh)
-        if isinstance(data, dict):
-            BULK_JOBS = data
+        if not isinstance(data, dict):
+            return BULK_JOBS
     except Exception:
-        pass
+        return BULK_JOBS
+
+    def _processed(job):
+        try:
+            return int((job.get('progress') or {}).get('processed', 0) or 0)
+        except Exception:
+            return 0
+
+    merged = dict(BULK_JOBS)  # start from in-memory
+    for jid, disk_job in data.items():
+        mem_job = merged.get(jid)
+        if mem_job is None:
+            merged[jid] = disk_job
+            continue
+        # A finished state is authoritative; otherwise keep the further-along copy.
+        mem_done = mem_job.get('state') in ('done', 'error')
+        disk_done = disk_job.get('state') in ('done', 'error')
+        if disk_done and not mem_done:
+            merged[jid] = disk_job
+        elif mem_done and not disk_done:
+            pass  # keep mem
+        elif _processed(disk_job) > _processed(mem_job):
+            merged[jid] = disk_job
+        # else keep mem (it's at least as fresh)
+    BULK_JOBS = merged
     return BULK_JOBS
 
 
 def _save_bulk_jobs_locked():
+    """Persist BULK_JOBS to disk.  Clients are stored in BULK_JOBS_CLIENTS (memory-only)
+    so the file stays small even with thousands of clients per job.
+
+    Before writing, jobs that exist ONLY on disk (created by another gunicorn
+    worker) are preserved so a save from this worker never clobbers another
+    worker's concurrent job.
+    """
     try:
+        # Never write the client list to disk — it can be MB-sized per job.
+        slim = {}
+        for jid, j in BULK_JOBS.items():
+            slim[jid] = {k: v for k, v in j.items() if k != 'clients'}
+
+        # Preserve other workers' jobs that we don't have in memory.
+        try:
+            with open(BULK_JOBS_FILE, 'r', encoding='utf-8') as fh:
+                disk = json.load(fh)
+            if isinstance(disk, dict):
+                for jid, dj in disk.items():
+                    if jid not in slim:
+                        slim[jid] = dj
+        except Exception:
+            pass
+
         tmp_path = BULK_JOBS_FILE + '.tmp'
         with open(tmp_path, 'w', encoding='utf-8') as fh:
-            json.dump(BULK_JOBS, fh, ensure_ascii=False)
+            json.dump(slim, fh, ensure_ascii=False)
         os.replace(tmp_path, BULK_JOBS_FILE)
     except Exception as exc:
         try:
             app.logger.warning(f"Could not persist bulk jobs: {exc}")
         except Exception:
             pass
+
+
+def _bulk_progress_update(job_id: str, *, processed_delta: int = 1,
+                          success: int = 0, failed: int = 0, skipped: int = 0,
+                          error_entry: dict | None = None,
+                          report_row: dict | None = None,
+                          force_save: bool = False) -> None:
+    """Thread-safe progress update for _run_bulk_job.
+
+    Writes to disk only every BULK_SAVE_EVERY clients (not on every single
+    client) to prevent thousands of I/O operations for large bulk actions.
+    Pass force_save=True for state transitions (start/done/error).
+    """
+    with BULK_JOBS_LOCK:
+        j = BULK_JOBS.get(job_id)
+        if j is None:
+            return
+        pr = j.get('progress') or {}
+        pr['processed'] = int(pr.get('processed', 0) or 0) + processed_delta
+        if success:
+            pr['success']  = int(pr.get('success',  0) or 0) + success
+        if failed:
+            pr['failed']   = int(pr.get('failed',   0) or 0) + failed
+        if skipped:
+            pr['skipped']  = int(pr.get('skipped',  0) or 0) + skipped
+        if error_entry:
+            errs = j.get('errors') or []
+            if len(errs) < 50:
+                errs.append(error_entry)
+            j['errors'] = errs
+        if report_row:
+            rows = j.get('report_rows') or []
+            if len(rows) < 10000:
+                rows.append(report_row)
+            j['report_rows'] = rows
+        j['progress'] = pr
+        BULK_JOBS[job_id] = j
+        # Throttle disk writes: only every BULK_SAVE_EVERY clients or on force
+        if force_save or (int(pr.get('processed', 0)) % BULK_SAVE_EVERY == 0):
+            _save_bulk_jobs_locked()
 
 
 def _run_bulk_job(job_id: str):
@@ -508,11 +606,15 @@ def _run_bulk_job(job_id: str):
         with app.app_context():
             job = None
             with BULK_JOBS_LOCK:
-                _load_bulk_jobs_locked()
+                # Read status from memory first (avoid disk replacement race).
+                # _load_bulk_jobs_locked is intentionally skipped here — the job
+                # was just saved at the top of this function.
                 job = BULK_JOBS.get(job_id) or {}
+                # Client list is kept in the separate in-memory dict to avoid
+                # bloating the persisted file with thousands of client entries.
+                clients = BULK_JOBS_CLIENTS.get(job_id) or job.get('clients') or []
 
             action = job.get('action')
-            clients = job.get('clients') or []
             data = job.get('data') or {}
             conditions = job.get('conditions') or {}
             user_id = job.get('user_id')
@@ -945,14 +1047,7 @@ def _run_bulk_job(job_id: str):
             for item in clients:
                 client_ref = item
                 if not isinstance(item, dict):
-                    with BULK_JOBS_LOCK:
-                        j = BULK_JOBS.get(job_id) or {}
-                        pr = j.get('progress') or {}
-                        pr['processed'] = int(pr.get('processed', 0) or 0) + 1
-                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
-                        j['progress'] = pr
-                        BULK_JOBS[job_id] = j
-                        _save_bulk_jobs_locked()
+                    _bulk_progress_update(job_id, failed=1)
                     continue
 
                 try:
@@ -967,34 +1062,15 @@ def _run_bulk_job(job_id: str):
                     client_uuid = ''
 
                 if not server_id or inbound_id is None or not email:
-                    with BULK_JOBS_LOCK:
-                        j = BULK_JOBS.get(job_id) or {}
-                        pr = j.get('progress') or {}
-                        pr['processed'] = int(pr.get('processed', 0) or 0) + 1
-                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
-                        j['progress'] = pr
-                        errs = j.get('errors') or []
-                        if len(errs) < 50:
-                            errs.append({'client': client_ref, 'error': 'server_id, inbound_id and email are required'})
-                        j['errors'] = errs
-                        BULK_JOBS[job_id] = j
-                        _save_bulk_jobs_locked()
+                    _bulk_progress_update(job_id, failed=1,
+                        error_entry={'client': client_ref, 'error': 'server_id, inbound_id and email are required'})
                     continue
 
                 server = servers_by_id.get(server_id)
                 if not server:
-                    with BULK_JOBS_LOCK:
-                        j = BULK_JOBS.get(job_id) or {}
-                        pr = j.get('progress') or {}
-                        pr['processed'] = int(pr.get('processed', 0) or 0) + 1
-                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
-                        j['progress'] = pr
-                        errs = j.get('errors') or []
-                        if len(errs) < 50:
-                            errs.append({'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email}, 'error': 'Server not found'})
-                        j['errors'] = errs
-                        BULK_JOBS[job_id] = j
-                        _save_bulk_jobs_locked()
+                    _bulk_progress_update(job_id, failed=1,
+                        error_entry={'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email},
+                                     'error': 'Server not found'})
                     continue
 
                 # Optional conditional targeting
@@ -1004,28 +1080,12 @@ def _run_bulk_job(job_id: str):
                         if snap_err:
                             raise RuntimeError(snap_err)
                         if not _matches_conditions(snap, normalized_conditions):
-                            with BULK_JOBS_LOCK:
-                                j = BULK_JOBS.get(job_id) or {}
-                                pr = j.get('progress') or {}
-                                pr['processed'] = int(pr.get('processed', 0) or 0) + 1
-                                pr['skipped'] = int(pr.get('skipped', 0) or 0) + 1
-                                j['progress'] = pr
-                                BULK_JOBS[job_id] = j
-                                _save_bulk_jobs_locked()
+                            _bulk_progress_update(job_id, skipped=1)
                             continue
                     except Exception as exc:
-                        with BULK_JOBS_LOCK:
-                            j = BULK_JOBS.get(job_id) or {}
-                            pr = j.get('progress') or {}
-                            pr['processed'] = int(pr.get('processed', 0) or 0) + 1
-                            pr['failed'] = int(pr.get('failed', 0) or 0) + 1
-                            j['progress'] = pr
-                            errs = j.get('errors') or []
-                            if len(errs) < 50:
-                                errs.append({'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email}, 'error': str(exc) or 'Condition check failed'})
-                            j['errors'] = errs
-                            BULK_JOBS[job_id] = j
-                            _save_bulk_jobs_locked()
+                        _bulk_progress_update(job_id, failed=1,
+                            error_entry={'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email},
+                                         'error': str(exc) or 'Condition check failed'})
                         continue
 
                 ok = False
@@ -1103,31 +1163,18 @@ def _run_bulk_job(job_id: str):
                     ok = False
                     err = 'Invalid action'
 
-                with BULK_JOBS_LOCK:
-                    j = BULK_JOBS.get(job_id) or {}
-                    pr = j.get('progress') or {}
-                    pr['processed'] = int(pr.get('processed', 0) or 0) + 1
-                    if skipped:
-                        pr['skipped'] = int(pr.get('skipped', 0) or 0) + 1
-                    elif ok:
-                        pr['success'] = int(pr.get('success', 0) or 0) + 1
-                    else:
-                        pr['failed'] = int(pr.get('failed', 0) or 0) + 1
-                        errs = j.get('errors') or []
-                        if len(errs) < 50:
-                            errs.append({'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email}, 'error': err or 'Failed'})
-                        j['errors'] = errs
-                    if action == 'volume_policy' and isinstance(report_row, dict):
-                        rows = j.get('report_rows') or []
-                        if len(rows) < 10000:
-                            rows.append(report_row)
-                        j['report_rows'] = rows
-                    j['progress'] = pr
-                    BULK_JOBS[job_id] = j
-                    _save_bulk_jobs_locked()
+                _bulk_progress_update(
+                    job_id,
+                    success=1 if (ok and not skipped) else 0,
+                    skipped=1 if skipped else 0,
+                    failed=1 if (not ok and not skipped) else 0,
+                    error_entry=(None if (ok or skipped) else
+                                 {'client': {'server_id': server_id, 'inbound_id': inbound_id, 'email': email},
+                                  'error': err or 'Failed'}),
+                    report_row=(report_row if (action == 'volume_policy' and isinstance(report_row, dict)) else None),
+                )
 
         with BULK_JOBS_LOCK:
-            _load_bulk_jobs_locked()
             job = BULK_JOBS.get(job_id) or {}
             job['state'] = 'done'
             job['finished_at'] = _utc_iso_now()
@@ -1136,7 +1183,6 @@ def _run_bulk_job(job_id: str):
             _prune_bulk_jobs_locked()
     except Exception as e:
         with BULK_JOBS_LOCK:
-            _load_bulk_jobs_locked()
             job = BULK_JOBS.get(job_id) or {}
             job['state'] = 'error'
             job['error'] = str(e)
@@ -1144,6 +1190,9 @@ def _run_bulk_job(job_id: str):
             BULK_JOBS[job_id] = job
             _save_bulk_jobs_locked()
             _prune_bulk_jobs_locked()
+    finally:
+        # Free the in-memory client list once the job is finished
+        BULK_JOBS_CLIENTS.pop(job_id, None)
 
 
 def _prune_refresh_jobs_locked():
@@ -8618,12 +8667,13 @@ def bulk_client_action():
             return jsonify({"success": False, "error": "Invalid reseller"}), 400
 
     # Enqueue as an async job so the UI can show progress.
+    # The (potentially huge) client list is kept in memory only — never written
+    # to the shared JSON file — so disk writes stay tiny and fast at any scale.
     job_id = secrets.token_hex(8)
     job = {
         'id': job_id,
         'state': 'queued',
         'action': action,
-        'clients': clients,
         'data': data,
         'conditions': conditions,
         'user_id': user.id,
@@ -8646,6 +8696,7 @@ def bulk_client_action():
     with BULK_JOBS_LOCK:
         _load_bulk_jobs_locked()
         BULK_JOBS[job_id] = job
+        BULK_JOBS_CLIENTS[job_id] = clients
         _save_bulk_jobs_locked()
         _prune_bulk_jobs_locked()
 

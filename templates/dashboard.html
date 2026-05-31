@@ -5568,6 +5568,8 @@
 
             const pollStart = Date.now();
             const pollMaxMs = 10 * 60 * 1000;
+            let transientErrors = 0;            // tolerate brief 404/5xx across gunicorn workers
+            const MAX_TRANSIENT_ERRORS = 8;
             const poll = async () => {
                 try {
                     if ((Date.now() - pollStart) > pollMaxMs) {
@@ -5584,6 +5586,14 @@
                         st = { success: false, error: `Invalid job status response (HTTP ${stResp.status})` };
                     }
                     if (!stResp.ok || !st.success) {
+                        // A multi-worker race can briefly return 404/5xx before the
+                        // job snapshot propagates. Retry a few times instead of
+                        // aborting the whole action on the first hiccup.
+                        transientErrors += 1;
+                        if (transientErrors <= MAX_TRANSIENT_ERRORS) {
+                            setTimeout(poll, 1200);
+                            return;
+                        }
                         setBulkProgress(false);
                         const errMsg = st && st.error
                             ? `Bulk progress error: ${st.error}`
@@ -5591,6 +5601,7 @@
                         showToast(errMsg, 'error');
                         return;
                     }
+                    transientErrors = 0;   // reset on any successful poll
 
                     const job = st.job || {};
                     const progress = job.progress || {};
