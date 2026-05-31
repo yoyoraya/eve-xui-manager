@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.19"
+APP_VERSION = "2.1.20"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -9864,6 +9864,38 @@ def test_server_connection(server_id):
     if error:
         return jsonify({"success": False, "error": error}), 400
     return jsonify({"success": True, "panel_type": server.panel_type})
+
+
+@app.route('/api/servers/<int:server_id>/xui-backup', methods=['GET'])
+@login_required
+def download_server_xui_backup(server_id):
+    """Download the X-UI database backup for a single server.
+
+    Used by the bulk-action confirmation modal so the operator can grab a
+    safety backup of the panel DB before applying changes.
+    """
+    server = Server.query.get_or_404(server_id)
+    # Resellers cannot pull raw panel DB backups
+    if session.get('role') == 'reseller':
+        return jsonify({"success": False, "error": "Only admins can download panel backups"}), 403
+
+    session_obj, error = get_xui_session(server)
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+
+    payload, ext, err = _fetch_xui_backup(session_obj, server)
+    if not payload:
+        return jsonify({"success": False, "error": err or "Backup failed"}), 502
+
+    safe_name = secure_filename(server.name) or f"server_{server.id}"
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"xui_{safe_name}_{ts}{ext or '.db'}"
+    return send_file(
+        io.BytesIO(payload),
+        mimetype='application/octet-stream',
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 @app.route('/api/servers/<int:server_id>/panel-info', methods=['GET'])
