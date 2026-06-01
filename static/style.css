@@ -2732,6 +2732,7 @@ html[data-theme="light"] .package-price {
     width: 100%;
     max-width: 600px;
     max-height: 90vh;
+    max-height: 90svh;
     overflow: visible;
     box-shadow: var(--shadow-lg);
     display: flex;
@@ -2741,6 +2742,8 @@ html[data-theme="light"] .package-price {
 .modal .modal-body {
     overflow-y: auto;
     overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
 }
 
 .admin-credit-amount small {
@@ -2807,8 +2810,20 @@ html[data-theme="light"] .package-price {
 .modal-body {
     padding: 24px;
     max-height: calc(90vh - 80px);
+    max-height: calc(90svh - 80px);
     overflow-y: auto;
     overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+}
+
+.modal-footer {
+    padding: 15px 24px;
+    border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .server-form h3,
@@ -3714,6 +3729,7 @@ html[data-theme="light"] .server-icon {
     .modal {
         margin: 10px;
         max-height: 95vh;
+        max-height: 95svh;
         max-width: 95%;
     }
     
@@ -4208,6 +4224,7 @@ html[data-theme="light"] .server-icon {
 
     .modal {
         max-height: 90vh !important;
+        max-height: 90svh !important;
         max-width: 95% !important;
     }
 }

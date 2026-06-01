@@ -574,20 +574,19 @@
                     </div>
                 </div>
             </div>
-            
-            <div class="form-footer" style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                <div style="font-size: 0.9rem; display: flex; align-items: center;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #4ade80;">
-                        <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path>
-                        <path d="M4 6v12c0 1.1.9 2 2 2h14v-4"></path>
-                        <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"></path>
-                    </svg>
-                    <span style="color: #4ade80;">{{ "{:,}".format(credit if credit else 0) }} T</span>
-                </div>
-                <div style="display: flex; gap: 10px;">
-                    <button class="btn btn-secondary" onclick="closeRenewModal()">Cancel</button>
-                    <button class="btn btn-primary" onclick="submitRenewal()">Confirm</button>
-                </div>
+        </div>
+        <div class="modal-footer">
+            <div style="font-size: 0.9rem; display: flex; align-items: center;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #4ade80;">
+                    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path>
+                    <path d="M4 6v12c0 1.1.9 2 2 2h14v-4"></path>
+                    <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"></path>
+                </svg>
+                <span style="color: #4ade80;">{{ "{:,}".format(credit if credit else 0) }} T</span>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-secondary" onclick="closeRenewModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitRenewal()">Confirm</button>
             </div>
         </div>
     </div>
@@ -801,21 +800,19 @@
                     </div>
                 </div>
             </div>
-
-            <div class="form-footer" style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                <div style="font-size: 0.9rem; display: flex; align-items: center;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #4ade80;">
-                        <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path>
-                        <path d="M4 6v12c0 1.1.9 2 2 2h14v-4"></path>
-                        <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"></path>
-                    </svg>
-                    <span style="color: #4ade80;">{{ "{:,}".format(credit if credit else 0) }} T</span>
-                </div>
-                <button class="btn btn-primary" onclick="submitAddClient()">
-                    Pay & Create
-                </button>
+        </div>
+        <div class="modal-footer">
+            <div style="font-size: 0.9rem; display: flex; align-items: center;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #4ade80;">
+                    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path>
+                    <path d="M4 6v12c0 1.1.9 2 2 2h14v-4"></path>
+                    <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z"></path>
+                </svg>
+                <span style="color: #4ade80;">{{ "{:,}".format(credit if credit else 0) }} T</span>
             </div>
-
+            <button class="btn btn-primary" onclick="submitAddClient()">
+                Pay & Create
+            </button>
         </div>
     </div>
 </div>
@@ -1533,7 +1530,7 @@
             return `sms:${phone.display || ('+' + phone.number)}?body=${encodeURIComponent(message)}`;
         }
 
-        function openMessageChannelChoice(phone, onSelect) {
+        function openMessageChannelChoice(phone, onSelect, options = {}) {
             let overlay = document.getElementById('message-channel-choice-modal');
             if (!overlay) {
                 overlay = document.createElement('div');
@@ -1552,6 +1549,10 @@
                             <div style="display:grid; gap:10px;">
                                 <button class="btn btn-secondary" type="button" data-message-channel="whatsapp" style="justify-content:space-between;"><span>WhatsApp</span><strong>wa.me</strong></button>
                                 <button class="btn btn-secondary" type="button" data-message-channel="sms" style="justify-content:space-between;"><span>SMS</span><strong>sms:</strong></button>
+                                <button class="btn btn-secondary" type="button" id="message-channel-copy-btn" data-message-channel="copy" style="justify-content:space-between; min-height:48px;">
+                                    <span>Copy Message</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1564,6 +1565,10 @@
                 overlay.addEventListener('click', (event) => {
                     const channelBtn = event.target.closest('[data-message-channel]');
                     if (channelBtn) {
+                        if (channelBtn.dataset.messageChannel === 'copy') {
+                            copyClientAccountMessage(overlay._clientButton, overlay._phone, channelBtn);
+                            return;
+                        }
                         overlay.classList.add('hidden');
                         const cb = overlay._onSelect;
                         const ph = overlay._phone;
@@ -1578,12 +1583,38 @@
             // Always refresh the current handler + phone for THIS invocation
             overlay._onSelect = onSelect;
             overlay._phone = phone;
+            overlay._clientButton = options.clientButton || null;
             const phoneBox = overlay.querySelector('#message-channel-phone');
             if (phoneBox) {
                 phoneBox.querySelector('span').textContent = phone?.label || 'Phone';
                 phoneBox.querySelector('strong').textContent = phone?.display || ('+' + (phone?.number || ''));
             }
+            // Reset copy button to default state
+            const copyBtn = overlay.querySelector('#message-channel-copy-btn');
+            if (copyBtn) {
+                copyBtn.innerHTML = `<span>Copy Message</span><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+                copyBtn.style.color = '';
+            }
             overlay.classList.remove('hidden');
+        }
+
+        async function copyClientAccountMessage(button, phone, copyBtn) {
+            try {
+                const client = JSON.parse(decodeURIComponent(button?.dataset?.clientMessage || '%7B%7D'));
+                const template = await getAccountInfoTemplate('whatsapp');
+                const message = renderClientAccountMessage(template, client);
+                await navigator.clipboard.writeText(message);
+                if (copyBtn) {
+                    copyBtn.innerHTML = `<span>Copied!</span><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+                    copyBtn.style.color = '#4ade80';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = `<span>Copy Message</span><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+                        copyBtn.style.color = '';
+                    }, 2000);
+                }
+            } catch (error) {
+                showToast('Failed to copy message', 'error');
+            }
         }
 
         function openClientAccountMessageChannel(button) {
@@ -1601,7 +1632,7 @@
                 openPhoneChoiceModal(phones, (phone) => {
                     openMessageChannelChoice(phone, (channel, selectedPhone) => {
                         sendClientAccountMessage(button, channel, selectedPhone);
-                    });
+                    }, { clientButton: button });
                 }, 'Select mobile number', { alwaysShow: true });
             } catch (error) {
                 showToast('Unable to prepare account message', 'error');

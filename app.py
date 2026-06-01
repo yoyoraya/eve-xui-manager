@@ -1,4 +1,5 @@
 import os
+import socket
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file
 
@@ -2305,6 +2306,27 @@ def _build_telegram_proxies(use_proxy: bool, proxy_mode: str, proxy_url: str, pr
     return {'http': normalized, 'https': normalized}
 
 
+def _check_proxy_reachable(proxies: dict | None, timeout_sec: float = 5) -> tuple[bool, str | None]:
+    if not proxies:
+        return True, None
+    url = proxies.get('https') or proxies.get('http') or ''
+    if not url:
+        return True, None
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port
+        if not host or not port:
+            return True, None
+        with socket.create_connection((host, port), timeout=timeout_sec):
+            pass
+        return True, None
+    except OSError as exc:
+        return False, f"Proxy unreachable ({host}:{port}): {exc}"
+    except Exception as exc:
+        return False, f"Proxy check failed: {exc}"
+
+
 def _telegram_get_me(token: str, proxies: dict | None = None, timeout_sec: int = 10):
     url = f"https://api.telegram.org/bot{token}/getMe"
     return requests.get(url, proxies=proxies, timeout=timeout_sec)
@@ -2568,6 +2590,20 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
             settings.get('proxy_username') or '',
             settings.get('proxy_password') or ''
         )
+
+        if proxies:
+            if progress_cb:
+                try:
+                    progress_cb({'stage': 'checking_proxy'})
+                except Exception:
+                    pass
+            proxy_ok, proxy_err = _check_proxy_reachable(proxies)
+            if not proxy_ok:
+                return {
+                    'success': False,
+                    'error': f"Proxy unreachable — could not connect before upload started. {proxy_err}. "
+                             "Check Settings → Telegram Backup → Proxy."
+                }
 
         now = datetime.utcnow()
 
