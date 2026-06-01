@@ -87,7 +87,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.1.24"
+APP_VERSION = "2.1.25"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -1848,7 +1848,12 @@ def _is_postgres_db() -> bool:
     return _db_uri().startswith('postgresql:')
 
 
-def _pg_dump_backup(dest_path: str) -> None:
+# Heavy analytics/log tables whose ROW DATA is excluded from "clean" backups.
+# Schema is preserved; the data regenerates on its own after a restore.
+_ANALYTICS_EXCLUDE_TABLES = ('usage_snapshots', 'health_logs')
+
+
+def _pg_dump_backup(dest_path: str, exclude_analytics: bool = True) -> None:
     """Create a PostgreSQL backup using pg_dump (custom format).
 
     Requires `pg_dump` to be available in PATH on the server.
@@ -1871,9 +1876,13 @@ def _pg_dump_backup(dest_path: str) -> None:
         '--compress=9',
         '--no-owner',
         '--no-privileges',
-        '--file', dest_path,
-        '--dbname', uri,
     ]
+    # Keep the schema for analytics tables but drop their (huge) row data so the
+    # backup stays small and "clean". They regenerate automatically after restore.
+    if exclude_analytics:
+        for _t in _ANALYTICS_EXCLUDE_TABLES:
+            cmd += ['--exclude-table-data', _t]
+    cmd += ['--file', dest_path, '--dbname', uri]
     result = subprocess.run(cmd, env=env, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f"pg_dump exited with code {result.returncode}")
@@ -1958,8 +1967,12 @@ def _pg_restore_backup(backup_path: str) -> None:
         raise RuntimeError(f"Restore failed (exit {result.returncode}): {err}")
 
 
-def _create_database_backup_file(prefix: str) -> str:
-    """Create a DB backup in BACKUP_DIR and return filename."""
+def _create_database_backup_file(prefix: str, exclude_analytics: bool = True) -> str:
+    """Create a DB backup in BACKUP_DIR and return filename.
+
+    exclude_analytics=True (default) drops the huge usage_snapshots / health_logs
+    row data so backups stay small; the schema is kept and data regenerates.
+    """
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     if _is_sqlite_db():
@@ -1970,12 +1983,27 @@ def _create_database_backup_file(prefix: str) -> str:
         filename = f'{prefix}_{timestamp}.db'
         dest = os.path.join(BACKUP_DIR, filename)
         shutil.copy2(db_path, dest)
+        # Clean copy: drop the heavy analytics rows and reclaim space (VACUUM)
+        if exclude_analytics:
+            try:
+                con = sqlite3.connect(dest)
+                for _t in _ANALYTICS_EXCLUDE_TABLES:
+                    try:
+                        con.execute(f'DELETE FROM {_t}')
+                    except Exception:
+                        pass
+                con.commit()
+                con.execute('VACUUM')
+                con.commit()
+                con.close()
+            except Exception:
+                pass
         return filename
 
     if _is_postgres_db():
         filename = f'{prefix}_{timestamp}.dump'
         dest = os.path.join(BACKUP_DIR, filename)
-        _pg_dump_backup(dest)
+        _pg_dump_backup(dest, exclude_analytics=exclude_analytics)
         return filename
 
     raise RuntimeError('Unsupported database backend for backup')
@@ -15257,7 +15285,9 @@ def get_backup_settings():
     freq = db.session.get(SystemSetting, 'backup_frequency')
     return jsonify({
         'success': True,
-        'frequency': freq.value if freq else 'disabled'
+        'frequency': freq.value if freq else 'disabled',
+        'retention_enabled': _parse_bool(_get_system_setting_value('backup_retention_enabled', 'false')),
+        'retention_days': _parse_int(_get_system_setting_value('backup_retention_days', '14'), 14, min_value=1, max_value=3650),
     })
 
 @app.route('/api/settings/backup', methods=['POST'])
@@ -15265,16 +15295,60 @@ def get_backup_settings():
 def save_backup_settings():
     data = request.json
     freq_val = data.get('frequency', 'disabled')
-    
+
     setting = db.session.get(SystemSetting, 'backup_frequency')
     if not setting:
         setting = SystemSetting(key='backup_frequency', value=freq_val)
         db.session.add(setting)
     else:
         setting.value = freq_val
-    
+
+    if 'retention_enabled' in data:
+        _set_system_setting_value('backup_retention_enabled', 'true' if data.get('retention_enabled') else 'false')
+    if 'retention_days' in data:
+        rdays = _parse_int(data.get('retention_days'), 14, min_value=1, max_value=3650)
+        _set_system_setting_value('backup_retention_days', str(rdays))
+
     db.session.commit()
     return jsonify({'success': True, 'message': 'Settings saved'})
+
+
+def _cleanup_old_backups(days: int) -> dict:
+    """Delete backup files older than `days` from BACKUP_DIR.
+    Safety pre_restore_* files are kept. Returns {deleted, freed_bytes}."""
+    deleted, freed = 0, 0
+    if days < 1 or not os.path.isdir(BACKUP_DIR):
+        return {'deleted': 0, 'freed_bytes': 0}
+    cutoff = time.time() - days * 86400
+    for pat in ('*.db', '*.dump', '*.sql', '*.zip'):
+        for f in glob.glob(os.path.join(BACKUP_DIR, pat)):
+            name = os.path.basename(f)
+            if name.startswith('pre_restore_'):
+                continue  # never auto-delete safety backups
+            try:
+                if os.path.getmtime(f) < cutoff:
+                    sz = os.path.getsize(f)
+                    os.remove(f)
+                    deleted += 1
+                    freed += sz
+            except Exception:
+                pass
+    return {'deleted': deleted, 'freed_bytes': freed}
+
+
+@app.route('/api/backups/cleanup', methods=['POST'])
+@login_required
+def cleanup_backups_now():
+    """Apply the retention rule right now (Clear now button)."""
+    data = request.get_json(silent=True) or {}
+    # Allow an explicit days override; otherwise use the saved setting
+    days = data.get('days')
+    if days is None:
+        days = _parse_int(_get_system_setting_value('backup_retention_days', '14'), 14, min_value=1, max_value=3650)
+    else:
+        days = _parse_int(days, 14, min_value=1, max_value=3650)
+    result = _cleanup_old_backups(days)
+    return jsonify({'success': True, 'days': days, **result})
 
 
 @app.route('/api/settings/telegram-backup', methods=['GET'])
@@ -17446,6 +17520,21 @@ def run_scheduler():
                                 last_backup.value = now.isoformat()
                             db.session.commit()
                             print(f"Auto backup created: {filename}")
+
+                # Backup retention cleanup (delete files older than N days)
+                try:
+                    if _parse_bool(_get_system_setting_value('backup_retention_enabled', 'false')):
+                        rdays = _parse_int(_get_system_setting_value('backup_retention_days', '14'), 14, min_value=1, max_value=3650)
+                        last_clean = _parse_iso_datetime(_get_system_setting_value('backup_last_cleanup', ''))
+                        # run at most once every 6 hours
+                        if (not last_clean) or (datetime.utcnow() - last_clean) >= timedelta(hours=6):
+                            res = _cleanup_old_backups(rdays)
+                            _set_system_setting_value('backup_last_cleanup', datetime.utcnow().isoformat())
+                            db.session.commit()
+                            if res.get('deleted'):
+                                print(f"[Backup retention] Deleted {res['deleted']} old backup(s), freed {res['freed_bytes']} bytes")
+                except Exception as _ce:
+                    print(f"Backup retention error: {_ce}")
 
                 # Telegram backups
                 tg_enabled = _parse_bool(_get_system_setting_value('telegram_backup_enabled', 'false'))

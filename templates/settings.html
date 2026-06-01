@@ -238,7 +238,7 @@
                         <p class="text-secondary">Configure scheduled backups for your database.</p>
                     </div>
                 </div>
-                <div style="display: flex; gap: 16px; align-items: center;">
+                <div style="display: flex; gap: 16px; align-items: center; flex-wrap:wrap;">
                     <div class="form-group" style="margin-bottom: 0; flex: 1; max-width: 300px;">
                         <label>Backup Frequency</label>
                         <select id="backup-frequency" class="form-select" onchange="saveBackupSettings()">
@@ -249,6 +249,27 @@
                         </select>
                     </div>
                 </div>
+
+                <!-- Auto-delete old backups -->
+                <div style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap; margin-top:16px; padding-top:16px; border-top:1px solid var(--border-color);">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                            <input type="checkbox" id="backup-retention-enabled" onchange="saveBackupSettings()">
+                            <span>Auto-delete old backups</span>
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0; max-width:160px;">
+                        <label>Keep for (days)</label>
+                        <input type="number" id="backup-retention-days" class="form-control" min="1" max="3650" value="14" onchange="saveBackupSettings()">
+                    </div>
+                    <button class="btn btn-secondary" onclick="clearOldBackupsNow(this)" title="Delete backups older than the retention window now">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        Clear now
+                    </button>
+                </div>
+                <small class="text-secondary" style="display:block; margin-top:6px;">
+                    When enabled, backups older than the chosen number of days are removed from the server automatically (safety pre-restore backups are always kept).
+                </small>
             </div>
 
             <!-- Backup List -->
@@ -2878,6 +2899,10 @@
             const data = await res.json();
             if (data.success) {
                 document.getElementById('backup-frequency').value = data.frequency;
+                const rEn = document.getElementById('backup-retention-enabled');
+                const rDays = document.getElementById('backup-retention-days');
+                if (rEn) rEn.checked = !!data.retention_enabled;
+                if (rDays) rDays.value = data.retention_days || 14;
             }
         } catch (e) {
             console.error('Error loading settings', e);
@@ -2886,11 +2911,13 @@
 
     async function saveBackupSettings() {
         const freq = document.getElementById('backup-frequency').value;
+        const retentionEnabled = document.getElementById('backup-retention-enabled')?.checked || false;
+        const retentionDays = parseInt(document.getElementById('backup-retention-days')?.value, 10) || 14;
         try {
             const res = await fetch('/api/settings/backup', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ frequency: freq })
+                body: JSON.stringify({ frequency: freq, retention_enabled: retentionEnabled, retention_days: retentionDays })
             });
             const data = await res.json();
             if (data.success) {
@@ -2900,6 +2927,33 @@
             }
         } catch (e) {
             showToast('Network error', 'error');
+        }
+    }
+
+    async function clearOldBackupsNow(btnEl) {
+        const days = parseInt(document.getElementById('backup-retention-days')?.value, 10) || 14;
+        if (!confirm(`Delete all backups older than ${days} day(s) now? (safety pre-restore backups are kept)`)) return;
+        const btn = btnEl;
+        const original = btn ? btn.innerHTML : '';
+        try {
+            if (btn) { btn.disabled = true; btn.innerHTML = 'Clearing…'; }
+            const res = await fetch('/api/backups/cleanup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ days })
+            });
+            const data = await res.json();
+            if (data.success) {
+                const mb = data.freed_bytes ? (data.freed_bytes / 1024 / 1024).toFixed(1) + ' MB' : '0 MB';
+                showToast(`Deleted ${data.deleted} backup(s), freed ${mb}`, 'success', 5000);
+                await loadBackups();
+            } else {
+                showToast(data.error || 'Cleanup failed', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = original; }
         }
     }
 
@@ -3396,7 +3450,11 @@
         const btn = btnEl || (typeof event !== 'undefined' ? event.currentTarget : null);
         const originalHTML = btn ? btn.innerHTML : '';
         try {
-            if (btn) { btn.innerHTML = 'Creating...'; btn.disabled = true; }
+            if (btn) {
+                btn.innerHTML = '<span class="spinner-inline" style="display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px;"></span>Creating… (may take ~10–60s)';
+                btn.disabled = true;
+            }
+            showToast('Creating backup… this can take up to a minute on large databases.', 'success', 6000);
 
             const res = await fetch('/api/backups', { method: 'POST' });
             let data;
