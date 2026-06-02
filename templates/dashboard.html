@@ -988,24 +988,22 @@
 
 <div class="modal-overlay hidden" id="new-client-modal">
     <div class="modal modal-md">
-        <div class="modal-header">
-            <h2>Client Created Successfully</h2>
+        <div class="modal-header" style="padding: 12px 16px;">
+            <h2 style="font-size: 0.95rem; font-weight: 600;">{{ 'اکانت ساخته شد ✓' if panel_lang == 'fa' else 'Client Created ✓' }}</h2>
             <button class="modal-close" onclick="closeNewClientModal()">&times;</button>
         </div>
-        <div class="modal-body">
-            <div class="form-group">
-                <label>Client Details</label>
-                <textarea id="new-client-details" class="form-input" rows="12" readonly style="font-family: 'Vazirmatn', sans-serif; direction: rtl; white-space: pre-wrap; word-break: break-all; line-height: 1.7;"></textarea>
-                <div style="display: flex; gap: 8px; margin-top: 8px;">
-                    <button class="btn btn-secondary" style="flex: 1;" onclick="copyNewClientDetails()">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        Copy Details
-                    </button>
-                    <button class="btn btn-success" style="flex: 1;" onclick="sendNewClientToUser()">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                        {{ 'ارسال به کاربر' if panel_lang == 'fa' else 'Send to Client' }}
-                    </button>
-                </div>
+        <div class="modal-body" style="padding: 12px 16px;">
+            <textarea id="new-client-details" class="form-input" rows="5" readonly
+                style="font-family: 'Vazirmatn', sans-serif; direction: rtl; white-space: pre-wrap; word-break: break-all; line-height: 1.7; font-size: 0.88rem; resize: none; margin-bottom: 8px;"></textarea>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                <button class="btn btn-secondary" style="padding: 8px 10px; font-size: 0.82rem; justify-content: center;" onclick="copyNewClientDetails()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; flex-shrink: 0;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    {{ 'کپی' if panel_lang == 'fa' else 'Copy' }}
+                </button>
+                <button class="btn btn-success" style="padding: 8px 10px; font-size: 0.82rem; justify-content: center;" onclick="sendNewClientToUser()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; flex-shrink: 0;"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    {{ 'ارسال' if panel_lang == 'fa' else 'Send' }}
+                </button>
             </div>
             
             <div style="margin-top: 20px;">
@@ -4420,6 +4418,10 @@
         const modal = document.getElementById('new-client-modal');
         const detailsText = document.getElementById('new-client-details');
         _sendCtxNewClient = { email: client.email || '', comment: client.comment || '', phone: client.phone || '' };
+        function _fitTextarea() {
+            detailsText.style.height = 'auto';
+            detailsText.style.height = Math.min(detailsText.scrollHeight, 220) + 'px';
+        }
 
         // 1) Show the modal + copyable details IMMEDIATELY.
         //    Use cached template if available so there's zero network wait;
@@ -4433,12 +4435,14 @@
         if (client.sub_link)  document.getElementById('new-client-sub-link').value = client.sub_link;
         if (client.dashboard_link) document.getElementById('new-client-dash-link').value = client.dashboard_link;
         modal.classList.remove('hidden');
+        requestAnimationFrame(_fitTextarea);
 
         // 2) If the template wasn't cached yet, fetch it once and refine the text.
         if (cachedTpl === null) {
             getClientCreatedTemplate().then((tpl) => {
                 // Only overwrite if the user hasn't edited the textarea
                 detailsText.value = buildNewClientText(tpl, client);
+                _fitTextarea();
             });
         }
 
