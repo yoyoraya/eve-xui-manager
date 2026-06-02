@@ -5544,11 +5544,15 @@
         } catch (e) { /* silent */ }
     }
 
-    function applyVolumeRulePreset() {
+    async function applyVolumeRulePreset() {
         const sel = document.getElementById('bulk-volume-preset-select');
         const id = Number(sel?.value || 0);
         if (!id) return;
-        const preset = volumeRulePresetsCache.find(p => p.id === id);
+        let preset = volumeRulePresetsCache.find(p => p.id === id);
+        if (!preset) {
+            await loadVolumeRulePresets();
+            preset = volumeRulePresetsCache.find(p => p.id === id);
+        }
         if (!preset) return;
         // Rebuild the rule rows from the saved preset
         const list = document.getElementById('bulk-volume-rules');
@@ -5563,7 +5567,7 @@
         showToast(`Loaded "${preset.name}"`, 'success', 2500);
     }
 
-    async function saveVolumeRulePreset() {
+    function saveVolumeRulePreset() {
         let rules;
         try {
             rules = collectBulkVolumeRules();
@@ -5571,46 +5575,136 @@
             showToast(e.message || 'Fix the rules first', 'error');
             return;
         }
-        const name = (prompt('Save this volume setting as:') || '').trim();
-        if (!name) return;
-        try {
-            const res = await fetch('/api/volume-rule-presets', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, rules }),
-            });
-            const data = await res.json();
-            if (data.success) {
-                showToast(`Saved "${name}"`, 'success');
-                await loadVolumeRulePresets();
-                const sel = document.getElementById('bulk-volume-preset-select');
-                if (sel && data.preset) sel.value = data.preset.id;
-            } else {
-                showToast(data.error || 'Save failed', 'error');
+        openSavePresetModal(async (name) => {
+            try {
+                const res = await fetch('/api/volume-rule-presets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, rules }),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(`Saved "${name}"`, 'success');
+                    await loadVolumeRulePresets();
+                    const sel = document.getElementById('bulk-volume-preset-select');
+                    if (sel && data.preset) sel.value = data.preset.id;
+                } else {
+                    showToast(data.error || 'Save failed', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
             }
-        } catch (e) {
-            showToast('Network error', 'error');
-        }
+        });
     }
 
-    async function deleteVolumeRulePreset() {
+    function deleteVolumeRulePreset() {
         const sel = document.getElementById('bulk-volume-preset-select');
         const id = Number(sel?.value || 0);
         if (!id) { showToast('Select a saved setting first', 'error'); return; }
         const preset = volumeRulePresetsCache.find(p => p.id === id);
-        if (!confirm(`Delete saved setting "${preset ? preset.name : id}"?`)) return;
-        try {
-            const res = await fetch(`/api/volume-rule-presets/${id}`, { method: 'DELETE' });
-            const data = await res.json();
-            if (data.success) {
-                showToast('Deleted', 'success');
-                await loadVolumeRulePresets();
-            } else {
-                showToast(data.error || 'Delete failed', 'error');
+        openDeletePresetModal(preset ? preset.name : String(id), async () => {
+            try {
+                const res = await fetch(`/api/volume-rule-presets/${id}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Deleted', 'success');
+                    await loadVolumeRulePresets();
+                } else {
+                    showToast(data.error || 'Delete failed', 'error');
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
             }
-        } catch (e) {
-            showToast('Network error', 'error');
+        });
+    }
+
+    function openSavePresetModal(onSave) {
+        let overlay = document.getElementById('save-preset-modal');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'save-preset-modal';
+            overlay.className = 'modal-overlay hidden';
+            overlay.innerHTML = `
+                <div class="modal" style="max-width: 380px;">
+                    <div class="modal-header">
+                        <h2>Save Volume Setting</h2>
+                        <button class="modal-close" type="button" data-spm-close>&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group" style="margin:0;">
+                            <label>Name</label>
+                            <input type="text" id="save-preset-name-input" class="form-input" placeholder="e.g. Standard rules" autocomplete="off" maxlength="80">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <span></span>
+                        <div style="display:flex; gap:10px;">
+                            <button class="btn btn-secondary" type="button" data-spm-close>Cancel</button>
+                            <button class="btn btn-primary" type="button" id="save-preset-confirm-btn">Save</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            const doSave = () => {
+                const name = (document.getElementById('save-preset-name-input')?.value || '').trim();
+                if (!name) { document.getElementById('save-preset-name-input')?.focus(); return; }
+                overlay.classList.add('hidden');
+                if (typeof overlay._onSave === 'function') overlay._onSave(name);
+            };
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest('[data-spm-close]')) { overlay.classList.add('hidden'); return; }
+                if (e.target.closest('#save-preset-confirm-btn')) doSave();
+            });
+            overlay.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') doSave();
+                if (e.key === 'Escape') overlay.classList.add('hidden');
+            });
         }
+        overlay._onSave = onSave;
+        const input = document.getElementById('save-preset-name-input');
+        if (input) { input.value = ''; setTimeout(() => input.focus(), 50); }
+        overlay.classList.remove('hidden');
+    }
+
+    function openDeletePresetModal(presetName, onConfirm) {
+        let overlay = document.getElementById('delete-preset-modal');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'delete-preset-modal';
+            overlay.className = 'modal-overlay hidden';
+            overlay.innerHTML = `
+                <div class="modal" style="max-width: 360px;">
+                    <div class="modal-header">
+                        <h2>Delete Setting</h2>
+                        <button class="modal-close" type="button" data-dpm-close>&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p id="delete-preset-msg" style="margin:0; color:var(--text-secondary); font-size:0.9rem;"></p>
+                    </div>
+                    <div class="modal-footer">
+                        <span></span>
+                        <div style="display:flex; gap:10px;">
+                            <button class="btn btn-secondary" type="button" data-dpm-close>Cancel</button>
+                            <button class="btn btn-danger" type="button" id="delete-preset-confirm-btn">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest('[data-dpm-close]')) { overlay.classList.add('hidden'); return; }
+                if (e.target.closest('#delete-preset-confirm-btn')) {
+                    overlay.classList.add('hidden');
+                    if (typeof overlay._onConfirm === 'function') overlay._onConfirm();
+                }
+            });
+            overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.classList.add('hidden'); });
+        }
+        overlay._onConfirm = onConfirm;
+        const msg = document.getElementById('delete-preset-msg');
+        if (msg) msg.textContent = `Delete "${presetName}"? This cannot be undone.`;
+        overlay.classList.remove('hidden');
     }
 
     function onBulkActionChanged() {
