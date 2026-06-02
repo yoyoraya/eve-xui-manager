@@ -2840,6 +2840,7 @@ class Admin(db.Model):
     discount_percent = db.Column(db.Integer, default=0)
     custom_cost_per_day = db.Column(db.Integer, nullable=True)
     custom_cost_per_gb = db.Column(db.Integer, nullable=True)
+    sub_shown_package_ids = db.Column(db.Text, default='[]')  # admin/global/assigned package IDs this reseller shows on their customers' sub pages
     telegram_id = db.Column(db.String(100), nullable=True)
     support_telegram = db.Column(db.String(100), nullable=True)
     support_whatsapp = db.Column(db.String(64), nullable=True)
@@ -4563,6 +4564,7 @@ with app.app_context():
             ('channel_whatsapp',      'TEXT'),
             ('allow_negative_credit', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
             ('negative_credit_limit', 'INTEGER DEFAULT 0'),
+            ('sub_shown_package_ids', "TEXT DEFAULT '[]'"),
         ]
 
         for col_name, col_type in admin_missing_cols:
@@ -5021,29 +5023,42 @@ def _build_sub_page_packages(owner) -> list[dict]:
         return []
 
     is_reseller = bool(owner and getattr(owner, 'role', None) == 'reseller')
+
+    shown_ids = set()
+    if is_reseller:
+        try:
+            shown_ids = set(int(x) for x in _j.loads(owner.sub_shown_package_ids or '[]'))
+        except Exception:
+            shown_ids = set()
+
     out = []
     for p in pkgs:
-        if not getattr(p, 'show_on_sub', False):
-            continue
         scope = p.scope or 'global'
         if is_reseller:
-            if scope == 'global':
-                visible = True
-            elif scope == 'assigned':
-                try:
-                    ids = _j.loads(p.assigned_reseller_ids or '[]')
-                except Exception:
-                    ids = []
-                visible = owner.id in ids
-            elif scope == 'personal':
-                visible = (p.created_by == owner.id)
+            if p.created_by == owner.id:
+                # Reseller's own package — controlled by its own show_on_sub flag.
+                if not getattr(p, 'show_on_sub', False):
+                    continue
+                price = p.price
             else:
-                visible = False
-            if not visible:
-                continue
-            price = calculate_reseller_price(owner, package=p)
+                # Global or assigned-to-reseller package — the reseller decides
+                # per-package whether to surface it (default hidden).
+                if scope == 'global':
+                    visible = True
+                elif scope == 'assigned':
+                    try:
+                        ids = _j.loads(p.assigned_reseller_ids or '[]')
+                    except Exception:
+                        ids = []
+                    visible = owner.id in ids
+                else:
+                    visible = False
+                if not visible or p.id not in shown_ids:
+                    continue
+                price = calculate_reseller_price(owner, package=p)
         else:
-            if scope != 'global':
+            # System/admin-managed account: only global packages the admin ticked.
+            if scope != 'global' or not getattr(p, 'show_on_sub', False):
                 continue
             price = p.price
         out.append({
@@ -11020,6 +11035,206 @@ def delete_package(package_id):
     db.session.delete(package)
     db.session.commit()
     return jsonify({"success": True})
+
+
+# ── Reseller self-service packages ───────────────────────────────────────────
+# Resellers manage their OWN packages and choose which packages (own + assigned
+# + global) appear on their customers' subscription pages. Selling price floor
+# is the SYSTEM base tariff; the per-use wallet cost stays the reseller's own.
+
+def _reseller_sub_shown_ids(reseller) -> set:
+    import json as _j
+    try:
+        return set(int(x) for x in _j.loads(reseller.sub_shown_package_ids or '[]'))
+    except Exception:
+        return set()
+
+
+@app.route('/api/my-packages', methods=['GET'])
+@login_required
+def reseller_list_packages():
+    import json as _j
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or user.role != 'reseller':
+        return jsonify({'success': False, 'error': 'Resellers only'}), 403
+
+    shown = _reseller_sub_shown_ids(user)
+    packages = Package.query.filter_by(enabled=True).order_by(Package.display_order, Package.id).all()
+    items = []
+    for p in packages:
+        scope = p.scope or 'global'
+        is_own = (p.created_by == user.id)
+        if is_own:
+            visible = True
+        elif scope == 'global':
+            visible = True
+        elif scope == 'assigned':
+            try:
+                ids = _j.loads(p.assigned_reseller_ids or '[]')
+            except Exception:
+                ids = []
+            visible = user.id in ids
+        else:
+            visible = False
+        if not visible:
+            continue
+        items.append({
+            'id': p.id,
+            'name': p.name,
+            'days': int(p.days or 0),
+            'volume': int(p.volume or 0),
+            'price': int(p.price if is_own else calculate_reseller_price(user, package=p) or 0),
+            'is_own': is_own,
+            'sub_shown': bool(p.show_on_sub) if is_own else (p.id in shown),
+        })
+    resp = make_response(jsonify({'success': True, 'items': items}))
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@app.route('/api/my-packages', methods=['POST'])
+@login_required
+def reseller_create_package():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or user.role != 'reseller':
+        return jsonify({'success': False, 'error': 'Resellers only'}), 403
+
+    data = request.get_json(force=True) or {}
+    name = (data.get('name') or '').strip()
+    try:
+        days = int(data.get('days') or 0)
+        volume = int(data.get('volume') or 0)
+        price = int(data.get('price') or 0)
+    except Exception:
+        return jsonify({'success': False, 'error': 'Invalid numbers'}), 400
+    if not name or price <= 0:
+        return jsonify({'success': False, 'error': 'Name and price are required'}), 400
+
+    # Selling-price floor = SYSTEM base tariff (no reseller discount applied).
+    floor, _cpg, _cpd, _tier = _calculate_minimum_price(volume, days, reseller_id=None, server_id=None, user=None)
+    if days > 0 and volume > 0 and floor and price < floor:
+        return jsonify({'success': False, 'error': f'Price must be at least {floor:,} (system base tariff).', 'min_price': floor}), 400
+
+    pkg = Package(
+        name=name, days=days, volume=volume, price=price,
+        enabled=True, scope='personal', assigned_reseller_ids='[]',
+        created_by=user.id, show_on_sub=bool(data.get('show_on_sub', False)),
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(pkg)
+    db.session.commit()
+    return jsonify({'success': True, 'id': pkg.id})
+
+
+@app.route('/api/my-packages/<int:package_id>', methods=['PUT'])
+@login_required
+def reseller_update_package(package_id):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or user.role != 'reseller':
+        return jsonify({'success': False, 'error': 'Resellers only'}), 403
+
+    pkg = db.session.get(Package, package_id)
+    if not pkg:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    if pkg.created_by != user.id:
+        return jsonify({'success': False, 'error': 'You can only edit your own packages'}), 403
+
+    data = request.get_json(force=True) or {}
+    name = (data.get('name') or pkg.name or '').strip()
+    try:
+        days = int(data.get('days', pkg.days) or 0)
+        volume = int(data.get('volume', pkg.volume) or 0)
+        price = int(data.get('price', pkg.price) or 0)
+    except Exception:
+        return jsonify({'success': False, 'error': 'Invalid numbers'}), 400
+    if not name or price <= 0:
+        return jsonify({'success': False, 'error': 'Name and price are required'}), 400
+
+    floor, _cpg, _cpd, _tier = _calculate_minimum_price(volume, days, reseller_id=None, server_id=None, user=None)
+    if days > 0 and volume > 0 and floor and price < floor:
+        return jsonify({'success': False, 'error': f'Price must be at least {floor:,} (system base tariff).', 'min_price': floor}), 400
+
+    pkg.name = name
+    pkg.days = days
+    pkg.volume = volume
+    pkg.price = price
+    if 'show_on_sub' in data:
+        pkg.show_on_sub = bool(data['show_on_sub'])
+    pkg.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/api/my-packages/<int:package_id>', methods=['DELETE'])
+@login_required
+def reseller_delete_package(package_id):
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or user.role != 'reseller':
+        return jsonify({'success': False, 'error': 'Resellers only'}), 403
+    pkg = db.session.get(Package, package_id)
+    if not pkg:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    if pkg.created_by != user.id:
+        return jsonify({'success': False, 'error': 'You can only delete your own packages'}), 403
+    db.session.delete(pkg)
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/api/my-packages/<int:package_id>/sub-toggle', methods=['POST'])
+@login_required
+def reseller_toggle_package_sub(package_id):
+    import json as _j
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or user.role != 'reseller':
+        return jsonify({'success': False, 'error': 'Resellers only'}), 403
+
+    pkg = db.session.get(Package, package_id)
+    if not pkg or not pkg.enabled:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    data = request.get_json(force=True) or {}
+    desired = bool(data.get('show_on_sub'))
+
+    if pkg.created_by == user.id:
+        # Own package: flip its own flag.
+        pkg.show_on_sub = desired
+        db.session.commit()
+        return jsonify({'success': True, 'sub_shown': pkg.show_on_sub})
+
+    # Global / assigned package: confirm the reseller may see it, then update the
+    # per-reseller shown list.
+    scope = pkg.scope or 'global'
+    if scope == 'assigned':
+        try:
+            ids = _j.loads(pkg.assigned_reseller_ids or '[]')
+        except Exception:
+            ids = []
+        if user.id not in ids:
+            return jsonify({'success': False, 'error': 'Not allowed'}), 403
+    elif scope != 'global':
+        return jsonify({'success': False, 'error': 'Not allowed'}), 403
+
+    shown = _reseller_sub_shown_ids(user)
+    if desired:
+        shown.add(pkg.id)
+    else:
+        shown.discard(pkg.id)
+    user.sub_shown_package_ids = _j.dumps(sorted(shown))
+    db.session.commit()
+    return jsonify({'success': True, 'sub_shown': desired})
+
+
+@app.route('/my-packages')
+@login_required
+def reseller_packages_page():
+    user = db.session.get(Admin, session['admin_id'])
+    if not user or user.role != 'reseller':
+        return redirect(url_for('dashboard'))
+    return render_template('reseller_packages.html',
+                           admin_username=session.get('admin_username'),
+                           is_superadmin=False,
+                           role='reseller')
 
 @app.route('/admin/config', methods=['POST'])
 @user_management_required

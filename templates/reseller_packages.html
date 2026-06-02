@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}My Packages{% endblock %}
+{% block page_title %}Package & Tariff Management{% endblock %}
+
+{% block content %}
+<style nonce="{{ csp_nonce }}">
+    .scope-badge {
+        font-size: 0.72rem; padding: 2px 8px; border-radius: 20px;
+        font-weight: 500; display: inline-block; white-space: nowrap;
+    }
+</style>
+<div class="panel-card">
+    <div class="panel-card-header">
+        <div class="header-content">
+            <h2>My Packages</h2>
+            <p class="text-secondary">پکیج‌های خودت رو بساز و انتخاب کن کدوم پکیج‌ها در صفحه ساب مشتری‌هات دیده بشن.</p>
+        </div>
+        <button class="btn btn-success" onclick="openMyPkgModal()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            New Package
+        </button>
+    </div>
+    <div id="my-pkg-container" class="servers-grid"></div>
+</div>
+
+<!-- Package modal (create/edit own package) -->
+<div class="modal-overlay hidden" id="my-pkg-modal">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2 id="my-pkg-title">New Package</h2>
+            <button class="modal-close" type="button" onclick="closeMyPkgModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="my-pkg-id">
+            <div class="form-group">
+                <label>Package Name</label>
+                <input type="text" id="my-pkg-name" class="form-input" placeholder="مثلا: یک‌ماهه ۵۰ گیگ">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group">
+                    <label>Duration (Days) <span style="font-size:0.75rem; color:var(--text-secondary);">(0 = ∞)</span></label>
+                    <input type="text" id="my-pkg-days" class="form-input" placeholder="30" inputmode="numeric" oninput="formatNum(this); refreshMyMinPrice()">
+                </div>
+                <div class="form-group">
+                    <label>Volume (GB) <span style="font-size:0.75rem; color:var(--text-secondary);">(0 = ∞)</span></label>
+                    <input type="text" id="my-pkg-vol" class="form-input" placeholder="50" inputmode="numeric" oninput="formatNum(this); refreshMyMinPrice()">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Price (Toman)</label>
+                <input type="text" id="my-pkg-price" class="form-input" placeholder="150,000" inputmode="numeric" oninput="formatNum(this); checkMyPriceWarn()">
+                <div id="my-pkg-price-hint" style="margin-top:6px; font-size:0.82rem; color:var(--text-secondary); display:none;"></div>
+                <div id="my-pkg-price-warn" class="alert alert-warning" style="margin-top:6px; display:none; padding:8px 12px; font-size:0.84rem; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.3); border-radius:8px; color:#fbbf24;">
+                    ⚠️ قیمت پایین‌تر از حداقل تعرفه سیستم است و ذخیره نمی‌شود.
+                </div>
+            </div>
+            <label class="form-group form-toggle-item" style="cursor:pointer; margin-top:4px;">
+                <div class="toggle-switch">
+                    <input type="checkbox" id="my-pkg-show-on-sub">
+                    <span class="slider"></span>
+                </div>
+                <span>نمایش در صفحه ساب مشتری</span>
+            </label>
+        </div>
+        <div class="modal-footer">
+            <span></span>
+            <div style="display:flex; gap:10px;">
+                <button class="btn btn-secondary" type="button" onclick="closeMyPkgModal()">Cancel</button>
+                <button class="btn btn-primary" id="my-pkg-save-btn" type="button" onclick="saveMyPkg()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+    let _myPkgs = [];
+    let _myMinPrice = null;
+    let _myMinDebounce = null;
+
+    function formatNum(el) {
+        const digits = (el.value || '').replace(/[^\d]/g, '');
+        el.value = digits ? Number(digits).toLocaleString() : '';
+    }
+    function unNum(v) { return parseInt(String(v || '').replace(/[^\d]/g, '')) || 0; }
+
+    async function loadMyPackages() {
+        try {
+            const res = await fetch('/api/my-packages');
+            const data = await res.json();
+            if (!data.success) { showToast(data.error || 'Failed to load', 'error'); return; }
+            _myPkgs = data.items || [];
+            renderMyPackages();
+        } catch (e) { showToast('Network error', 'error'); }
+    }
+
+    function renderMyPackages() {
+        const c = document.getElementById('my-pkg-container');
+        if (!_myPkgs.length) {
+            c.innerHTML = '<div class="empty-state"><p>هنوز پکیجی نداری. روی "New Package" بزن یا پکیج‌های اختصاص‌داده‌شده اینجا میان.</p></div>';
+            return;
+        }
+        c.innerHTML = _myPkgs.map(p => {
+            const daysStr = p.days === 0 ? '∞' : p.days + ' روز';
+            const volStr = p.volume === 0 ? '∞' : p.volume + ' GB';
+            const ownBadge = p.is_own
+                ? '<span class="scope-badge" style="background:rgba(99,102,241,0.18); color:#a5b4fc; border:1px solid rgba(99,102,241,0.35);">مال خودم</span>'
+                : '<span class="scope-badge" style="background:rgba(148,163,184,0.18); color:#cbd5e1; border:1px solid rgba(148,163,184,0.3);">اختصاص‌داده‌شده</span>';
+            const subBadge = p.sub_shown
+                ? '<span class="scope-badge" style="background:rgba(34,197,94,0.18); color:#22c55e; border:1px solid rgba(34,197,94,0.35);">🌐 در ساب</span>'
+                : '';
+            const ownActions = p.is_own
+                ? `<button class="btn btn-secondary" style="padding:5px 10px; font-size:0.8rem;" onclick="editMyPkg(${p.id})">Edit</button>
+                   <button class="btn btn-danger" style="padding:5px 10px; font-size:0.8rem;" onclick="deleteMyPkg(${p.id})">Delete</button>`
+                : '';
+            return `
+            <div class="server-card">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
+                    <div style="min-width:0; flex:1;">
+                        <strong style="font-size:0.95rem; display:block; margin-bottom:6px;">${escHtml(p.name)}</strong>
+                        <div style="display:flex; gap:6px; flex-wrap:wrap;">${ownBadge}${subBadge}</div>
+                    </div>
+                    <div class="pkg-price" style="color:#4ade80; font-weight:700; white-space:nowrap;">${Number(p.price).toLocaleString()} T</div>
+                </div>
+                <div style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:12px;">⏳ ${daysStr} &nbsp;|&nbsp; 💾 ${volStr}</div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; border-top:1px solid var(--border-color); padding-top:10px;">
+                    <label class="form-toggle-item" style="cursor:pointer; margin:0; gap:8px;">
+                        <div class="toggle-switch">
+                            <input type="checkbox" ${p.sub_shown ? 'checked' : ''} onchange="toggleSub(${p.id}, this.checked, this)">
+                            <span class="slider"></span>
+                        </div>
+                        <span style="font-size:0.82rem;">نمایش در ساب</span>
+                    </label>
+                    <div style="display:flex; gap:6px;">${ownActions}</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    async function toggleSub(id, checked, el) {
+        try {
+            const res = await fetch(`/api/my-packages/${id}/sub-toggle`, {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ show_on_sub: checked })
+            });
+            const data = await res.json();
+            if (!data.success) {
+                showToast(data.error || 'Failed', 'error');
+                el.checked = !checked;
+                return;
+            }
+            const p = _myPkgs.find(x => x.id === id);
+            if (p) p.sub_shown = data.sub_shown;
+            renderMyPackages();
+        } catch (e) {
+            showToast('Network error', 'error');
+            el.checked = !checked;
+        }
+    }
+
+    function openMyPkgModal(pkg) {
+        document.getElementById('my-pkg-title').textContent = pkg ? 'Edit Package' : 'New Package';
+        document.getElementById('my-pkg-id').value = pkg ? pkg.id : '';
+        document.getElementById('my-pkg-name').value = pkg ? pkg.name : '';
+        document.getElementById('my-pkg-days').value = pkg ? Number(pkg.days).toLocaleString() : '';
+        document.getElementById('my-pkg-vol').value = pkg ? Number(pkg.volume).toLocaleString() : '';
+        document.getElementById('my-pkg-price').value = pkg ? Number(pkg.price).toLocaleString() : '';
+        document.getElementById('my-pkg-show-on-sub').checked = pkg ? !!pkg.sub_shown : false;
+        _myMinPrice = null;
+        document.getElementById('my-pkg-price-hint').style.display = 'none';
+        document.getElementById('my-pkg-price-warn').style.display = 'none';
+        document.getElementById('my-pkg-modal').classList.remove('hidden');
+        if (pkg) refreshMyMinPrice();
+    }
+    function closeMyPkgModal() { document.getElementById('my-pkg-modal').classList.add('hidden'); }
+
+    function editMyPkg(id) {
+        const p = _myPkgs.find(x => x.id === id);
+        if (p && p.is_own) openMyPkgModal(p);
+    }
+
+    function refreshMyMinPrice() {
+        clearTimeout(_myMinDebounce);
+        _myMinDebounce = setTimeout(_fetchMyMin, 400);
+    }
+    async function _fetchMyMin() {
+        const vol = unNum(document.getElementById('my-pkg-vol').value);
+        const days = unNum(document.getElementById('my-pkg-days').value);
+        const hint = document.getElementById('my-pkg-price-hint');
+        if (!vol || !days) { hint.style.display = 'none'; _myMinPrice = null; checkMyPriceWarn(); return; }
+        try {
+            const res = await fetch(`/api/packages/min-price?volume_gb=${vol}&days=${days}`);
+            const data = await res.json();
+            if (data.success) {
+                _myMinPrice = data.min_price;
+                hint.style.display = '';
+                hint.textContent = `حداقل قیمت (تعرفه سیستم): ${Number(data.min_price).toLocaleString()} تومان`;
+                checkMyPriceWarn();
+            }
+        } catch (e) {}
+    }
+    function checkMyPriceWarn() {
+        const warn = document.getElementById('my-pkg-price-warn');
+        const price = unNum(document.getElementById('my-pkg-price').value);
+        warn.style.display = (_myMinPrice && price > 0 && price < _myMinPrice) ? '' : 'none';
+    }
+
+    async function saveMyPkg() {
+        const id = document.getElementById('my-pkg-id').value;
+        const name = document.getElementById('my-pkg-name').value.trim();
+        const days = unNum(document.getElementById('my-pkg-days').value);
+        const volume = unNum(document.getElementById('my-pkg-vol').value);
+        const price = unNum(document.getElementById('my-pkg-price').value);
+        if (!name || !price) { showToast('نام و قیمت لازمه', 'error'); return; }
+        if (_myMinPrice && days && volume && price < _myMinPrice) {
+            showToast(`قیمت نباید کمتر از ${Number(_myMinPrice).toLocaleString()} تومان باشه`, 'error');
+            return;
+        }
+        const body = { name, days, volume, price, show_on_sub: document.getElementById('my-pkg-show-on-sub').checked };
+        try {
+            const url = id ? `/api/my-packages/${id}` : '/api/my-packages';
+            const method = id ? 'PUT' : 'POST';
+            const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            const data = await res.json();
+            if (!data.success) { showToast(data.error || 'Save failed', 'error'); return; }
+            showToast(id ? 'ذخیره شد' : 'پکیج ساخته شد', 'success');
+            closeMyPkgModal();
+            loadMyPackages();
+        } catch (e) { showToast('Network error', 'error'); }
+    }
+
+    async function deleteMyPkg(id) {
+        const p = _myPkgs.find(x => x.id === id);
+        if (!confirm(`حذف پکیج "${p ? p.name : id}"؟`)) return;
+        try {
+            const res = await fetch(`/api/my-packages/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!data.success) { showToast(data.error || 'Delete failed', 'error'); return; }
+            showToast('حذف شد', 'success');
+            loadMyPackages();
+        } catch (e) { showToast('Network error', 'error'); }
+    }
+
+    function escHtml(t) { const d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML; }
+
+    document.getElementById('my-pkg-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeMyPkgModal();
+    });
+
+    document.addEventListener('DOMContentLoaded', loadMyPackages);
+</script>
+{% endblock %}
