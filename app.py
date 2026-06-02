@@ -4670,7 +4670,7 @@ with app.app_context():
                 ('assigned_reseller_ids', "TEXT DEFAULT '[]'"),
                 ('created_by', 'INTEGER'),
                 ('display_order', 'INTEGER DEFAULT 0'),
-                ('show_on_sub', 'BOOLEAN DEFAULT 0'),
+                ('show_on_sub', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
                 ('created_at', _ts_type),
                 ('updated_at', _ts_type),
             ]
