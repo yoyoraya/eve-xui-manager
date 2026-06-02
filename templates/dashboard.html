@@ -269,6 +269,7 @@
                 <option value="add_days">Add Days</option>
                 <option value="add_volume">Add Volume (GB)</option>
                 <option value="volume_policy">Volume Filter</option>
+                <option value="volume_multiplier">Volume Multiplier ✕</option>
                 {% if is_superadmin %}
                 <option value="assign_owner">Assign Owner</option>
                 <option value="unassign_owner">Unassign Owner</option>
@@ -332,6 +333,26 @@
                 <span></span>
             </div>
             <div id="bulk-volume-rules" style="display:flex; flex-direction:column; gap:8px;"></div>
+        </div>
+
+        <!-- Volume Multiplier UI -->
+        <div id="bulk-multiplier-container" style="display:none; margin-top:10px; border-top:1px solid var(--border); padding-top:12px;">
+            <strong style="font-size:0.9rem; display:block; margin-bottom:10px;">Volume Multiplier</strong>
+            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+                <div>
+                    <label style="font-size:0.78rem; color:var(--text-secondary); display:block; margin-bottom:4px;">Factor <span style="color:var(--text-secondary);">(e.g. 1.5 = +50%, 0.5 = −50%)</span></label>
+                    <input id="bulk-multiplier-factor" type="number" class="form-input" min="0.01" step="0.01" placeholder="1.0" style="max-width:120px;" oninput="refreshMultiplierPreview()">
+                </div>
+                <div>
+                    <label style="font-size:0.78rem; color:var(--text-secondary); display:block; margin-bottom:4px;">Mode</label>
+                    <select id="bulk-multiplier-mode" class="form-select" style="max-width:220px;" onchange="refreshMultiplierPreview()">
+                        <option value="set_remaining">Adjust cap (keep used traffic)</option>
+                        <option value="reset_and_set">Reset traffic + set new cap</option>
+                    </select>
+                </div>
+                <button type="button" class="btn btn-secondary" style="padding:8px 14px;" onclick="refreshMultiplierPreview()">Preview</button>
+            </div>
+            <div id="bulk-multiplier-preview" style="margin-top:12px; display:none;"></div>
         </div>
 
         <div id="bulk-progress" style="display:none; margin-top: 10px;">
@@ -5456,6 +5477,90 @@
         const selected = getSelectedClientsForBulk();
         countEl.textContent = `${selected.length} selected`;
         container.style.display = selected.length > 0 ? 'block' : 'none';
+        // Refresh multiplier preview when selection changes
+        if (document.getElementById('bulk-action-select')?.value === 'volume_multiplier') {
+            refreshMultiplierPreview();
+        }
+    }
+
+    function _lookupClientVolume(serverId, inboundId, email) {
+        const em = (email || '').toLowerCase();
+        const inbound = (allInboundsData || []).find(i =>
+            String(i.server_id) === String(serverId) && String(i.id) === String(inboundId)
+        );
+        if (!inbound || !Array.isArray(inbound.clients)) return null;
+        return inbound.clients.find(c => (c.email || '').toLowerCase() === em) || null;
+    }
+
+    function _fmtGB(bytes) {
+        if (!bytes || bytes <= 0) return '0 GB';
+        const gb = bytes / (1024 ** 3);
+        return gb >= 10 ? gb.toFixed(1) + ' GB' : gb.toFixed(2) + ' GB';
+    }
+
+    function refreshMultiplierPreview() {
+        const previewEl = document.getElementById('bulk-multiplier-preview');
+        if (!previewEl) return;
+        const factor = parseFloat(document.getElementById('bulk-multiplier-factor')?.value);
+        const mode = document.getElementById('bulk-multiplier-mode')?.value || 'set_remaining';
+        if (!isFinite(factor) || factor <= 0) { previewEl.style.display = 'none'; return; }
+
+        const selected = getSelectedClientsForBulk();
+        if (!selected.length) { previewEl.style.display = 'none'; return; }
+
+        let totalCurrentRemaining = 0, totalNewRemaining = 0, counted = 0, unlimited = 0;
+
+        const rows = selected.map(s => {
+            const c = _lookupClientVolume(s.server_id, s.inbound_id, s.email);
+            const totalGB = c ? parseInt(c.totalGB || 0) : 0;
+            if (!totalGB) { unlimited++; return null; }
+            const used = Math.max(0, parseInt(c.up || 0) + parseInt(c.down || 0));
+            const remaining = Math.max(0, totalGB - used);
+            const newRemaining = Math.round(remaining * factor);
+            const newTotal = mode === 'reset_and_set' ? newRemaining : (used + newRemaining);
+            totalCurrentRemaining += remaining;
+            totalNewRemaining += newRemaining;
+            counted++;
+            return { email: s.email, remaining, newRemaining, newTotal, mode };
+        }).filter(Boolean);
+
+        const pct = factor >= 1 ? `+${((factor-1)*100).toFixed(0)}%` : `−${((1-factor)*100).toFixed(0)}%`;
+        const diff = totalNewRemaining - totalCurrentRemaining;
+        const diffStr = diff >= 0 ? `+${_fmtGB(diff)}` : `−${_fmtGB(Math.abs(diff))}`;
+
+        previewEl.style.display = 'block';
+        previewEl.innerHTML = `
+        <div style="background:rgba(99,102,241,0.06); border:1px solid rgba(99,102,241,0.25); border-radius:10px; padding:12px; font-size:0.83rem;">
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px;">
+                <div style="background:var(--bg-dark); border-radius:8px; padding:10px; text-align:center;">
+                    <div style="color:var(--text-secondary); font-size:0.73rem; margin-bottom:4px;">Accounts</div>
+                    <div style="font-weight:700; font-size:1rem;">${counted} <span style="font-size:0.72rem; color:var(--text-secondary);">${unlimited ? `(+${unlimited} unlimited)` : ''}</span></div>
+                </div>
+                <div style="background:var(--bg-dark); border-radius:8px; padding:10px; text-align:center;">
+                    <div style="color:var(--text-secondary); font-size:0.73rem; margin-bottom:4px;">Current Remaining</div>
+                    <div style="font-weight:700; font-size:1rem;">${_fmtGB(totalCurrentRemaining)}</div>
+                </div>
+                <div style="background:var(--bg-dark); border-radius:8px; padding:10px; text-align:center;">
+                    <div style="color:var(--text-secondary); font-size:0.73rem; margin-bottom:4px;">New Remaining</div>
+                    <div style="font-weight:700; font-size:1rem; color:${diff < 0 ? '#f87171' : '#4ade80'}">${_fmtGB(totalNewRemaining)} <span style="font-size:0.72rem;">(${diffStr})</span></div>
+                </div>
+            </div>
+            ${rows.length <= 20 ? `
+            <div style="max-height:180px; overflow-y:auto; border-top:1px solid var(--border-color); padding-top:8px;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.78rem;">
+                    <thead><tr style="color:var(--text-secondary);">
+                        <th style="text-align:left; padding:3px 6px;">Account</th>
+                        <th style="text-align:right; padding:3px 6px;">Current</th>
+                        <th style="text-align:right; padding:3px 6px;">→ New</th>
+                    </tr></thead>
+                    <tbody>${rows.map(r => `<tr style="border-top:1px solid rgba(255,255,255,0.04);">
+                        <td style="padding:4px 6px; word-break:break-all;">${escapeHtml(r.email)}</td>
+                        <td style="padding:4px 6px; text-align:right;">${_fmtGB(r.remaining)}</td>
+                        <td style="padding:4px 6px; text-align:right; color:${r.newRemaining < r.remaining ? '#f87171' : '#4ade80'}">${_fmtGB(r.newRemaining)}</td>
+                    </tr>`).join('')}</tbody>
+                </table>
+            </div>` : `<p style="color:var(--text-secondary); font-size:0.78rem; margin:8px 0 0;">${rows.length} accounts selected (table hidden for performance)</p>`}
+        </div>`;
     }
 
     function onBulkClientCheckboxChanged(el) {
@@ -5824,6 +5929,12 @@
                 loadVolumeRulePresets();
             }
         }
+
+        const multContainer = document.getElementById('bulk-multiplier-container');
+        if (multContainer) {
+            multContainer.style.display = (action === 'volume_multiplier') ? 'block' : 'none';
+            if (action === 'volume_multiplier') refreshMultiplierPreview();
+        }
     }
 
     async function loadResellersForBulk() {
@@ -5978,6 +6089,17 @@
             }
         }
 
+        if (action === 'volume_multiplier') {
+            const raw = document.getElementById('bulk-multiplier-factor')?.value;
+            const factor = parseFloat(raw);
+            if (!isFinite(factor) || factor <= 0) {
+                showToast('Please enter a valid factor (> 0)', 'error');
+                return;
+            }
+            data.factor = factor;
+            data.mode = document.getElementById('bulk-multiplier-mode')?.value || 'set_remaining';
+        }
+
         if (action === 'assign_owner') {
             const resellerId = document.getElementById('bulk-reseller-select')?.value;
             if (resellerId === null || resellerId === undefined || String(resellerId).trim() === '') {
@@ -6003,8 +6125,8 @@
     const BULK_ACTION_LABELS = {
         enable: 'Enable', disable: 'Disable', delete: 'Delete',
         add_days: 'Add days', add_volume: 'Add volume',
-        volume_policy: 'Volume Filter', assign_owner: 'Assign to reseller',
-        unassign_owner: 'Unassign owner',
+        volume_policy: 'Volume Filter', volume_multiplier: 'Volume Multiplier',
+        assign_owner: 'Assign to reseller', unassign_owner: 'Unassign owner',
     };
 
     let _pendingBulkPayload = null;

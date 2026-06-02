@@ -1045,6 +1045,86 @@ def _run_bulk_job(job_id: str):
                     report['error'] = update_err
                 return ok, update_err, status, report
 
+            def _apply_client_volume_multiplier(_user: 'Admin', _server: 'Server', _inbound_id: int, _email: str, _data: dict):
+                """Apply a numeric multiplier to a client's remaining volume.
+
+                mode=set_remaining: new cap = used + (remaining × factor)  [no traffic reset]
+                mode=reset_and_set: reset up/down to 0, new cap = remaining × factor
+                """
+                report = {
+                    'server_id': getattr(_server, 'id', None),
+                    'server_name': getattr(_server, 'name', '') or '',
+                    'inbound_id': _inbound_id,
+                    'email': _email,
+                    'status': 'failed',
+                    'error': None,
+                }
+                if _user.role == 'reseller':
+                    if not _has_client_access(_user, _server.id, _email, inbound_id=_inbound_id):
+                        report['error'] = 'Access denied'
+                        return False, 'Access denied', 403, report
+
+                try:
+                    factor = float(_data.get('factor') or 0)
+                except (TypeError, ValueError):
+                    factor = 0
+                if factor <= 0:
+                    report['error'] = 'Invalid factor'
+                    return False, 'Invalid factor', 400, report
+                mode = str(_data.get('mode') or 'set_remaining').strip().lower()
+
+                target_client, err = _fetch_client_snapshot(_user, _server, _inbound_id, _email)
+                if err:
+                    report['error'] = err
+                    return False, err, 400, report
+                if not isinstance(target_client, dict):
+                    report['error'] = 'Client not found'
+                    return False, 'Client not found', 404, report
+
+                try:
+                    current_total_bytes = int(target_client.get('totalGB') or 0)
+                except (TypeError, ValueError):
+                    current_total_bytes = 0
+                if current_total_bytes <= 0:
+                    report.update({'status': 'skipped', 'reason': 'unlimited_volume'})
+                    return True, 'Unlimited volume skipped', 204, report
+
+                try:
+                    used_bytes = max(0, int(target_client.get('up') or 0) + int(target_client.get('down') or 0))
+                except (TypeError, ValueError):
+                    used_bytes = 0
+                remaining_bytes = max(0, current_total_bytes - used_bytes)
+
+                new_remaining_bytes = int(round(remaining_bytes * factor))
+
+                report.update({
+                    'before_total_gb': _bytes_to_gb_float(current_total_bytes),
+                    'before_remaining_gb': _bytes_to_gb_float(remaining_bytes),
+                    'used_gb': _bytes_to_gb_float(used_bytes),
+                    'factor': factor,
+                    'mode': mode,
+                })
+
+                if mode == 'reset_and_set':
+                    target_client['up'] = 0
+                    target_client['down'] = 0
+                    target_client['totalGB'] = new_remaining_bytes
+                    new_total_bytes = new_remaining_bytes
+                else:  # set_remaining
+                    new_total_bytes = used_bytes + new_remaining_bytes
+                    target_client['totalGB'] = new_total_bytes
+
+                ok, update_err, _status = _post_client_update(_server, _inbound_id, _email, target_client)
+                if ok:
+                    report.update({
+                        'status': 'changed',
+                        'after_total_gb': _bytes_to_gb_float(new_total_bytes),
+                        'after_remaining_gb': _bytes_to_gb_float(new_remaining_bytes),
+                    })
+                else:
+                    report['error'] = update_err
+                return ok, update_err, _status, report
+
             for item in clients:
                 client_ref = item
                 if not isinstance(item, dict):
@@ -1106,6 +1186,9 @@ def _run_bulk_job(job_id: str):
                     ok, err, _status = _apply_client_limit_delta(user, server, inbound_id, email, days_delta=None, volume_gb_delta=delta)
                 elif action == 'volume_policy':
                     ok, err, _status, report_row = _apply_client_volume_policy(user, server, inbound_id, email, data.get('volume_rules'))
+                    skipped = bool(ok and _status == 204)
+                elif action == 'volume_multiplier':
+                    ok, err, _status, report_row = _apply_client_volume_multiplier(user, server, inbound_id, email, data)
                     skipped = bool(ok and _status == 204)
                 elif action == 'assign_owner':
                     email_l = (email or '').lower()
@@ -9180,7 +9263,7 @@ def bulk_client_action():
     data = payload.get('data') or {}
     conditions = payload.get('conditions') or {}
 
-    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner', 'add_days', 'add_volume', 'volume_policy'}
+    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner', 'add_days', 'add_volume', 'volume_policy', 'volume_multiplier'}
     if action not in allowed_actions:
         return jsonify({"success": False, "error": "Invalid action"}), 400
     if not isinstance(clients, list) or len(clients) == 0:
@@ -9191,7 +9274,7 @@ def bulk_client_action():
         if session.get('role') == 'reseller':
             return jsonify({"success": False, "error": "Access denied"}), 403
 
-    if action in ('add_days', 'add_volume', 'volume_policy'):
+    if action in ('add_days', 'add_volume', 'volume_policy', 'volume_multiplier'):
         # Basic payload validation here; deep validation happens in the worker.
         if not isinstance(data, dict):
             return jsonify({"success": False, "error": "Invalid data"}), 400
@@ -9204,6 +9287,16 @@ def bulk_client_action():
         if action == 'volume_policy':
             if not isinstance(data.get('volume_rules'), list) or len(data.get('volume_rules') or []) == 0:
                 return jsonify({"success": False, "error": "volume_rules required"}), 400
+        if action == 'volume_multiplier':
+            try:
+                factor = float(data.get('factor', 0) or 0)
+            except (TypeError, ValueError):
+                factor = 0
+            if factor <= 0:
+                return jsonify({"success": False, "error": "factor must be > 0"}), 400
+            mode = str(data.get('mode') or 'set_remaining').strip().lower()
+            if mode not in ('set_remaining', 'reset_and_set'):
+                return jsonify({"success": False, "error": "mode must be set_remaining or reset_and_set"}), 400
 
     if conditions is not None and not isinstance(conditions, dict):
         return jsonify({"success": False, "error": "Invalid conditions"}), 400
