@@ -1094,6 +1094,30 @@ def _run_bulk_job(job_id: str):
                 except (TypeError, ValueError):
                     used_bytes = 0
                 remaining_bytes = max(0, current_total_bytes - used_bytes)
+                remaining_gb = remaining_bytes / float(1024 ** 3)
+
+                # Optional skip range: if remaining falls within [skip_min_gb, skip_max_gb], do nothing.
+                try:
+                    skip_min = float(_data.get('skip_min_gb')) if _data.get('skip_min_gb') is not None else None
+                except (TypeError, ValueError):
+                    skip_min = None
+                try:
+                    skip_max = float(_data.get('skip_max_gb')) if _data.get('skip_max_gb') is not None else None
+                except (TypeError, ValueError):
+                    skip_max = None
+
+                in_skip_range = (
+                    (skip_min is not None or skip_max is not None) and
+                    (skip_min is None or remaining_gb >= skip_min) and
+                    (skip_max is None or remaining_gb <= skip_max)
+                )
+                if in_skip_range:
+                    report.update({
+                        'status': 'skipped',
+                        'reason': 'in_skip_range',
+                        'before_remaining_gb': round(remaining_gb, 3),
+                    })
+                    return True, 'Skipped (remaining in skip range)', 204, report
 
                 new_remaining_bytes = int(round(remaining_bytes * factor))
 
@@ -9297,6 +9321,16 @@ def bulk_client_action():
             mode = str(data.get('mode') or 'set_remaining').strip().lower()
             if mode not in ('set_remaining', 'reset_and_set'):
                 return jsonify({"success": False, "error": "mode must be set_remaining or reset_and_set"}), 400
+            # Optional skip_min_gb / skip_max_gb — must be non-negative if provided
+            for _skk in ('skip_min_gb', 'skip_max_gb'):
+                _skv = data.get(_skk)
+                if _skv is not None:
+                    try:
+                        _skf = float(_skv)
+                    except (TypeError, ValueError):
+                        return jsonify({"success": False, "error": f"{_skk} must be a number"}), 400
+                    if _skf < 0:
+                        return jsonify({"success": False, "error": f"{_skk} must be >= 0"}), 400
 
     if conditions is not None and not isinstance(conditions, dict):
         return jsonify({"success": False, "error": "Invalid conditions"}), 400
