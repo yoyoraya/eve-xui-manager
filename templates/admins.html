@@ -555,6 +555,10 @@
                             <label style="font-size: 0.85rem; color: var(--text-secondary);">WhatsApp Support (phone)</label>
                             <input type="text" id="admin-support-whatsapp" placeholder="e.g. 98912..." oninput="this.value = this.value.trim()">
                         </div>
+                        <div class="form-group" style="flex: 1; min-width: 200px;">
+                            <label style="font-size: 0.85rem; color: var(--text-secondary);">SMS Support (phone)</label>
+                            <input type="text" id="admin-support-sms" placeholder="e.g. 0912... or +98912..." oninput="this.value = this.value.trim()">
+                        </div>
                     </div>
                 </div>
 
@@ -1221,6 +1225,7 @@
         document.getElementById('admin-telegram-id').value = '';
         document.getElementById('admin-support-telegram').value = '';
         document.getElementById('admin-support-whatsapp').value = '';
+        document.getElementById('admin-support-sms').value = '';
         document.getElementById('admin-channel-telegram').value = '';
         document.getElementById('admin-channel-whatsapp').value = '';
         document.getElementById('admin-credit').value = '0';
@@ -1253,6 +1258,7 @@
         document.getElementById('admin-telegram-id').value = admin.telegram_id || '';
         document.getElementById('admin-support-telegram').value = admin.support_telegram || '';
         document.getElementById('admin-support-whatsapp').value = admin.support_whatsapp || '';
+        document.getElementById('admin-support-sms').value = admin.support_sms || '';
         document.getElementById('admin-channel-telegram').value = admin.channel_telegram || '';
         document.getElementById('admin-channel-whatsapp').value = admin.channel_whatsapp || '';
         document.getElementById('admin-credit').value = Number(admin.credit || 0).toLocaleString('en-US');
@@ -1401,6 +1407,7 @@
             telegram_id: document.getElementById('admin-telegram-id').value,
             support_telegram: document.getElementById('admin-support-telegram').value,
             support_whatsapp: document.getElementById('admin-support-whatsapp').value,
+            support_sms: document.getElementById('admin-support-sms').value,
             channel_telegram: document.getElementById('admin-channel-telegram').value,
             channel_whatsapp: document.getElementById('admin-channel-whatsapp').value,
             credit: parseInt(creditRaw) || 0,

@@ -2951,6 +2951,7 @@ class Admin(db.Model):
     telegram_id = db.Column(db.String(100), nullable=True)
     support_telegram = db.Column(db.String(100), nullable=True)
     support_whatsapp = db.Column(db.String(64), nullable=True)
+    support_sms = db.Column(db.String(64), nullable=True)
     channel_telegram = db.Column(db.Text, nullable=True)
     channel_whatsapp = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -2981,6 +2982,7 @@ class Admin(db.Model):
             'telegram_id': self.telegram_id,
             'support_telegram': self.support_telegram,
             'support_whatsapp': self.support_whatsapp,
+            'support_sms': self.support_sms,
             'channel_telegram': self.channel_telegram,
             'channel_whatsapp': self.channel_whatsapp,
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -4674,6 +4676,7 @@ with app.app_context():
             ('allow_negative_credit', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
             ('negative_credit_limit', 'INTEGER DEFAULT 0'),
             ('sub_shown_package_ids', "TEXT DEFAULT '[]'"),
+            ('support_sms', 'VARCHAR(64)'),
         ]
 
         for col_name, col_type in admin_missing_cols:
@@ -10620,6 +10623,7 @@ def add_admin():
         telegram_id=sanitize_html(data.get('telegram_id')),
         support_telegram=_clean_telegram_username(data.get('support_telegram')),
         support_whatsapp=_clean_whatsapp_number(data.get('support_whatsapp')),
+        support_sms=_clean_whatsapp_number(data.get('support_sms')),
         channel_telegram=_clean_url(data.get('channel_telegram')),
         channel_whatsapp=_clean_url(data.get('channel_whatsapp')),
     )
@@ -10705,6 +10709,7 @@ def update_admin(admin_id):
     if 'telegram_id' in data: admin.telegram_id = sanitize_html(data['telegram_id'])
     if 'support_telegram' in data: admin.support_telegram = _clean_telegram_username(data.get('support_telegram'))
     if 'support_whatsapp' in data: admin.support_whatsapp = _clean_whatsapp_number(data.get('support_whatsapp'))
+    if 'support_sms' in data: admin.support_sms = _clean_whatsapp_number(data.get('support_sms'))
     if 'channel_telegram' in data: admin.channel_telegram = _clean_url(data.get('channel_telegram'))
     if 'channel_whatsapp' in data: admin.channel_whatsapp = _clean_url(data.get('channel_whatsapp'))
     db.session.commit()
@@ -14217,6 +14222,7 @@ def client_subscription(server_id, sub_id):
     # Get support info
     support_telegram = db.session.get(SystemConfig, 'support_telegram')
     support_whatsapp = db.session.get(SystemConfig, 'support_whatsapp')
+    support_sms_cfg = db.session.get(SystemConfig, 'support_sms')
 
     # Get channel links
     channel_telegram = db.session.get(SystemConfig, 'channel_telegram')
@@ -14238,7 +14244,8 @@ def client_subscription(server_id, sub_id):
     
     support_info = {
         'telegram': support_telegram.value if support_telegram else '',
-        'whatsapp': support_whatsapp.value if support_whatsapp else ''
+        'whatsapp': support_whatsapp.value if support_whatsapp else '',
+        'sms': (support_sms_cfg.value if support_sms_cfg else '').strip() or '',
     }
 
     channels_info = {
@@ -14284,6 +14291,7 @@ def client_subscription(server_id, sub_id):
             support_info = {
                 'telegram': _clean_telegram_username(getattr(reseller, 'support_telegram', None)),
                 'whatsapp': _clean_whatsapp_number(getattr(reseller, 'support_whatsapp', None)),
+                'sms': _clean_whatsapp_number(getattr(reseller, 'support_sms', None)),
             }
 
             channels_info = {
@@ -14480,7 +14488,7 @@ def client_subscription(server_id, sub_id):
 def sub_manager_page():
     user = db.session.get(Admin, session['admin_id'])
     
-    _support_cfg = _get_system_configs_batch(['support_telegram', 'support_whatsapp', 'channel_telegram', 'channel_whatsapp'])
+    _support_cfg = _get_system_configs_batch(['support_telegram', 'support_whatsapp', 'support_sms', 'channel_telegram', 'channel_whatsapp'])
     whatsapp_cfg = _get_whatsapp_runtime_settings()
     
     return render_template('sub_manager.html',
@@ -14489,6 +14497,7 @@ def sub_manager_page():
                          role=session.get('role', 'admin'),
                          support_telegram=_support_cfg.get('support_telegram') or '',
                          support_whatsapp=_support_cfg.get('support_whatsapp') or '',
+                         support_sms=_support_cfg.get('support_sms') or '',
                          channel_telegram=_support_cfg.get('channel_telegram') or '',
                          channel_whatsapp=_support_cfg.get('channel_whatsapp') or '',
                          whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
@@ -14512,7 +14521,7 @@ def sub_manager_page():
 
 @app.route('/api/sub-apps', methods=['GET'])
 def get_sub_apps():
-    apps = SubAppConfig.query.all()
+    apps = SubAppConfig.query.order_by(SubAppConfig.display_order, SubAppConfig.id).all()
     return jsonify([a.to_dict() for a in apps])
 
 @app.route('/api/sub-apps', methods=['POST'])
@@ -14590,13 +14599,39 @@ def update_sub_app(app_id):
     if 'tutorial_link' in data: app_config.tutorial_link = data['tutorial_link']
     if 'icon_url' in data: app_config.icon_url = data['icon_url']
     if 'is_recommended' in data: app_config.is_recommended = data['is_recommended']
-    
+    if 'display_order' in data:
+        try:
+            app_config.display_order = int(data['display_order'])
+        except (TypeError, ValueError):
+            pass
+
     try:
         db.session.commit()
         return jsonify({'success': True, 'app': app_config.to_dict()})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/sub-apps/reorder', methods=['POST'])
+@user_management_required
+def reorder_sub_apps():
+    """Accept [{id, display_order}, ...] and bulk-update ordering."""
+    items = request.get_json() or []
+    if not isinstance(items, list):
+        return jsonify({'success': False, 'error': 'Expected a list'}), 400
+    try:
+        for item in items:
+            app_id = int(item.get('id') or 0)
+            order = int(item.get('display_order') or 0)
+            if app_id:
+                SubAppConfig.query.filter_by(id=app_id).update({'display_order': order})
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/sub-apps/<int:app_id>', methods=['DELETE'])
 @user_management_required
