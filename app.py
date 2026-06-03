@@ -9923,7 +9923,22 @@ def renew_client(server_id, inbound_id, email):
 
     if is_free:
         price = 0
-    
+
+    # Gift volume: added on top of the renewal volume, free of charge.
+    try:
+        gift_volume_gb = int(data.get('gift_volume_gb') or 0)
+        if gift_volume_gb < 0:
+            gift_volume_gb = 0
+    except (TypeError, ValueError):
+        gift_volume_gb = 0
+
+    if gift_volume_gb > 0:
+        volume_gb_to_add += gift_volume_gb
+        volume_provided = True
+        _is_fa = (session.get('panel_lang') or _get_panel_ui_lang() or 'en') == 'fa'
+        gift_note = f"+{gift_volume_gb} گیگ هدیه رویالتی" if _is_fa else f"+{gift_volume_gb} GB for Royalty"
+        description = f"{description} ({gift_note})"
+
     try:
         if user.role == 'reseller':
             if not _has_client_access(user, server_id, email, inbound_id=inbound_id):

@@ -571,7 +571,7 @@
                     </div>
                     <span>Reset Traffic</span>
                 </label>
-                
+
                 <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
                     <div class="toggle-switch">
                         <input type="checkbox" id="renew-start-after-first-use">
@@ -579,6 +579,23 @@
                     </div>
                     <span>Start after first use</span>
                 </label>
+            </div>
+
+            <!-- Gift Volume -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; align-items: center;">
+                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="renew-gift-toggle" onchange="onGiftVolumeToggle()">
+                        <span class="slider"></span>
+                    </div>
+                    <span>🎁 {{ 'حجم هدیه' if panel_lang == 'fa' else 'Gift Volume' }}</span>
+                </label>
+                <div id="renew-gift-amount-wrap" style="display:none; align-items:center; gap:8px;">
+                    <input type="number" id="renew-gift-gb" class="form-input" value="5" min="1" max="10000"
+                           style="flex:1; min-width:0;"
+                           placeholder="GB">
+                    <span style="font-size:0.8rem; color:var(--text-secondary); white-space:nowrap;">GB</span>
+                </div>
             </div>
             
             <!-- Payment Card Info -->
@@ -3577,6 +3594,15 @@
 
     function closeRenewModal() {
         document.getElementById('renew-modal').classList.add('hidden');
+        // Reset gift volume
+        const gt = document.getElementById('renew-gift-toggle');
+        if (gt) { gt.checked = false; onGiftVolumeToggle(); }
+    }
+
+    function onGiftVolumeToggle() {
+        const on = document.getElementById('renew-gift-toggle')?.checked;
+        const wrap = document.getElementById('renew-gift-amount-wrap');
+        if (wrap) wrap.style.display = on ? 'flex' : 'none';
     }
 
     function closeRenewSuccessModal() {
@@ -3678,13 +3704,16 @@
         const destCardId = document.getElementById('renew-dest-card')?.value || '';
 
         const usePackage = Boolean(selectedRenewPackageId);
+        const giftOn = Boolean(document.getElementById('renew-gift-toggle')?.checked);
+        const giftGb = giftOn ? (parseInt(document.getElementById('renew-gift-gb')?.value) || 0) : 0;
         const payload = {
             mode: usePackage ? 'package' : 'custom',
             free: Boolean(document.getElementById('renew-free-toggle')?.checked),
             start_after_first_use: startAfterFirstUse,
             reset_traffic: resetTraffic,
             sender_card: senderCard,
-            card_id: destCardId ? parseInt(destCardId) : null
+            card_id: destCardId ? parseInt(destCardId) : null,
+            gift_volume_gb: giftGb > 0 ? giftGb : 0,
         };
 
         if (usePackage) {
