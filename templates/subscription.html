@@ -235,7 +235,8 @@
 
         {% set needs_renewal = state_tag in ('low', 'soon', 'expired', 'ended') %}
 
-        {% if sub_packages and sub_packages|length and (support.whatsapp or support.telegram) %}
+        {% set has_support = support.whatsapp or support.telegram %}
+        {% if sub_packages and sub_packages|length %}
         <div id="sec-renew" class="bg-card rounded-lg border border-border shadow-lg transition-all duration-200 hover:border-primary hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]{% if needs_renewal %} renew-highlight{% endif %}">
             <!-- Header row — always visible, acts as toggle when collapsed -->
             <button type="button" id="renew-toggle-btn" onclick="toggleRenewSection()"
@@ -250,15 +251,22 @@
             <!-- Collapsible body -->
             <div id="renew-body" style="overflow:hidden; transition:max-height .35s cubic-bezier(0.4,0,0.2,1); max-height:{% if needs_renewal %}2000px{% else %}0{% endif %};">
                 <div style="padding:0 20px 20px; border-top:1px solid rgba(255,255,255,0.06);">
-                    <p style="font-size:0.78rem; color:rgba(148,163,184,0.85); margin:12px 0 14px;">{{ 'یک پکیج انتخاب کنید تا درخواست تمدید برای پشتیبانی ارسال شود.' if is_fa else 'Pick a package to send a renewal request to support.' }}</p>
+                    <p style="font-size:0.78rem; color:rgba(148,163,184,0.85); margin:12px 0 14px;">
+                        {% if has_support %}
+                            {{ 'یک پکیج انتخاب کنید تا درخواست تمدید برای پشتیبانی ارسال شود.' if is_fa else 'Pick a package to send a renewal request to support.' }}
+                        {% else %}
+                            {{ 'برای تمدید با پشتیبانی تماس بگیرید.' if is_fa else 'Contact support to renew.' }}
+                        {% endif %}
+                    </p>
                     <div class="pkg-renew-grid">
                         {% for p in sub_packages %}
-                        <div class="pkg-renew-card"
+                        <div class="pkg-renew-card{% if not has_support %} pkg-renew-card--no-contact{% endif %}"
                                 data-name="{{ p.name }}"
                                 data-days="{{ p.days }}"
                                 data-volume="{{ p.volume }}"
                                 data-price="{{ p.price }}"
-                                onclick="openRenewRequest(this)">
+                                onclick="{% if has_support %}openRenewRequest(this){% endif %}"
+                                style="{% if not has_support %}cursor:default; opacity:0.75;{% endif %}">
                             <span class="pkg-renew-name">{{ p.name }}</span>
                             <span class="pkg-renew-meta">
                                 <span>{{ ('∞' if p.days == 0 else (p.days|string ~ (' روز' if is_fa else 'd'))) }}</span>
@@ -266,7 +274,9 @@
                                 <span>{{ ('∞' if p.volume == 0 else (p.volume|string ~ ' GB')) }}</span>
                             </span>
                             <span class="pkg-renew-price">{{ "{:,}".format(p.price) }} <small>{{ 'تومان' if is_fa else 'T' }}</small></span>
+                            {% if has_support %}
                             <span class="pkg-renew-cta">{{ 'درخواست تمدید' if is_fa else 'Request Renewal' }}</span>
+                            {% endif %}
                         </div>
                         {% endfor %}
                     </div>
