@@ -1034,19 +1034,19 @@
 
 <div class="modal-overlay hidden" id="new-client-modal">
     <div class="modal modal-md">
-        <div class="modal-header" style="padding: 12px 16px;">
-            <h2 style="font-size: 0.95rem; font-weight: 600;">{{ 'اکانت ساخته شد ✓' if panel_lang == 'fa' else 'Client Created ✓' }}</h2>
+        <div class="modal-header" style="padding: 10px 14px;">
+            <span style="font-size: 0.88rem; font-weight: 600; color: var(--text-primary);">{{ '✓ اکانت ساخته شد' if panel_lang == 'fa' else '✓ Client Created' }}</span>
             <button class="modal-close" onclick="closeNewClientModal()">&times;</button>
         </div>
-        <div class="modal-body" style="padding: 12px 16px;">
-            <textarea id="new-client-details" class="form-input" rows="5" readonly
-                style="font-family: 'Vazirmatn', sans-serif; direction: rtl; white-space: pre-wrap; word-break: break-all; line-height: 1.7; font-size: 0.88rem; resize: none; margin-bottom: 8px;"></textarea>
+        <div class="modal-body" style="padding: 10px 14px;">
+            <textarea id="new-client-details" class="form-input" rows="1" readonly
+                style="font-family: 'Vazirmatn', sans-serif; direction: rtl; white-space: pre-wrap; word-break: break-all; line-height: 1.7; font-size: 0.88rem; resize: none; margin-bottom: 8px; overflow: hidden;"></textarea>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
-                <button class="btn btn-secondary" style="padding: 8px 10px; font-size: 0.82rem; justify-content: center;" onclick="copyNewClientDetails()">
+                <button class="btn btn-secondary" style="padding: 8px; font-size: 0.82rem; justify-content: center;" onclick="copyNewClientDetails()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; flex-shrink: 0;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     {{ 'کپی' if panel_lang == 'fa' else 'Copy' }}
                 </button>
-                <button class="btn btn-success" style="padding: 8px 10px; font-size: 0.82rem; justify-content: center;" onclick="sendNewClientToUser()">
+                <button class="btn btn-success" style="padding: 8px; font-size: 0.82rem; justify-content: center;" onclick="sendNewClientToUser()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; flex-shrink: 0;"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                     {{ 'ارسال' if panel_lang == 'fa' else 'Send' }}
                 </button>
@@ -1729,7 +1729,7 @@
                 }
                 openPhoneChoiceModal(phones, (phone) => {
                     openMessageChannelChoice(phone, doSend, { message, title });
-                }, 'Select mobile number', { alwaysShow: true });
+                }, 'Select mobile number');
             } catch (e) {
                 showToast('Unable to prepare message', 'error');
             }
@@ -4413,10 +4413,17 @@
     }
 
     function copyNewClientDetails() {
-        const textarea = document.getElementById('new-client-details');
-        textarea.select();
-        document.execCommand('copy');
-        showToast('Details copied to clipboard');
+        const text = document.getElementById('new-client-details').value || '';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => showToast('Details copied to clipboard'));
+        } else {
+            // Fallback for older browsers
+            const ta = document.createElement('textarea');
+            ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast('Details copied to clipboard');
+        }
     }
 
     // Cache the client-created template so we don't re-fetch it on every add.
@@ -4486,8 +4493,8 @@
         const detailsText = document.getElementById('new-client-details');
         _sendCtxNewClient = { email: client.email || '', comment: client.comment || '', phone: client.phone || '' };
         function _fitTextarea() {
-            detailsText.style.height = 'auto';
-            detailsText.style.height = Math.min(detailsText.scrollHeight, 220) + 'px';
+            detailsText.style.height = '1px';
+            detailsText.style.height = Math.min(detailsText.scrollHeight + 2, 240) + 'px';
         }
 
         // 1) If the server already rendered the active template, use it directly.
@@ -4504,7 +4511,8 @@
         if (client.sub_link)  document.getElementById('new-client-sub-link').value = client.sub_link;
         if (client.dashboard_link) document.getElementById('new-client-dash-link').value = client.dashboard_link;
         modal.classList.remove('hidden');
-        requestAnimationFrame(_fitTextarea);
+        // Two rAFs: first paint renders the modal, second reads the real scrollHeight
+        requestAnimationFrame(() => requestAnimationFrame(_fitTextarea));
 
         // 2) Only fall back to client-side template building if server didn't return copy_text.
         if (!copyTextFromServer || !copyTextFromServer.trim()) {
