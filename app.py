@@ -3035,6 +3035,7 @@ class SubAppConfig(db.Model):
     tutorial_link = db.Column(db.String(500))
     icon_url = db.Column(db.String(500))
     is_recommended = db.Column(db.Boolean, default=False)
+    display_order = db.Column(db.Integer, default=0)
 
     def to_dict(self):
         return {
@@ -3051,7 +3052,8 @@ class SubAppConfig(db.Model):
             'store_link': self.store_link,
             'tutorial_link': self.tutorial_link,
             'icon_url': self.icon_url,
-            'is_recommended': self.is_recommended or False
+            'is_recommended': self.is_recommended or False,
+            'display_order': self.display_order or 0,
         }
 
 class FAQ(db.Model):
@@ -4843,6 +4845,7 @@ with app.app_context():
             _sac_new = [
                 ('icon_url', 'VARCHAR(500)'),
                 ('is_recommended', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
+                ('display_order', 'INTEGER DEFAULT 0'),
             ]
             for _cn, _cd in _sac_new:
                 if _cn not in _sac_cols:
