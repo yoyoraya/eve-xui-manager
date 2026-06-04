@@ -1347,6 +1347,8 @@
 
     const selectedExpiryFilters = new Set(); // not_started | unlimited | expired | today | lt_days | gt_days
     const expandedInboundKeys = new Set(); // `${server_id}:${inbound_id}` -> expanded client list
+    let _searchPlaceholderShown = false; // true while the heavy list is swapped for a search placeholder
+    let _inboundsRenderToken = 0;         // cancels stale chunked renders
     let expiryLessThanDays = 7;
     let expiryGreaterThanDays = 30;
     let disabledOnlyClients = false;
@@ -2845,6 +2847,8 @@
         const countEl = document.getElementById('inbounds-count');
         if (countEl) countEl.textContent = `${inbounds.length} inbounds`;
 
+        // Invalidate any in-flight chunked render (and any other innerHTML swap).
+        const myToken = ++_inboundsRenderToken;
         let html = '';
 
         if (inbounds.length === 0 && (!pendingServers || pendingServers.length === 0)) {
@@ -2861,7 +2865,7 @@
             return;
         }
         
-        html += inbounds.map(inbound => {
+        const _cardHtmls = inbounds.map(inbound => {
             const inboundKey = `${inbound.server_id}:${inbound.id}`;
             const isExpanded = expandedInboundKeys.has(inboundKey);
             const toggleCount = inbound.clients.length;
@@ -2899,7 +2903,7 @@
 
                 ${inbound.clients.length > 0 ? `
                 <div class="clients-section">
-                    <button class="toggle-clients" data-inbound-key="${inboundKey}" onclick="toggleClients(this, event)">
+                    <button class="toggle-clients" data-inbound-key="${inboundKey}" data-client-count="${toggleCount}" onclick="toggleClients(this, event)">
                         ${isExpanded
                             ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg> Hide Clients (${toggleCount})`
                             : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${toggleCount})`}
@@ -3015,7 +3019,10 @@
                 ` : ''}
             </div>
         `;
-        }).join('');
+        });
+
+        // Extra (non-chunked) cards: server empty/error + pending placeholders.
+        let extraHtml = '';
 
         // Add per-server empty/error cards for servers whose inbounds didn't load.
         try {
@@ -3065,7 +3072,7 @@
                         countEl.textContent = `${inbounds.length} inbounds${extra}`;
                     }
 
-                    html += missingServers.map(s => {
+                    extraHtml += missingServers.map(s => {
                         const sid = parseInt(s?.id);
                         const st = statusMap.get(sid) || {};
                         const ok = (st && (st.success === true || st.reachable === true)) && !st.error;
@@ -3107,7 +3114,7 @@
 
         // Add placeholders for pending servers
         if (typeof pendingServers !== 'undefined' && pendingServers.length > 0) {
-             html += pendingServers.map(s => `
+             extraHtml += pendingServers.map(s => `
                 <div class="inbound-card loading-placeholder" style="opacity: 0.7; border-style: dashed;">
                     <div class="inbound-header">
                         <div class="inbound-title">
@@ -3118,10 +3125,41 @@
                 </div>
             `).join('');
         }
-        
-        container.innerHTML = html;
-        applyBulkSelectionToDOM();
-        updateBulkUI();
+
+        // ── Chunked injection ────────────────────────────────────────────────
+        // Parsing thousands of client rows in one innerHTML assignment blocks the
+        // main thread for seconds (frozen UI: clicks, typing, dropdowns). Inject
+        // the inbound cards in small batches, yielding to the event loop between
+        // them so the page stays responsive while it builds.
+        container.innerHTML = (html || '');
+        const ROWS_PER_FRAME = 400;  // cap parsed client rows per frame (size-aware)
+        let _ci = 0;
+        const _renderChunk = () => {
+            if (myToken !== _inboundsRenderToken) return; // a newer render superseded us
+            if (_ci < _cardHtmls.length) {
+                let buf = '';
+                let rows = 0;
+                // Always emit at least one card; otherwise stop once the row budget is hit.
+                while (_ci < _cardHtmls.length && (buf === '' || rows < ROWS_PER_FRAME)) {
+                    buf += _cardHtmls[_ci];
+                    rows += (inbounds[_ci] && inbounds[_ci].clients ? inbounds[_ci].clients.length : 0);
+                    _ci++;
+                }
+                const tpl = document.createElement('template');
+                tpl.innerHTML = buf;
+                container.appendChild(tpl.content);
+                requestAnimationFrame(_renderChunk);
+                return;
+            }
+            if (extraHtml) {
+                const tpl = document.createElement('template');
+                tpl.innerHTML = extraHtml;
+                container.appendChild(tpl.content);
+            }
+            applyBulkSelectionToDOM();
+            updateBulkUI();
+        };
+        _renderChunk();
     }
 
     function toggleClients(btn, ev) {
@@ -3142,8 +3180,8 @@
             }
         }
         
-        const count = clientsList.querySelectorAll('tbody tr').length;
-        btn.innerHTML = isHidden 
+        const count = parseInt(btn.dataset.clientCount || '0') || clientsList.querySelectorAll('tbody tr').length;
+        btn.innerHTML = isHidden
             ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg> Hide Clients (${count})`
             : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg> Show Clients (${count})`;
     }
@@ -5317,7 +5355,20 @@
             clearSearch(false); // Pass false to avoid refreshing data immediately if not needed
             return;
         }
-        
+
+        // Drop the heavy main list IMMEDIATELY when typing starts. With thousands
+        // of client rows in the DOM, keeping them painted makes every keystroke
+        // janky on mobile. Replace once with a light placeholder so typing stays
+        // smooth during the debounce; the search result fills it in shortly.
+        if (!_searchPlaceholderShown) {
+            _inboundsRenderToken++; // abort any in-flight chunked main-list render
+            const c = document.getElementById('inbounds-container');
+            if (c) {
+                c.innerHTML = '<div class="empty-state" style="padding:48px 16px;"><div class="spinner" style="margin:0 auto 12px;"></div><h3>Searching…</h3></div>';
+            }
+            _searchPlaceholderShown = true;
+        }
+
         const runSearch = async () => {
             try {
                 const response = await fetch(`/api/clients/search?email=${encodeURIComponent(query)}`);
@@ -5347,6 +5398,7 @@
         document.getElementById('global-search-input').value = '';
         searchResultsDiv.style.display = 'none';
         document.getElementById('clear-search-btn').classList.add('hidden');
+        _searchPlaceholderShown = false;
         
         if (shouldRefresh) {
             refreshData();
@@ -5404,12 +5456,13 @@
     }
 
     function updateInboundsFiltered(filteredResults) {
+        _inboundsRenderToken++; // abort any in-flight chunked main-list render
         if (filteredResults.length === 0) {
             const container = document.getElementById('inbounds-container');
             container.innerHTML = `<div class="empty-state"><h3>No results</h3></div>`;
             return;
         }
-        
+
         const container = document.getElementById('inbounds-container');
         const inboundsToShow = [];
         
