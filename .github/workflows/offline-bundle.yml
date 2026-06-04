@@ -29,6 +29,23 @@ jobs:
           EVE_OFFLINE_TARGETS: ${{ github.event.inputs.targets || 'jammy' }}
         run: bash prepare-offline-bundle.sh .
 
+      - name: Build standalone Redis add-on (jammy amd64)
+        run: |
+          set -e
+          mkdir -p redis-addon/apt/partial redis-addon/wheels dist
+          sudo apt-get update
+          # Download redis-server + all its dependencies (offline-installable)
+          sudo apt-get install -y --download-only --no-install-recommends \
+            -o Dir::Cache::archives="$PWD/redis-addon/apt" redis-server
+          rm -rf redis-addon/apt/partial redis-addon/apt/lock
+          # Python redis wheel (matches the runner's CPython 3.x; pure-python so portable)
+          python3 -m pip download --only-binary=:all: --dest redis-addon/wheels redis
+          cp install-redis-offline.sh redis-addon/
+          chmod +x redis-addon/install-redis-offline.sh
+          tar -czf dist/redis-offline-jammy.tar.gz -C redis-addon .
+          echo "Redis add-on contents:"; ls -R redis-addon | head -40
+          du -sh dist/redis-offline-jammy.tar.gz
+
       - name: Bundle info
         id: info
         run: |
@@ -64,11 +81,20 @@ jobs:
           path: dist/eve-xui-manager-offline.tar.gz
           retention-days: 90
 
+      - name: Upload Redis add-on artifact (all runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-offline-jammy
+          path: dist/redis-offline-jammy.tar.gz
+          retention-days: 90
+
       - name: Attach to GitHub Release (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/eve-xui-manager-offline.tar.gz
+          files: |
+            dist/eve-xui-manager-offline.tar.gz
+            dist/redis-offline-jammy.tar.gz
           body: |
             ## Eve X-UI Manager ${{ steps.info.outputs.version }}
 
@@ -83,12 +109,19 @@ jobs:
 
             | Included | Description |
             |----------|-------------|
-            | 📦 System packages | All `.deb` files for Ubuntu 22.04 Jammy amd64 |
+            | 📦 System packages | All `.deb` files for Ubuntu 22.04 Jammy amd64 (incl. **Redis**) |
             | 🐍 Python 3.11 runtime | Portable, no system Python needed |
-            | 📚 Python packages | Pre-built wheels (CPython 3.11 / x86_64) |
+            | 📚 Python packages | Pre-built wheels (CPython 3.11 / x86_64, incl. **redis**) |
             | 📂 Application | Full source code |
 
             Bundle size: **${{ steps.info.outputs.size }}**
+
+            ### Downloads
+
+            | File | Use for |
+            |------|---------|
+            | `eve-xui-manager-offline.tar.gz` | **Full** offline install/update (includes Redis) |
+            | `redis-offline-jammy.tar.gz` | **Add Redis only** to an existing offline install (no full rebuild) |
 
             ---
 
@@ -103,6 +136,18 @@ jobs:
             cd /root/eve-xui-manager
             sudo bash setup.sh
             # → Choose:  [o] Setup Full Offline
+            ```
+
+            ### Add Redis to an existing offline install
+
+            ```bash
+            scp redis-offline-jammy.tar.gz root@YOUR_SERVER:/root/
+            # On the server:
+            mkdir -p /root/redis-addon
+            tar -xzf /root/redis-offline-jammy.tar.gz -C /root/redis-addon
+            cd /root/redis-addon
+            sudo bash install-redis-offline.sh
+            # Installs Redis offline, sets REDIS_URL in .env, restarts the app.
             ```
 
             ### Update Existing Install
