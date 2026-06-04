@@ -629,7 +629,14 @@ install_dependencies() {
         certbot \
         python3-certbot-nginx \
         postgresql-client \
+        redis-server \
         libmagic1
+    # Redis: bind to localhost only, enable + start (shared cache across workers)
+    if systemctl list-unit-files 2>/dev/null | grep -q '^redis-server'; then
+        systemctl enable redis-server >/dev/null 2>&1 || true
+        systemctl restart redis-server >/dev/null 2>&1 || true
+        print_success "Redis installed & running (localhost:6379)"
+    fi
     print_success "Dependencies installed"
 }
 
@@ -936,6 +943,10 @@ create_env_file() {
         if ! grep -q '^SERVER_PASSWORD_KEY=' "$ENV_FILE"; then
             echo "SERVER_PASSWORD_KEY=${SERVER_PASSWORD_KEY}" >> "$ENV_FILE"
         fi
+        # Enable the shared Redis cache (safe: app falls back if Redis is down)
+        if ! grep -q '^REDIS_URL=' "$ENV_FILE"; then
+            echo "REDIS_URL=redis://127.0.0.1:6379/0" >> "$ENV_FILE"
+        fi
         chown "$APP_USER:$APP_USER" "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         print_success "Environment file updated (missing keys added)"
@@ -948,6 +959,7 @@ SERVER_PASSWORD_KEY=${SERVER_PASSWORD_KEY}
 INITIAL_ADMIN_USERNAME=${ADMIN_USERNAME}
 INITIAL_ADMIN_PASSWORD=${ADMIN_PASS}
 API_PORT=${APP_PORT}
+REDIS_URL=redis://127.0.0.1:6379/0
 EOF
     # Append DATABASE_URL only when PostgreSQL was selected
     if [ -n "${DATABASE_URL:-}" ]; then

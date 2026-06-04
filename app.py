@@ -109,6 +109,108 @@ GLOBAL_SERVER_DATA = {
     'is_updating': False
 }
 
+# ── Optional Redis (shared cache across gunicorn workers) ────────────────────
+# When REDIS_URL is set AND reachable, one worker fetches panel data and writes
+# the processed snapshot to Redis; all workers read it from there. If Redis is
+# missing/unreachable, the app transparently falls back to per-worker fetching.
+REDIS_URL = (os.environ.get('REDIS_URL') or '').strip()
+REDIS_SNAPSHOT_KEY = 'eve:server_data_snapshot'
+_REDIS_CLIENT = None
+_REDIS_CHECKED = False
+_REDIS_LOCK = threading.Lock()
+
+
+def get_redis():
+    """Return a connected redis client, or None if unavailable.
+    Result is cached; a failed connection disables Redis for the process."""
+    global _REDIS_CLIENT, _REDIS_CHECKED
+    if _REDIS_CHECKED:
+        return _REDIS_CLIENT
+    with _REDIS_LOCK:
+        if _REDIS_CHECKED:
+            return _REDIS_CLIENT
+        _REDIS_CHECKED = True
+        if not REDIS_URL:
+            _REDIS_CLIENT = None
+            return None
+        try:
+            import redis as _redis_lib
+            client = _redis_lib.from_url(
+                REDIS_URL, socket_connect_timeout=2, socket_timeout=2,
+                decode_responses=False)
+            client.ping()
+            _REDIS_CLIENT = client
+            print(f"[Redis] connected: {REDIS_URL}")
+        except Exception as _re:
+            print(f"[Redis] unavailable ({_re}); using per-worker in-memory cache.")
+            _REDIS_CLIENT = None
+        return _REDIS_CLIENT
+
+
+def redis_enabled() -> bool:
+    return get_redis() is not None
+
+
+REDIS_SNAPSHOT_VERSION_KEY = 'eve:server_data_version'
+REDIS_SNAPSHOT_TTL = 180  # seconds; expires if the fetcher dies
+_LAST_LOADED_SNAPSHOT_VERSION = None
+
+
+def publish_snapshot_to_redis() -> bool:
+    """Serialize the current GLOBAL_SERVER_DATA snapshot to Redis (compressed).
+    Called only by the singleton fetcher. Returns True on success."""
+    client = get_redis()
+    if client is None:
+        return False
+    try:
+        import pickle, zlib
+        payload = {
+            'inbounds': GLOBAL_SERVER_DATA.get('inbounds') or [],
+            'stats': GLOBAL_SERVER_DATA.get('stats') or {},
+            'servers_status': GLOBAL_SERVER_DATA.get('servers_status') or [],
+            'last_update': GLOBAL_SERVER_DATA.get('last_update'),
+        }
+        blob = zlib.compress(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL), 1)
+        version = str(time.time())
+        pipe = client.pipeline()
+        pipe.set(REDIS_SNAPSHOT_KEY, blob, ex=REDIS_SNAPSHOT_TTL)
+        pipe.set(REDIS_SNAPSHOT_VERSION_KEY, version, ex=REDIS_SNAPSHOT_TTL)
+        pipe.execute()
+        return True
+    except Exception as e:
+        print(f"[Redis] publish snapshot failed: {e}")
+        return False
+
+
+def load_snapshot_from_redis(force: bool = False) -> bool:
+    """Pull the shared snapshot from Redis into local GLOBAL_SERVER_DATA, but
+    only when the version changed (cheap version check first). Returns True if
+    the local cache was updated."""
+    global _LAST_LOADED_SNAPSHOT_VERSION
+    client = get_redis()
+    if client is None:
+        return False
+    try:
+        version = client.get(REDIS_SNAPSHOT_VERSION_KEY)
+        if version is None:
+            return False
+        if not force and version == _LAST_LOADED_SNAPSHOT_VERSION:
+            return False  # nothing new — skip the expensive decompress
+        blob = client.get(REDIS_SNAPSHOT_KEY)
+        if not blob:
+            return False
+        import pickle, zlib
+        payload = pickle.loads(zlib.decompress(blob))
+        GLOBAL_SERVER_DATA['inbounds'] = payload.get('inbounds') or []
+        GLOBAL_SERVER_DATA['stats'] = payload.get('stats') or {}
+        GLOBAL_SERVER_DATA['servers_status'] = payload.get('servers_status') or []
+        GLOBAL_SERVER_DATA['last_update'] = payload.get('last_update')
+        _LAST_LOADED_SNAPSHOT_VERSION = version
+        return True
+    except Exception as e:
+        print(f"[Redis] load snapshot failed: {e}")
+        return False
+
 # Ownership cache: pre-loaded from DB, used by enrich_inbounds_with_ownership.
 # Avoids a per-request DB query with thousands of emails in IN clause.
 _OWNERSHIP_CACHE: dict = {
@@ -1458,6 +1560,8 @@ def _run_refresh_job(job_id: str):
                                 raise
                         else:
                             fetch_and_update_global_data(force=force)
+                    # Propagate manual-refresh results to other workers (Redis mode).
+                    publish_snapshot_to_redis()
                 finally:
                     GLOBAL_SERVER_DATA['is_updating'] = False
 
@@ -2918,10 +3022,15 @@ def _run_telegram_backup(trigger: str = 'scheduled', progress_cb=None) -> dict:
         except Exception:
             pass
 
+# Use Redis for rate-limit storage when available so limits are shared across
+# gunicorn workers (and the "in-memory storage" warning goes away). Falls back
+# to in-memory if Redis isn't configured/reachable.
+_LIMITER_STORAGE_URI = REDIS_URL if (REDIS_URL and redis_enabled()) else "memory://"
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["5000 per day", "500 per hour"]
+    default_limits=["5000 per day", "500 per hour"],
+    storage_uri=_LIMITER_STORAGE_URI,
 )
 
 db = SQLAlchemy(app)
@@ -18563,6 +18672,7 @@ def check_update():
 def background_data_fetcher():
     """
     این تابع در پس‌زمینه اجرا می‌شود و هر ۳۰ ثانیه اطلاعات را در RAM بروز می‌کند.
+    Fetches from panels, processes, and (if Redis is on) publishes the snapshot.
     """
     ensure_background_threads_started()
     while True:
@@ -18577,6 +18687,23 @@ def background_data_fetcher():
                     except Exception:
                         pass
         time.sleep(30)
+
+
+def snapshot_reader_worker():
+    """Runs in workers that DON'T fetch (Redis mode). Pulls the shared snapshot
+    from Redis into local memory so requests are served fast & in-process.
+    Only decompresses when the snapshot version actually changed."""
+    # Prime immediately so the worker has data without waiting a full interval.
+    try:
+        load_snapshot_from_redis(force=True)
+    except Exception:
+        pass
+    while True:
+        try:
+            load_snapshot_from_redis()
+        except Exception:
+            pass
+        time.sleep(10)
 
 
 def fetch_and_update_global_data(force: bool = False, server_ids=None):
@@ -18741,6 +18868,10 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
         GLOBAL_SERVER_DATA['stats'] = total_stats
         GLOBAL_SERVER_DATA['servers_status'] = server_statuses
         GLOBAL_SERVER_DATA['last_update'] = now_iso
+
+        # Share the freshly-computed snapshot with the other workers via Redis
+        # (no-op when Redis is not configured/available).
+        publish_snapshot_to_redis()
 
     except Exception as e:
         print(f"Background fetch error: {e}")
@@ -19289,11 +19420,30 @@ def ensure_background_threads_started():
     else:
         print("[Singleton] scheduler already owned by another worker, skipping.")
 
-    # Per-worker: every worker fetches server data into its own memory cache
-    try:
-        threading.Thread(target=background_data_fetcher, daemon=True).start()
-    except Exception as e:
-        print(f"Failed to start data fetcher thread: {e}")
+    # Data fetching:
+    #  - Redis ON  : ONE worker (singleton) fetches+processes+publishes; the
+    #                other workers only read the shared snapshot from Redis.
+    #                → panels hit once, processing done once (not per-worker).
+    #  - Redis OFF : fall back to every worker fetching into its own RAM cache.
+    if redis_enabled():
+        if _claim_singleton('data_fetcher'):
+            try:
+                threading.Thread(target=background_data_fetcher, daemon=True).start()
+                print("[Redis] this worker is the data fetcher (singleton).")
+            except Exception as e:
+                print(f"Failed to start data fetcher thread: {e}")
+        else:
+            try:
+                threading.Thread(target=snapshot_reader_worker, daemon=True).start()
+                print("[Redis] this worker reads the shared snapshot.")
+            except Exception as e:
+                print(f"Failed to start snapshot reader thread: {e}")
+    else:
+        # Per-worker: every worker fetches server data into its own memory cache
+        try:
+            threading.Thread(target=background_data_fetcher, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to start data fetcher thread: {e}")
 
     # Singleton: only one worker runs health watchdog (DB logs, notifications)
     if _claim_singleton('health_watchdog'):
