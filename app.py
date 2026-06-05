@@ -10061,7 +10061,43 @@ def client_last_renewal(email):
             'admin_username': (t.admin.username if getattr(t, 'admin', None) else ''),
         })
 
-    return jsonify({'success': True, 'renewals': renewals})
+    # Gift history: gift renewals carry the Royalty marker in their description.
+    # (gifts are conventionally given once, so the operator should be warned.)
+    last_gift = None
+    gift_count = 0
+    try:
+        gq = Transaction.query.filter(
+            func.lower(Transaction.client_email) == email_l.lower(),
+            or_(
+                Transaction.description.like('%هدیه رویالتی%'),
+                Transaction.description.like('%for Royalty%'),
+            ),
+        )
+        if user.role == 'reseller':
+            gq = gq.filter(Transaction.admin_id == user.id)
+        gift_rows = gq.order_by(Transaction.created_at.desc()).all()
+        gift_count = len(gift_rows)
+        if gift_rows:
+            g = gift_rows[0]
+            gb = None
+            m = re.search(r'\+\s*(\d+)\s*(?:GB|گیگ)', g.description or '')
+            if m:
+                try:
+                    gb = int(m.group(1))
+                except Exception:
+                    gb = None
+            gcreated = g.created_at
+            last_gift = {
+                'date_jalali': format_jalali(gcreated) if gcreated else None,
+                'days_ago': (now - gcreated).days if gcreated else None,
+                'gift_gb': gb,
+                'admin_username': (g.admin.username if getattr(g, 'admin', None) else ''),
+            }
+    except Exception:
+        last_gift = None
+        gift_count = 0
+
+    return jsonify({'success': True, 'renewals': renewals, 'last_gift': last_gift, 'gift_count': gift_count})
 
 
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew', methods=['POST'])

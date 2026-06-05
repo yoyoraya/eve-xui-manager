@@ -600,6 +600,7 @@
                     <span style="font-size:0.8rem; color:var(--text-secondary); white-space:nowrap;">GB</span>
                 </div>
             </div>
+            <div id="renew-gift-history" style="display:none; margin-top:8px; padding:8px 11px; border-radius:8px; font-size:0.8rem; line-height:1.6; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.32); color:#fbbf24;"></div>
             
             <!-- Payment Card Info -->
             <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; padding: 12px; margin-top: 15px;">
@@ -3638,22 +3639,32 @@
     function closeRenewModal() {
         document.getElementById('renew-modal').classList.add('hidden');
         // Reset gift volume
+        _lastGiftInfo = null;
         const gt = document.getElementById('renew-gift-toggle');
         if (gt) { gt.checked = false; onGiftVolumeToggle(); }
         const notice = document.getElementById('renew-last-notice');
         if (notice) { notice.style.display = 'none'; notice.innerHTML = ''; }
+        const giftHist = document.getElementById('renew-gift-history');
+        if (giftHist) { giftHist.style.display = 'none'; giftHist.innerHTML = ''; }
     }
+
+    let _lastGiftInfo = null; // { date_jalali, days_ago, gift_gb, admin_username } | null
 
     async function loadLastRenewalNotice(email) {
         const box = document.getElementById('renew-last-notice');
         if (!box) return;
         box.style.display = 'none';
         box.innerHTML = '';
+        _lastGiftInfo = null;
         try {
             const res = await fetch(`/api/client/${encodeURIComponent(email)}/last-renewal`);
             const data = await res.json();
             // Ignore if the modal was reopened for a different client meanwhile
             if ((document.getElementById('renew-email').value || '') !== email) return;
+            // Remember any prior gift so onGiftVolumeToggle can warn about it
+            _lastGiftInfo = (data && data.last_gift) ? data.last_gift : null;
+            // If the gift toggle is already on, refresh its history note now.
+            if (document.getElementById('renew-gift-toggle')?.checked) onGiftVolumeToggle();
             if (!data.success || !data.renewals || !data.renewals.length) return;
 
             const last = data.renewals[0];
@@ -3702,6 +3713,26 @@
         const on = document.getElementById('renew-gift-toggle')?.checked;
         const wrap = document.getElementById('renew-gift-amount-wrap');
         if (wrap) wrap.style.display = on ? 'flex' : 'none';
+
+        // Gift is conventionally given once — warn if this user already got one.
+        const hist = document.getElementById('renew-gift-history');
+        if (!hist) return;
+        if (on && _lastGiftInfo) {
+            const isFa = {{ ('fa' if panel_lang == 'fa' else 'en')|tojson }} === 'fa';
+            const g = _lastGiftInfo;
+            const gb = g.gift_gb ? `${g.gift_gb} GB ` : '';
+            const days = (g.days_ago != null)
+                ? (isFa ? ` (${g.days_ago} روز پیش)` : ` (${g.days_ago}d ago)`)
+                : '';
+            const by = g.admin_username ? ` • 👤 ${escapeHtml(g.admin_username)}` : '';
+            hist.innerHTML = isFa
+                ? `🎁 توجه: این یوزر قبلاً ${gb}هدیه گرفته — 📅 ${escapeHtml(g.date_jalali || '')}${days}${by}.<br>گیفت معمولاً یک‌بار داده می‌شود؛ در صورت تمایل خاموش کنید.`
+                : `🎁 Heads up: this user already received ${gb}a gift — 📅 ${escapeHtml(g.date_jalali || '')}${days}${by}.<br>Gifts are usually given once; turn off if not intended.`;
+            hist.style.display = 'block';
+        } else {
+            hist.style.display = 'none';
+            hist.innerHTML = '';
+        }
     }
 
     function closeRenewSuccessModal() {
