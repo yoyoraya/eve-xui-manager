@@ -10545,9 +10545,9 @@ def renew_client(server_id, inbound_id, email):
                 elif price > 0:
                     if user.role == 'reseller':
                         user.credit -= price
-                        log_transaction(user.id, -price, 'renew', "User Renewal (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
+                        log_transaction(user.id, -price, 'renew', f"User Renewal (Credit Usage) - {description}", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
                     else:
-                        log_transaction(user.id, price, 'renew', "User Renewal (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
+                        log_transaction(user.id, price, 'renew', f"User Renewal (Income) - {description}", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
                     db.session.commit()
 
                 # Post-update verify (best-effort): fetch inbounds and confirm expiry/volume.
