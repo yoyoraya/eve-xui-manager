@@ -11615,10 +11615,21 @@ def add_client(server_id, inbound_id):
             }), 502
 
         settings = json.loads(inbound_data['settings'])
-        
+
         for c in settings['clients']:
             if c['email'] == email: return jsonify({"success": False, "error": f"Email '{email}' already exists on server"})
-            
+
+        # Protocol-specific credentials. VLESS/VMess use `id` (already set); but
+        # Shadowsocks needs a per-client method+password and Trojan needs a
+        # password — without them x-ui fails: "Shadowsocks password is not specified".
+        _proto = (inbound_data.get('protocol') or '').lower()
+        if _proto == 'shadowsocks':
+            _ss_method = settings.get('method') or 'chacha20-ietf-poly1305'
+            new_client['method'] = _ss_method
+            new_client['password'] = _ss_password(_ss_method)
+        elif _proto == 'trojan':
+            new_client['password'] = new_client.get('password') or secrets.token_urlsafe(16)
+
         settings['clients'].append(new_client)
         
         update_data = inbound_data.copy()
