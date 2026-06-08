@@ -270,6 +270,7 @@
                 <option value="add_volume">Add Volume (GB)</option>
                 <option value="volume_policy">Volume Filter</option>
                 <option value="volume_multiplier">Volume Multiplier ✕</option>
+                <option value="set_inbounds">Assign to Inbounds</option>
                 {% if is_superadmin %}
                 <option value="assign_owner">Assign Owner</option>
                 <option value="unassign_owner">Unassign Owner</option>
@@ -305,6 +306,33 @@
                 </select>
             </div>
             {% endif %}
+
+            <div id="bulk-inbound-container" style="display:none; gap:10px; align-items:center;">
+                <select id="bulk-inbound-mode" class="form-select" style="max-width: 150px;" title="How to apply the chosen inbounds">
+                    <option value="add">Add to</option>
+                    <option value="set">Replace with</option>
+                    <option value="remove">Remove from</option>
+                </select>
+                <div class="filter-dropdown-wrapper" style="position:relative; min-width:200px;">
+                    <button type="button" class="filter-btn" style="width:100%; justify-content:space-between;" onclick="toggleBulkInboundDropdown(event)">
+                        <span style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="filter-icon" style="flex-shrink:0;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                            <span id="bulk-inbound-label">Select inbounds</span>
+                        </span>
+                        <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                            <span class="badge-count hidden" id="bulk-inbound-count">0</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </span>
+                    </button>
+                    <div id="bulk-inbound-dropdown" class="filter-dropdown hidden">
+                        <div class="filter-header">
+                            <span id="bulk-inbound-server-name">Select Inbounds</span>
+                            <button type="button" class="text-btn" onclick="selectAllBulkInbounds(event)">All</button>
+                        </div>
+                        <div id="bulk-inbound-list" class="filter-list"></div>
+                    </div>
+                </div>
+            </div>
 
             <button class="btn btn-primary" onclick="executeBulkAction()">Apply</button>
             <button class="btn btn-secondary" onclick="clearBulkSelection()">Clear</button>
@@ -995,6 +1023,31 @@
                 <input type="text" id="edit-client-comment" class="form-input" placeholder="e.g. name, phone number...">
             </div>
 
+            <!-- v3 only: edit which inbounds this client is assigned to -->
+            <div class="form-group" id="edit-client-inbound-group" style="display:none;">
+                <label>Assigned inbounds</label>
+                <div class="filter-dropdown-wrapper" style="position:relative; width:100%;">
+                    <button type="button" class="filter-btn" style="width:100%; justify-content:space-between;" onclick="toggleEditInboundDropdown(event)">
+                        <span style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="filter-icon" style="flex-shrink:0;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                            <span id="edit-inbound-multi-label">All inbounds</span>
+                        </span>
+                        <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                            <span class="badge-count hidden" id="edit-inbound-multi-count">0</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </span>
+                    </button>
+                    <div id="edit-inbound-multi-dropdown" class="filter-dropdown hidden">
+                        <div class="filter-header">
+                            <span>Select Inbounds</span>
+                            <button type="button" class="text-btn" onclick="selectAllEditInbounds(event)">All</button>
+                        </div>
+                        <div id="edit-client-inbound-multi-list" class="filter-list"></div>
+                    </div>
+                </div>
+                <small class="text-secondary" style="display:block; margin-top:6px;">Saving applies the checked inbounds. Unchecking removes the client from that inbound.</small>
+            </div>
+
             {% if is_superadmin %}
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                 <div class="form-group" style="margin-bottom: 0;">
@@ -1243,6 +1296,43 @@
         opacity: 0.65;
         cursor: not-allowed;
     }
+
+    /* v3 unified card: assigned-inbound names stacked vertically (like the traffic cell) */
+    .inbounds-cell .inbound-pills {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3px;
+    }
+    .inbound-name-line {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 180px;
+        font-size: 0.74rem;
+        line-height: 1.3;
+        color: var(--text-secondary);
+    }
+    .inbound-name-line .ib-name-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .inbound-name-line .ib-proto-dot {
+        flex-shrink: 0;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #64748b;
+    }
+    .inbound-name-line.vless  .ib-proto-dot { background: #60a5fa; }
+    .inbound-name-line.vmess  .ib-proto-dot { background: #a78bfa; }
+    .inbound-name-line.trojan .ib-proto-dot { background: #f472b6; }
+    .inbound-name-line.shadowsocks .ib-proto-dot { background: #34d399; }
+
+    /* Edit/bulk inbound checkbox dropdown reuses the filter-dropdown look */
+    #edit-client-inbound-multi-list .filter-item,
+    #bulk-inbound-list .filter-item { padding: 6px 8px; }
 
     @media (max-width: 481px) {
         jdp-container {
@@ -2957,9 +3047,11 @@
 
         const clientRowsHtml = entries.map(({ client, ibs }) => {
             const firstIbId = ibs[0]?.id || client.inbound_id || '';
-            const ibPillsHtml = ibs.map(ib =>
-                `<span class="inbound-mini-badge ${(ib.protocol || '').toLowerCase()}" title="${escapeHtml(ib.remark)}">${escapeHtml((ib.protocol || '').toUpperCase())}</span>`
-            ).join('');
+            const ibPillsHtml = ibs.map(ib => {
+                const proto = (ib.protocol || '').toUpperCase();
+                const name = ib.remark || ('Inbound ' + ib.id);
+                return `<span class="inbound-name-line ${(ib.protocol || '').toLowerCase()}" title="${escapeHtml(proto + ' · ' + name)}"><span class="ib-proto-dot"></span><span class="ib-name-text">${escapeHtml(name)}</span></span>`;
+            }).join('');
             const assignBtn = IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${sid}, '${client.email}', '${firstIbId}', '${client.id || ''}')" title="Assign Owner"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><path d="M22 11h-2.5a2.5 2.5 0 0 0 0 5H22"></path></svg></button>` : '';
             const toggleIcon = client.enable
                 ? '<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>'
@@ -4749,6 +4841,80 @@
             .filter(cb => cb.checked).map(cb => parseInt(cb.value)).filter(Number.isFinite);
     }
 
+    // ── Edit modal: change which inbounds a v3 client is assigned to ──────────
+    let _editClientInboundState = { serverId: null, email: '', clientUuid: '', originalIds: new Set(), isV3: false };
+
+    function _populateEditInboundMulti(serverId, email) {
+        const group = document.getElementById('edit-client-inbound-group');
+        const list = document.getElementById('edit-client-inbound-multi-list');
+        _editClientInboundState = { serverId, email, clientUuid: '', originalIds: new Set(), isV3: false };
+        if (!group || !list) return;
+
+        if (!_serverIsV3(serverId)) {
+            group.style.display = 'none';
+            list.innerHTML = '';
+            return;
+        }
+        _editClientInboundState.isV3 = true;
+
+        // Role-filtered cache → resellers only ever see inbounds they can access.
+        const inbounds = getCachedInboundsForServer(serverId);
+        const emailL = String(email || '').toLowerCase();
+        const assigned = new Set();
+        inbounds.forEach(ib => {
+            const c = (ib.clients || []).find(x => (x.email || '').toLowerCase() === emailL);
+            if (c) {
+                assigned.add(parseInt(ib.id));
+                if (!_editClientInboundState.clientUuid && c.id) _editClientInboundState.clientUuid = c.id;
+            }
+        });
+        _editClientInboundState.originalIds = assigned;
+
+        if (!inbounds.length) { group.style.display = 'none'; list.innerHTML = ''; return; }
+
+        group.style.display = '';
+        document.getElementById('edit-inbound-multi-dropdown').classList.add('hidden');
+        list.innerHTML = inbounds.map(ib => `
+            <div class="filter-item">
+                <label class="checkbox-label">
+                    <input type="checkbox" class="edit-inbound-cb" value="${ib.id}" ${assigned.has(parseInt(ib.id)) ? 'checked' : ''} onchange="_updateEditInboundMultiLabel()">
+                    <span class="checkmark"></span>
+                    <span>${escHtml(ib.remark || ('Inbound ' + ib.id))} <span style="color:var(--text-secondary);">:${ib.port}</span></span>
+                </label>
+            </div>`).join('');
+        _updateEditInboundMultiLabel();
+    }
+
+    function toggleEditInboundDropdown(e) {
+        if (e) e.stopPropagation();
+        document.getElementById('edit-inbound-multi-dropdown').classList.toggle('hidden');
+    }
+    function selectAllEditInbounds(e) {
+        if (e) e.stopPropagation();
+        const boxes = Array.from(document.querySelectorAll('#edit-client-inbound-multi-list .edit-inbound-cb'));
+        const allChecked = boxes.length > 0 && boxes.every(cb => cb.checked);
+        boxes.forEach(cb => { cb.checked = !allChecked; });
+        _updateEditInboundMultiLabel();
+    }
+    function _updateEditInboundMultiLabel() {
+        const boxes = Array.from(document.querySelectorAll('#edit-client-inbound-multi-list .edit-inbound-cb'));
+        const checked = boxes.filter(cb => cb.checked).length;
+        const label = document.getElementById('edit-inbound-multi-label');
+        const count = document.getElementById('edit-inbound-multi-count');
+        if (label) {
+            label.textContent = (checked === boxes.length && boxes.length) ? 'All inbounds'
+                : (checked === 0 ? 'No inbounds' : `${checked} inbound${checked > 1 ? 's' : ''}`);
+        }
+        if (count) {
+            count.textContent = String(checked);
+            count.classList.toggle('hidden', !(checked > 0 && checked < boxes.length));
+        }
+    }
+    function _getCheckedEditInboundIds() {
+        return Array.from(document.querySelectorAll('#edit-client-inbound-multi-list .edit-inbound-cb'))
+            .filter(cb => cb.checked).map(cb => parseInt(cb.value)).filter(Number.isFinite);
+    }
+
     // Current last-user navigation state (cycle through the recent clients list).
     let _lastUserNav = { key: '', list: [], index: 0 };
 
@@ -5428,6 +5594,20 @@
         if (inbDd && !inbDd.classList.contains('hidden')) {
             const w2 = inbDd.closest('.filter-dropdown-wrapper');
             if (w2 && !w2.contains(event.target)) inbDd.classList.add('hidden');
+        }
+
+        // v3 inbound re-assign dropdown in the Edit Client modal
+        const editInbDd = document.getElementById('edit-inbound-multi-dropdown');
+        if (editInbDd && !editInbDd.classList.contains('hidden')) {
+            const w3 = editInbDd.closest('.filter-dropdown-wrapper');
+            if (w3 && !w3.contains(event.target)) editInbDd.classList.add('hidden');
+        }
+
+        // Bulk "Assign to Inbounds" dropdown
+        const bulkInbDd = document.getElementById('bulk-inbound-dropdown');
+        if (bulkInbDd && !bulkInbDd.classList.contains('hidden')) {
+            const w4 = bulkInbDd.closest('.filter-dropdown-wrapper');
+            if (w4 && !w4.contains(event.target)) bulkInbDd.classList.add('hidden');
         }
     });
 
@@ -6125,8 +6305,13 @@
         countEl.textContent = `${selected.length} selected`;
         container.style.display = selected.length > 0 ? 'block' : 'none';
         // Refresh multiplier preview when selection changes
-        if (document.getElementById('bulk-action-select')?.value === 'volume_multiplier') {
+        const _curAction = document.getElementById('bulk-action-select')?.value;
+        if (_curAction === 'volume_multiplier') {
             refreshMultiplierPreview();
+        }
+        // Keep the inbound picker in sync with the (possibly changed) selection's server
+        if (_curAction === 'set_inbounds') {
+            _populateBulkInbounds();
         }
     }
 
@@ -6605,6 +6790,81 @@
             multContainer.style.display = (action === 'volume_multiplier') ? 'block' : 'none';
             if (action === 'volume_multiplier') refreshMultiplierPreview();
         }
+
+        const inboundContainer = document.getElementById('bulk-inbound-container');
+        if (inboundContainer) {
+            const showInbound = action === 'set_inbounds';
+            inboundContainer.style.display = showInbound ? 'flex' : 'none';
+            if (showInbound) _populateBulkInbounds();
+        }
+    }
+
+    // ── Bulk "Assign to Inbounds" (v3, single server) ────────────────────────
+    let _bulkInboundServerId = null;
+
+    function _populateBulkInbounds() {
+        const list = document.getElementById('bulk-inbound-list');
+        const nameEl = document.getElementById('bulk-inbound-server-name');
+        if (!list) return;
+        _bulkInboundServerId = null;
+
+        const selected = getSelectedClientsForBulk();
+        const serverIds = Array.from(new Set(selected.map(c => String(c.server_id))));
+
+        if (serverIds.length !== 1) {
+            list.innerHTML = `<div style="padding:10px; color:var(--text-secondary); font-size:0.85rem;">Select clients from a single v3 server to assign inbounds.</div>`;
+            if (nameEl) nameEl.textContent = 'Select Inbounds';
+            _updateBulkInboundLabel();
+            return;
+        }
+        const sid = serverIds[0];
+        if (!_serverIsV3(sid)) {
+            list.innerHTML = `<div style="padding:10px; color:var(--text-secondary); font-size:0.85rem;">This action only works on v3 panels (API token).</div>`;
+            if (nameEl) nameEl.textContent = 'Not a v3 server';
+            _updateBulkInboundLabel();
+            return;
+        }
+        _bulkInboundServerId = sid;
+        const server = (allServers || []).find(s => String(s.id) === String(sid));
+        if (nameEl) nameEl.textContent = server ? server.name : `Server #${sid}`;
+
+        const inbounds = getCachedInboundsForServer(sid);
+        list.innerHTML = inbounds.map(ib => `
+            <div class="filter-item">
+                <label class="checkbox-label">
+                    <input type="checkbox" class="bulk-inbound-cb" value="${ib.id}" onchange="_updateBulkInboundLabel()">
+                    <span class="checkmark"></span>
+                    <span>${escHtml(ib.remark || ('Inbound ' + ib.id))} <span style="color:var(--text-secondary);">:${ib.port}</span></span>
+                </label>
+            </div>`).join('') || `<div style="padding:10px; color:var(--text-secondary); font-size:0.85rem;">No inbounds.</div>`;
+        _updateBulkInboundLabel();
+    }
+
+    function toggleBulkInboundDropdown(e) {
+        if (e) e.stopPropagation();
+        document.getElementById('bulk-inbound-dropdown').classList.toggle('hidden');
+    }
+    function selectAllBulkInbounds(e) {
+        if (e) e.stopPropagation();
+        const boxes = Array.from(document.querySelectorAll('#bulk-inbound-list .bulk-inbound-cb'));
+        const allChecked = boxes.length > 0 && boxes.every(cb => cb.checked);
+        boxes.forEach(cb => { cb.checked = !allChecked; });
+        _updateBulkInboundLabel();
+    }
+    function _updateBulkInboundLabel() {
+        const boxes = Array.from(document.querySelectorAll('#bulk-inbound-list .bulk-inbound-cb'));
+        const checked = boxes.filter(cb => cb.checked).length;
+        const label = document.getElementById('bulk-inbound-label');
+        const count = document.getElementById('bulk-inbound-count');
+        if (label) label.textContent = checked === 0 ? 'Select inbounds' : `${checked} inbound${checked > 1 ? 's' : ''}`;
+        if (count) {
+            count.textContent = String(checked);
+            count.classList.toggle('hidden', checked === 0);
+        }
+    }
+    function _getCheckedBulkInboundIds() {
+        return Array.from(document.querySelectorAll('#bulk-inbound-list .bulk-inbound-cb'))
+            .filter(cb => cb.checked).map(cb => parseInt(cb.value)).filter(Number.isFinite);
     }
 
     async function loadResellersForBulk() {
@@ -6774,6 +7034,25 @@
             if (isFinite(skipMax) && skipMax >= 0) data.skip_max_gb = skipMax;
         }
 
+        if (action === 'set_inbounds') {
+            const serverIds = Array.from(new Set(clients.map(c => String(c.server_id))));
+            if (serverIds.length !== 1) {
+                showToast('Select clients from a single server for inbound assignment', 'error');
+                return;
+            }
+            if (!_serverIsV3(serverIds[0])) {
+                showToast('Assign to Inbounds only works on v3 panels', 'error');
+                return;
+            }
+            const ids = _getCheckedBulkInboundIds();
+            if (!ids.length) {
+                showToast('Select at least one inbound', 'error');
+                return;
+            }
+            data.inbound_ids = ids;
+            data.inbound_mode = document.getElementById('bulk-inbound-mode')?.value || 'set';
+        }
+
         if (action === 'assign_owner') {
             const resellerId = document.getElementById('bulk-reseller-select')?.value;
             if (resellerId === null || resellerId === undefined || String(resellerId).trim() === '') {
@@ -6801,6 +7080,7 @@
         add_days: 'Add days', add_volume: 'Add volume',
         volume_policy: 'Volume Filter', volume_multiplier: 'Volume Multiplier',
         assign_owner: 'Assign to reseller', unassign_owner: 'Unassign owner',
+        set_inbounds: 'Assign to inbounds',
     };
 
     let _pendingBulkPayload = null;
@@ -7341,6 +7621,9 @@
         const commentInput = document.getElementById('edit-client-comment');
         if (commentInput) commentInput.value = clientComment;
 
+        // v3: let the user re-assign inbounds straight from Edit.
+        _populateEditInboundMulti(serverId, email);
+
         document.getElementById('edit-client-modal').classList.remove('hidden');
         setTimeout(ensureEditExpiryPickerReady, 0);
     }
@@ -7456,13 +7739,47 @@
 
     async function submitEditClient() {
         const serverId = document.getElementById('edit-client-server-id').value;
-        const inboundId = document.getElementById('edit-client-inbound-id').value;
+        let inboundId = document.getElementById('edit-client-inbound-id').value;
         const oldEmail = document.getElementById('edit-client-old-email').value;
         const newEmail = document.getElementById('edit-client-new-email').value.trim();
 
         if (!newEmail) {
             showToast('Email cannot be empty', 'error');
             return;
+        }
+
+        // ── v3: apply inbound re-assignment FIRST, while every copy still shares
+        // the old email (so the membership scan is consistent). If the original
+        // inbound gets removed, retarget the field-edit below to a remaining one.
+        const _inbSt = _editClientInboundState;
+        if (_inbSt && _inbSt.isV3 && String(_inbSt.serverId) === String(serverId)) {
+            const _target = _getCheckedEditInboundIds();
+            if (!_target.length) {
+                showToast('Select at least one inbound', 'error');
+                return;
+            }
+            const _orig = _inbSt.originalIds || new Set();
+            const _same = _target.length === _orig.size && _target.every(id => _orig.has(id));
+            if (!_same) {
+                try {
+                    const _r = await fetch(`/api/client/${serverId}/${encodeURIComponent(oldEmail)}/inbounds`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: 'set', inbound_ids: _target, client_uuid: _inbSt.clientUuid || '' })
+                    });
+                    let _rj = null;
+                    try { _rj = await _r.json(); } catch (_) { _rj = {}; }
+                    if (!_r.ok || !_rj.success) {
+                        showToast(_rj.error || `Inbound update failed (HTTP ${_r.status})`, 'error');
+                        return;
+                    }
+                    // Field-edit needs a still-assigned inbound to target.
+                    if (!_target.includes(parseInt(inboundId))) inboundId = String(_target[0]);
+                } catch (e) {
+                    showToast(`Inbound update error: ${e.message || e}`, 'error');
+                    return;
+                }
+            }
         }
 
         const commentInput = document.getElementById('edit-client-comment');

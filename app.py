@@ -1341,6 +1341,15 @@ def _run_bulk_job(job_id: str):
                             else:
                                 snap['expiryTime'] = -remaining_ms
                                 ok, err, _status = _post_client_update(server, inbound_id, email, snap)
+                elif action == 'set_inbounds':
+                    if not server_is_v3(server):
+                        ok, err, _status = False, 'Server is not v3', 400
+                    else:
+                        _mode = (data.get('inbound_mode') or 'set').lower()
+                        _tids = data.get('inbound_ids') or []
+                        ok, err, _status, _info = _reconcile_client_inbounds(
+                            user, server, email, client_uuid, _tids, _mode)
+                        skipped = bool(ok and _status == 204)
                 elif action == 'assign_owner':
                     email_l = (email or '').lower()
                     try:
@@ -6093,6 +6102,237 @@ def v3_add_client(server, session_obj, client: dict, inbound_ids: list):
                     {"client": _v3_client_payload(client), "inboundIds": list(inbound_ids or [])})
 
 
+# ── Multi-inbound membership reconciliation (v3) ─────────────────────────────
+# A v3 client's "inbound membership" is the set of inbounds whose
+# settings.clients[] contain that email/uuid. We change membership by editing
+# the individual inbounds' client lists and pushing the full inbound back via
+# the universal /inbounds/update/:id endpoint — this works on every panel
+# version (the per-inbound delClient shortcut was removed in v3, the full
+# inbound update was not).
+
+def _push_full_inbound(server, session_obj, inbound_obj, settings_dict):
+    """POST a full inbound object back to the panel with updated settings.
+
+    settings_dict replaces the inbound's clients list. JSON sub-fields that v3
+    returns already-decoded (settings/streamSettings/sniffing/allocate) must be
+    re-encoded to strings, which is what the update endpoint expects.
+    """
+    try:
+        inbound_id = int(inbound_obj.get('id'))
+    except (TypeError, ValueError):
+        return False, 'Bad inbound id'
+    update_data = dict(inbound_obj)
+    update_data['settings'] = json.dumps(settings_dict)
+    for k in ('streamSettings', 'sniffing', 'allocate'):
+        v = update_data.get(k)
+        if isinstance(v, (dict, list)):
+            update_data[k] = json.dumps(v)
+
+    errors = []
+    for tpl in collect_endpoint_templates(server.panel_type, 'inbounds_update', INBOUND_UPDATE_FALLBACKS):
+        up_url = build_panel_url(server.host, tpl, {'id': inbound_id})
+        if not up_url:
+            continue
+        try:
+            resp = session_obj.post(up_url, json=update_data, verify=False, timeout=(3, 20))
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+        if resp.status_code != 200:
+            errors.append(f"HTTP {resp.status_code}")
+            continue
+        j, err = _safe_response_json(resp)
+        if err:
+            errors.append(err)
+            continue
+        if isinstance(j, dict) and j.get('success'):
+            return True, None
+        errors.append((j.get('msg') or j.get('message')) if isinstance(j, dict) else 'update failed')
+    return False, ('; '.join(str(e) for e in errors) or 'inbound update failed')
+
+
+def _add_client_to_inbound(server, session_obj, inbound_obj, client_dict):
+    """Append client_dict to an inbound's clients (no-op if email already there)."""
+    settings = _json_field(inbound_obj.get('settings'), {}) or {}
+    settings.setdefault('clients', [])
+    email_l = (client_dict.get('email') or '').strip().lower()
+    for c in settings['clients']:
+        if (c.get('email') or '').strip().lower() == email_l:
+            return True, None  # already present
+    settings['clients'].append(client_dict)
+    return _push_full_inbound(server, session_obj, inbound_obj, settings)
+
+
+def _remove_client_from_inbound(server, session_obj, inbound_obj, email, client_uuid):
+    """Drop a client (by email or uuid) from one inbound's clients list."""
+    settings = _json_field(inbound_obj.get('settings'), {}) or {}
+    clients = settings.get('clients') or []
+    email_l = (email or '').strip().lower()
+    uuid_s = str(client_uuid or '').strip()
+    kept = [c for c in clients
+            if not (((c.get('email') or '').strip().lower() == email_l and email_l)
+                    or (uuid_s and str(c.get('id') or '').strip() == uuid_s))]
+    if len(kept) == len(clients):
+        return True, None  # nothing to remove
+    settings['clients'] = kept
+    return _push_full_inbound(server, session_obj, inbound_obj, settings)
+
+
+def _sync_membership_ownership(user, server, email, client_uuid, added_ids, removed_ids):
+    """Keep ClientOwnership rows in step with inbound-membership changes."""
+    email_l = (email or '').strip().lower()
+    uuid_s = str(client_uuid or '').strip()
+    key_filter = []
+    if uuid_s:
+        key_filter.append(ClientOwnership.client_uuid == uuid_s)
+    if email_l:
+        key_filter.append(func.lower(ClientOwnership.client_email) == email_l)
+    if not key_filter:
+        return
+
+    existing = ClientOwnership.query.filter(
+        ClientOwnership.server_id == server.id, or_(*key_filter)
+    ).all()
+    owner_id = existing[0].reseller_id if existing else (user.id if user.role == 'reseller' else None)
+
+    for iid in (added_ids or []):
+        if owner_id is None:
+            continue
+        dup = ClientOwnership.query.filter(
+            ClientOwnership.reseller_id == owner_id,
+            ClientOwnership.server_id == server.id,
+            ClientOwnership.inbound_id == iid,
+            or_(*key_filter),
+        ).first()
+        if not dup:
+            db.session.add(ClientOwnership(
+                reseller_id=owner_id, server_id=server.id, inbound_id=iid,
+                client_email=email, client_uuid=(uuid_s or None), price=0))
+            try:
+                owner = db.session.get(Admin, owner_id)
+                if owner:
+                    ensure_reseller_allowed_for_assignment(owner, server.id, iid)
+            except Exception:
+                pass
+
+    for iid in (removed_ids or []):
+        ClientOwnership.query.filter(
+            ClientOwnership.server_id == server.id,
+            ClientOwnership.inbound_id == iid,
+            or_(*key_filter),
+        ).delete(synchronize_session=False)
+
+    db.session.commit()
+    invalidate_ownership_cache()
+
+
+def _reconcile_client_inbounds(user, server, email, client_uuid, target_inbound_ids, mode='set'):
+    """Add/remove a client across a v3 server's inbounds.
+
+    mode 'set'    → membership becomes exactly (target ∩ accessible)
+         'add'    → add the target inbounds
+         'remove' → remove the target inbounds
+    Only inbounds the user can access are ever touched. Refuses to leave the
+    client in zero inbounds. Returns (ok, err, status, info).
+    """
+    mode = (mode or 'set').lower()
+    if mode not in ('set', 'add', 'remove'):
+        mode = 'set'
+
+    if user.role == 'reseller':
+        allowed_map, assignments = get_reseller_access_maps(user)
+        if not _has_client_access(user, server.id, email, inbound_id=None, client_uuid=client_uuid):
+            return False, 'Access denied', 403, None
+    else:
+        allowed_map, assignments = '*', {}
+
+    def _accessible(iid):
+        return user.role != 'reseller' or is_inbound_accessible(server.id, iid, allowed_map, assignments)
+
+    session_obj, error = get_xui_session(server)
+    if error:
+        return False, error, 400, None
+
+    inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+    if fetch_err:
+        return False, 'Failed to fetch inbounds', 502, None
+    persist_detected_panel_type(server, detected_type)
+
+    email_l = (email or '').strip().lower()
+    uuid_s = str(client_uuid or '').strip()
+    membership = {}        # inbound_id -> raw client dict
+    inbound_by_id = {}
+    for ib in inbounds:
+        try:
+            iid = int(ib.get('id'))
+        except (TypeError, ValueError):
+            continue
+        inbound_by_id[iid] = ib
+        settings = _json_field(ib.get('settings'), {}) or {}
+        for c in (settings.get('clients') or []):
+            ce = (c.get('email') or '').strip().lower()
+            cu = str(c.get('id') or '').strip()
+            if (email_l and ce == email_l) or (uuid_s and cu == uuid_s):
+                membership[iid] = c
+                break
+
+    if not membership:
+        return False, 'Client not found on this server', 404, None
+    current_ids = set(membership.keys())
+
+    try:
+        target_ids = {int(x) for x in (target_inbound_ids or []) if x is not None}
+    except (TypeError, ValueError):
+        target_ids = set()
+    target_ids = {i for i in target_ids if i in inbound_by_id and _accessible(i)}
+
+    if mode == 'add':
+        to_add, to_remove = (target_ids - current_ids), set()
+    elif mode == 'remove':
+        to_add, to_remove = set(), (target_ids & current_ids)
+    else:  # set
+        to_add = target_ids - current_ids
+        to_remove = {i for i in (current_ids - target_ids) if _accessible(i)}
+
+    if not to_add and not to_remove:
+        return True, None, 204, {'added': [], 'removed': []}
+
+    final_ids = (current_ids - to_remove) | to_add
+    if not final_ids:
+        return False, 'Refusing to remove the client from all inbounds — delete the client instead', 400, None
+
+    base_client = dict(next(iter(membership.values())))
+    added, removed, errors = [], [], []
+
+    for iid in sorted(to_add):
+        ib = inbound_by_id[iid]
+        clone = dict(base_client)
+        proto = (ib.get('protocol') or '').lower()
+        ib_settings = _json_field(ib.get('settings'), {}) or {}
+        if proto == 'shadowsocks':
+            method = ib_settings.get('method') or clone.get('method') or 'chacha20-ietf-poly1305'
+            clone['method'] = method
+            clone['password'] = clone.get('password') or _ss_password(method)
+        elif proto == 'trojan':
+            clone['password'] = clone.get('password') or secrets.token_urlsafe(16)
+        ok_add, aerr = _add_client_to_inbound(server, session_obj, ib, clone)
+        (added.append(iid) if ok_add else errors.append(f"add#{iid}: {aerr}"))
+
+    for iid in sorted(to_remove):
+        ib = inbound_by_id[iid]
+        ok_rm, rerr = _remove_client_from_inbound(server, session_obj, ib, email, base_client.get('id'))
+        (removed.append(iid) if ok_rm else errors.append(f"remove#{iid}: {rerr}"))
+
+    try:
+        _sync_membership_ownership(user, server, email, base_client.get('id'), added, removed)
+    except Exception:
+        db.session.rollback()
+
+    if errors and not added and not removed:
+        return False, '; '.join(errors), 502, None
+    return True, ('; '.join(errors) or None), 200, {'added': added, 'removed': removed}
+
+
 def get_xui_session(server):
     # Try to reuse session from cache
     now = time.time()
@@ -9924,6 +10164,33 @@ def edit_client(server_id, inbound_id, email):
         app.logger.error(f"Edit client error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 400
 
+
+@app.route('/api/client/<int:server_id>/<email>/inbounds', methods=['POST'])
+@login_required
+def set_client_inbounds(server_id, email):
+    """Change which inbounds a v3 client is assigned to (add/replace/remove)."""
+    user = db.session.get(Admin, session['admin_id'])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 401
+
+    server = Server.query.get_or_404(server_id)
+    if not server_is_v3(server):
+        return jsonify({"success": False,
+                        "error": "Editing inbound assignment requires a 3x-ui v3 panel (API token)."}), 400
+
+    data = request.get_json(silent=True) or {}
+    mode = (data.get('mode') or 'set').lower()
+    inbound_ids = data.get('inbound_ids') or []
+    client_uuid = (data.get('client_uuid') or '').strip()
+
+    ok, err, status, info = _reconcile_client_inbounds(
+        user, server, email, client_uuid, inbound_ids, mode)
+    if ok:
+        return jsonify({"success": True, "info": info or {}})
+    code = status if (isinstance(status, int) and status >= 400) else 400
+    return jsonify({"success": False, "error": err or "Failed"}), code
+
+
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/delete', methods=['POST'])
 @login_required
 def delete_client(server_id, inbound_id, email):
@@ -10106,11 +10373,20 @@ def bulk_client_action():
     data = payload.get('data') or {}
     conditions = payload.get('conditions') or {}
 
-    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner', 'add_days', 'add_volume', 'volume_policy', 'volume_multiplier', 'set_start_after_use'}
+    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner', 'add_days', 'add_volume', 'volume_policy', 'volume_multiplier', 'set_start_after_use', 'set_inbounds'}
     if action not in allowed_actions:
         return jsonify({"success": False, "error": "Invalid action"}), 400
     if not isinstance(clients, list) or len(clients) == 0:
         return jsonify({"success": False, "error": "Clients list required"}), 400
+
+    if action == 'set_inbounds':
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "Invalid data"}), 400
+        _mode = str(data.get('inbound_mode') or 'set').strip().lower()
+        if _mode not in ('set', 'add', 'remove'):
+            return jsonify({"success": False, "error": "inbound_mode must be set, add or remove"}), 400
+        if not isinstance(data.get('inbound_ids'), list) or len(data.get('inbound_ids') or []) == 0:
+            return jsonify({"success": False, "error": "inbound_ids required"}), 400
 
     reseller_id = None
     if action in ('assign_owner', 'unassign_owner'):
