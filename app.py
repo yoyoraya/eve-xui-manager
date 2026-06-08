@@ -1316,6 +1316,31 @@ def _run_bulk_job(job_id: str):
                 elif action == 'volume_multiplier':
                     ok, err, _status, report_row = _apply_client_volume_multiplier(user, server, inbound_id, email, data)
                     skipped = bool(ok and _status == 204)
+                elif action == 'set_start_after_use':
+                    snap, snap_err = _fetch_client_snapshot(user, server, inbound_id, email)
+                    if snap_err:
+                        ok, err, _status = False, snap_err, 400
+                    elif not isinstance(snap, dict):
+                        ok, err, _status = False, 'Client not found', 404
+                    else:
+                        try:
+                            exp = int(snap.get('expiryTime') or 0)
+                        except (TypeError, ValueError):
+                            exp = 0
+                        if exp <= 0:
+                            # already start_after_use (negative) or unlimited (0) → skip
+                            ok, err, _status = True, None, 204
+                            skipped = True
+                        else:
+                            now_ms = int(time.time() * 1000)
+                            remaining_ms = exp - now_ms
+                            if remaining_ms <= 0:
+                                # expired → skip
+                                ok, err, _status = True, None, 204
+                                skipped = True
+                            else:
+                                snap['expiryTime'] = -remaining_ms
+                                ok, err, _status = _post_client_update(server, inbound_id, email, snap)
                 elif action == 'assign_owner':
                     email_l = (email or '').lower()
                     try:
@@ -7295,6 +7320,7 @@ def royalty_idle_clients():
                 'server_id': sid,
                 'server_name': server_name,
                 'inbound_id': inbound.get('id'),
+                'client_uuid': str(c.get('id') or ''),
                 'sub_url': c.get('sub_url') or '',
                 'dash_sub_url': c.get('dash_sub_url') or '',
                 'expiryTime': c.get('expiryTime') or '',
@@ -10080,7 +10106,7 @@ def bulk_client_action():
     data = payload.get('data') or {}
     conditions = payload.get('conditions') or {}
 
-    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner', 'add_days', 'add_volume', 'volume_policy', 'volume_multiplier'}
+    allowed_actions = {'enable', 'disable', 'delete', 'assign_owner', 'unassign_owner', 'add_days', 'add_volume', 'volume_policy', 'volume_multiplier', 'set_start_after_use'}
     if action not in allowed_actions:
         return jsonify({"success": False, "error": "Invalid action"}), 400
     if not isinstance(clients, list) or len(clients) == 0:
