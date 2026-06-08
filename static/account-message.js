@@ -202,9 +202,17 @@
         overlay.classList.remove('hidden');
     }
 
-    async function send(channel, phone, client) {
+    // Map templateType to the channel prefix used for API calls
+    function _resolveChannelPrefix(templateType) {
+        if (templateType === 'royalty') return 'royalty_';
+        return '';
+    }
+
+    async function send(channel, phone, client, opts) {
         try {
-            const tpl = await getTemplate(channel);
+            const prefix = _resolveChannelPrefix((opts && opts.templateType) || '');
+            const apiChannel = prefix + channel; // e.g. 'royalty_whatsapp' or 'whatsapp'
+            const tpl = await getTemplate(apiChannel);
             const message = renderMessage(tpl, client);
             const href = channel === 'sms'
                 ? buildSms(phone, message)
@@ -215,7 +223,9 @@
         }
     }
 
-    function open(client) {
+    // opts.templateType: 'royalty' uses royalty_info templates instead of account_info
+    function open(client, opts) {
+        opts = opts || {};
         const phones = extractNumbers(
             { label: 'Account name', value: client.email },
             { label: 'Comment', value: client.comment },
@@ -226,12 +236,15 @@
             return;
         }
         openPhoneChoice(phones, (phone) => {
-            openChannelChoice(phone, (channel, selectedPhone) => send(channel, selectedPhone, client));
+            openChannelChoice(phone, (channel, selectedPhone) => send(channel, selectedPhone, client, opts));
         }, 'Select mobile number');
     }
 
     // Warm the templates so the first click is instant
-    function warm() { getTemplate('whatsapp'); getTemplate('sms'); }
+    function warm() {
+        getTemplate('whatsapp'); getTemplate('sms');
+        getTemplate('royalty_whatsapp'); getTemplate('royalty_sms');
+    }
 
     global.AccountMessage = { open, warm, extractNumbers };
 })(window);

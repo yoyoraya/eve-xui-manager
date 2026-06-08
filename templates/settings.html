@@ -612,19 +612,37 @@
         </div>
 
         <div id="tab-account_message" class="tab-pane">
-            <div class="panel-card">
+            <!-- SMS / WhatsApp account info templates -->
+            <div class="panel-card" style="margin-bottom:16px;">
                 <div class="panel-card-header">
                     <div class="header-content">
                         <h2>Account Info Message</h2>
-                        <p class="text-secondary">Manage the WhatsApp message used by the dashboard account-info action.</p>
+                        <p class="text-secondary">Template sent via the dashboard's "Send account info" action (bubble icon on each client).</p>
                     </div>
-                    <button class="btn btn-primary" onclick="openAccountMessageTemplateModal()">
+                    <button class="btn btn-primary" onclick="openAccountMessageTemplateModal('account_info')">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                         Add Template
                     </button>
                 </div>
                 <div class="templates-grid" id="account-message-templates-container">
-                    <!-- Account message templates will be loaded here -->
+                    <!-- Account info templates loaded here -->
+                </div>
+            </div>
+
+            <!-- Royalty information templates -->
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Royalty Information</h2>
+                        <p class="text-secondary">Template used when sending re-engagement messages from the <strong>Royalty</strong> page to idle accounts that haven't connected yet.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="openAccountMessageTemplateModal('royalty')">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Template
+                    </button>
+                </div>
+                <div class="templates-grid" id="royalty-message-templates-container">
+                    <!-- Royalty info templates loaded here -->
                 </div>
             </div>
         </div>
@@ -1073,11 +1091,14 @@
                 <label>Template Name</label>
                 <input type="text" id="account-message-template-name" class="form-input" placeholder="e.g. Persian Account Info">
             </div>
+            <input type="hidden" id="account-message-template-group" value="account_info">
             <div class="form-group">
                 <label>Delivery Channel</label>
                 <select id="account-message-template-channel" class="form-input" onchange="handleAccountMessageChannelChange()">
                     <option value="whatsapp">WhatsApp</option>
                     <option value="sms">SMS</option>
+                    <option value="royalty_whatsapp">Royalty — WhatsApp</option>
+                    <option value="royalty_sms">Royalty — SMS</option>
                 </select>
             </div>
             <div class="form-group">
@@ -4013,6 +4034,8 @@
     let accountMessageAvailableVars = [];
     let accountMessageDefaultContent = '';
     let accountMessageDefaultSmsContent = '';
+    let accountMessageDefaultRoyaltyWhatsappContent = '';
+    let accountMessageDefaultRoyaltySmsContent = '';
     let accountMessageChannelLinks = { telegram_channel: '', whatsapp_channel: '' };
 
     function renderAccountMessagePreviewText(content) {
@@ -4077,7 +4100,7 @@
         const counter = document.getElementById('account-message-sms-counter');
         const channel = document.getElementById('account-message-template-channel')?.value || 'whatsapp';
         if (!counter) return;
-        if (channel !== 'sms') {
+        if (channel !== 'sms' && channel !== 'royalty_sms') {
             counter.classList.add('hidden');
             counter.textContent = '';
             return;
@@ -4092,13 +4115,17 @@
         const id = document.getElementById('edit-account-message-template-id')?.value || '';
         const channel = document.getElementById('account-message-template-channel')?.value || 'whatsapp';
         if (!id && textarea) {
-            const whatsappDefault = accountMessageDefaultContent || textarea.value;
-            const smsDefault = accountMessageDefaultSmsContent || '{email}\nTime: {remaining_time}\nVolume: {remaining_volume}\nLink: {dashboard_link}';
-            const current = textarea.value.trim();
-            if (channel === 'sms' && (!current || current === whatsappDefault.trim())) {
-                textarea.value = smsDefault;
-            } else if (channel === 'whatsapp' && (!current || current === smsDefault.trim())) {
-                textarea.value = whatsappDefault;
+            const defaults = {
+                whatsapp: accountMessageDefaultContent,
+                sms: accountMessageDefaultSmsContent || '{email}\nTime: {remaining_time}\nVolume: {remaining_volume}\nLink: {dashboard_link}',
+                royalty_whatsapp: accountMessageDefaultRoyaltyWhatsappContent,
+                royalty_sms: accountMessageDefaultRoyaltySmsContent,
+            };
+            const newDefault = defaults[channel] || '';
+            // Only auto-fill if current content matches another default (user hasn't customised it)
+            const currentMatches = Object.values(defaults).some(d => d && textarea.value.trim() === d.trim());
+            if (newDefault && (!textarea.value.trim() || currentMatches)) {
+                textarea.value = newDefault;
             }
         }
         updateAccountMessageModalPreview(textarea ? textarea.value : '');
@@ -4116,6 +4143,8 @@
             accountMessageAvailableVars = data.available_vars || [];
             accountMessageDefaultContent = data.default_content || '';
             accountMessageDefaultSmsContent = data.default_sms_content || '';
+            accountMessageDefaultRoyaltyWhatsappContent = data.default_royalty_whatsapp_content || '';
+            accountMessageDefaultRoyaltySmsContent = data.default_royalty_sms_content || '';
             accountMessageResellers = data.resellers || [];
 
             // Load channel links for preview (from active template endpoint which resolves per-user)
@@ -4145,48 +4174,60 @@
 
     let accountMessageResellers = [];   // [{id, username}] — set by loadAccountMessageTemplates
 
-    function renderAccountMessageTemplates(templates) {
-        const container = document.getElementById('account-message-templates-container');
-        if (!container) return;
-
-        if (!templates || templates.length === 0) {
-            container.innerHTML = '<div class="empty-state"><p>No account message templates found. Create one!</p></div>';
-            return;
-        }
-
-        container.innerHTML = templates.map(t => {
-            const scopeBadge = t.scope === 'reseller'
-                ? `<span class="channel-badge" style="background:rgba(168,85,247,0.18);color:#a855f7;">👤 ${escapeHtml(t.owner_username || 'Reseller')}</span>`
-                : `<span class="channel-badge" style="background:rgba(59,130,246,0.18);color:#3b82f6;">🌐 Global</span>`;
-            return `
-            <div class="template-card ${t.is_active ? 'active' : ''}">
-                <div class="template-header">
-                    <div class="template-title">
-                        ${escapeHtml(t.name)}
-                        <span class="channel-badge">${(t.channel || 'whatsapp').toUpperCase()}</span>
-                        ${scopeBadge}
-                        ${t.is_active ? '<span class="active-badge">Active</span>' : '<span class="active-badge" style="background:rgba(148,163,184,0.16);color:var(--text-secondary);">Disabled</span>'}
-                    </div>
-                    <div class="action-buttons">
-                        ${!t.is_active ? `
-                        <button class="action-btn success" onclick="activateAccountMessageTemplate(${t.id})" title="Set Active">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                        </button>` : `
-                        <button class="action-btn warning" onclick="disableAccountMessageTemplate(${t.id})" title="Disable">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
-                        </button>`}
-                        <button class="action-btn" onclick="editAccountMessageTemplate(${t.id})" title="Edit">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                        </button>
-                        <button class="action-btn danger" onclick="deleteAccountMessageTemplate(${t.id})" title="Delete" ${t.is_active ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''}>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                        </button>
-                    </div>
+    function _renderTemplateCard(t) {
+        const scopeBadge = t.scope === 'reseller'
+            ? `<span class="channel-badge" style="background:rgba(168,85,247,0.18);color:#a855f7;">👤 ${escapeHtml(t.owner_username || 'Reseller')}</span>`
+            : `<span class="channel-badge" style="background:rgba(59,130,246,0.18);color:#3b82f6;">🌐 Global</span>`;
+        const chLabel = { royalty_whatsapp: 'ROYALTY WA', royalty_sms: 'ROYALTY SMS' };
+        const channelDisplay = chLabel[t.channel] || (t.channel || 'whatsapp').toUpperCase();
+        return `
+        <div class="template-card ${t.is_active ? 'active' : ''}">
+            <div class="template-header">
+                <div class="template-title">
+                    ${escapeHtml(t.name)}
+                    <span class="channel-badge">${channelDisplay}</span>
+                    ${scopeBadge}
+                    ${t.is_active ? '<span class="active-badge">Active</span>' : '<span class="active-badge" style="background:rgba(148,163,184,0.16);color:var(--text-secondary);">Disabled</span>'}
                 </div>
-                <div class="template-preview">${escapeHtml(t.content).replace(/\n/g, '<br>')}</div>
-                <div class="renew-template-preview" style="margin-top:12px;min-height:96px;">${escapeHtml(renderAccountMessagePreviewText(t.content)).replace(/\n/g, '<br>')}</div>
-            </div>`;
-        }).join('');
+                <div class="action-buttons">
+                    ${!t.is_active ? `
+                    <button class="action-btn success" onclick="activateAccountMessageTemplate(${t.id})" title="Set Active">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    </button>` : `
+                    <button class="action-btn warning" onclick="disableAccountMessageTemplate(${t.id})" title="Disable">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                    </button>`}
+                    <button class="action-btn" onclick="editAccountMessageTemplate(${t.id})" title="Edit">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    </button>
+                    <button class="action-btn danger" onclick="deleteAccountMessageTemplate(${t.id})" title="Delete" ${t.is_active ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="template-preview">${escapeHtml(t.content).replace(/\n/g, '<br>')}</div>
+            <div class="renew-template-preview" style="margin-top:12px;min-height:96px;">${escapeHtml(renderAccountMessagePreviewText(t.content)).replace(/\n/g, '<br>')}</div>
+        </div>`;
+    }
+
+    function renderAccountMessageTemplates(templates) {
+        const accountContainer = document.getElementById('account-message-templates-container');
+        const royaltyContainer = document.getElementById('royalty-message-templates-container');
+
+        const royaltyChannels = new Set(['royalty_whatsapp', 'royalty_sms']);
+        const accountTemplates = (templates || []).filter(t => !royaltyChannels.has(t.channel));
+        const royaltyTemplates = (templates || []).filter(t => royaltyChannels.has(t.channel));
+
+        if (accountContainer) {
+            accountContainer.innerHTML = accountTemplates.length
+                ? accountTemplates.map(_renderTemplateCard).join('')
+                : '<div class="empty-state"><p>No account info templates. Create one!</p></div>';
+        }
+        if (royaltyContainer) {
+            royaltyContainer.innerHTML = royaltyTemplates.length
+                ? royaltyTemplates.map(_renderTemplateCard).join('')
+                : '<div class="empty-state"><p>No royalty templates. Create one!</p></div>';
+        }
     }
 
     function _buildResellerSelect(selectedId) {
@@ -4204,11 +4245,25 @@
         </div>`;
     }
 
-    function openAccountMessageTemplateModal() {
-        document.getElementById('account-message-template-modal-title').textContent = 'Add Account Message Template';
+    function openAccountMessageTemplateModal(group) {
+        group = group || 'account_info';
+        const isRoyalty = group === 'royalty';
+
+        document.getElementById('account-message-template-modal-title').textContent =
+            isRoyalty ? 'Add Royalty Info Template' : 'Add Account Message Template';
         document.getElementById('edit-account-message-template-id').value = '';
+        document.getElementById('account-message-template-group').value = group;
         document.getElementById('account-message-template-name').value = '';
-        document.getElementById('account-message-template-channel').value = 'whatsapp';
+
+        // Set the default channel for this group and hide irrelevant options
+        const channelSel = document.getElementById('account-message-template-channel');
+        if (channelSel) {
+            Array.from(channelSel.options).forEach(opt => {
+                const isRoyaltyOpt = opt.value.startsWith('royalty_');
+                opt.hidden = isRoyalty ? !isRoyaltyOpt : isRoyaltyOpt;
+            });
+            channelSel.value = isRoyalty ? 'royalty_whatsapp' : 'whatsapp';
+        }
 
         // Inject reseller dropdown
         const modalBody = document.getElementById('account-message-template-modal')?.querySelector('.modal-body');
@@ -4220,16 +4275,18 @@
         }
 
         const textarea = document.getElementById('account-message-template-content');
-        textarea.value = [
-            'اطلاعات اکانت شما',
-            'اسم اکانت: {email}',
-            'مدت زمان باقی مانده: {remaining_time}',
-            'حجم باقی مانده: {remaining_volume}',
-            'لینک dash sub: {dashboard_link}',
-            '{telegram_channel}',
-            '',
-            'لطفا از طریق لینک بالا به سرویس خود متصل شین .'
-        ].join('\n');
+        textarea.value = isRoyalty
+            ? (accountMessageDefaultRoyaltyWhatsappContent || 'سلام {email} عزیز 👋\nاکانت شما آماده‌ست ولی هنوز وصل نشدین!\n\nلینک اتصال: {dashboard_link}\n\nاگه مشکلی دارین بگین کمک کنیم 🙏')
+            : (accountMessageDefaultContent || [
+                'اطلاعات اکانت شما',
+                'اسم اکانت: {email}',
+                'مدت زمان باقی مانده: {remaining_time}',
+                'حجم باقی مانده: {remaining_volume}',
+                'لینک dash sub: {dashboard_link}',
+                '{telegram_channel}',
+                '',
+                'لطفا از طریق لینک بالا به سرویس خود متصل شین .'
+            ].join('\n'));
         updateAccountMessageModalPreview(textarea.value);
         document.getElementById('account-message-template-modal').classList.remove('hidden');
     }

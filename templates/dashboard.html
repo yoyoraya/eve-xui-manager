@@ -431,6 +431,11 @@
                         <option value="alireza">X-UI (Alireza)</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label>API Token <small style="color:var(--text-secondary); font-weight:normal;">(3x-ui v3+ only — Settings → Security → API Token)</small></label>
+                    <input type="password" id="server-api-token" placeholder="leave empty for older panels (username/password login)">
+                    <small id="server-api-token-hint" style="display:none; color:#4ade80; font-size:0.78rem;">✓ A token is already saved. Type a new one to replace it, or leave empty to keep it.</small>
+                </div>
                 <div class="form-actions">
                     <button class="btn btn-secondary" onclick="testServerConnection()">Test Connection</button>
                     <button class="btn btn-primary" onclick="saveServer()">Save</button>
@@ -748,31 +753,91 @@
         </div>
         <div class="modal-body">
             <div class="form-group">
-                <label>Server & Inbound</label>
-                <div style="display: flex; gap: 10px;">
-                    <select id="add-client-server-select" class="form-select" onchange="onServerSelected()" style="flex: 1;"></select>
-                    <select id="add-client-inbound-select" class="form-select" {% if is_superadmin %}onchange="onInboundSelected()"{% endif %} style="flex: 1;"></select>
+                <div class="modal-2col-grid">
+                    <!-- Server: custom single-select dropdown (filter style) -->
+                    <div>
+                        <label style="display:block; margin-bottom:6px;">Server</label>
+                        <div class="filter-dropdown-wrapper" style="position:relative; width:100%;">
+                            <button type="button" class="filter-btn" style="width:100%; justify-content:space-between;" onclick="toggleServerPickDropdown(event)">
+                                <span style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="filter-icon" style="flex-shrink:0;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                                    <span id="server-pick-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Select Server</span>
+                                </span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon" style="flex-shrink:0;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </button>
+                            <div id="server-pick-dropdown" class="filter-dropdown hidden">
+                                <div id="server-pick-list" class="filter-list"></div>
+                            </div>
+                        </div>
+                        <!-- hidden native select keeps the value so existing code paths still work -->
+                        <select id="add-client-server-select" onchange="onServerSelected()" style="display:none;"></select>
+                    </div>
+
+                    <!-- Inbound: single select (legacy) OR multi-assign dropdown (v3) -->
+                    <div>
+                        <label id="add-inbound-col-label" style="display:block; margin-bottom:6px;">Inbound</label>
+                        <!-- hidden native select keeps the value so existing code paths still work -->
+                        <select id="add-client-inbound-select" style="display:none;"></select>
+                        <!-- custom single-select inbound dropdown (legacy panels) -->
+                        <div id="add-client-inbound-single" class="filter-dropdown-wrapper" style="position:relative; width:100%;">
+                            <button type="button" class="filter-btn" style="width:100%; justify-content:space-between;" onclick="toggleInboundPickDropdown(event)">
+                                <span style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="filter-icon" style="flex-shrink:0;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                                    <span id="inbound-pick-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">-- Select Inbound --</span>
+                                </span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon" style="flex-shrink:0;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </button>
+                            <div id="inbound-pick-dropdown" class="filter-dropdown hidden">
+                                <div id="inbound-pick-list" class="filter-list"></div>
+                            </div>
+                        </div>
+                        <div id="add-client-inbound-multi" style="display:none;">
+                            <div class="filter-dropdown-wrapper" style="position:relative; width:100%;">
+                                <button type="button" class="filter-btn" style="width:100%; justify-content:space-between;" onclick="toggleAddInboundDropdown(event)">
+                                    <span style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="filter-icon" style="flex-shrink:0;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                                        <span id="add-inbound-multi-label">All inbounds</span>
+                                    </span>
+                                    <span style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                                        <span class="badge-count hidden" id="add-inbound-multi-count">0</span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                    </span>
+                                </button>
+                                <div id="add-inbound-multi-dropdown" class="filter-dropdown hidden">
+                                    <div class="filter-header">
+                                        <span>Select Inbounds</span>
+                                        <button type="button" class="text-btn" onclick="selectAllAddInbounds(event)">All</button>
+                                    </div>
+                                    <div id="add-client-inbound-multi-list" class="filter-list"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="form-group">
-                {% if is_superadmin %}
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end;">
-                        <div>
-                            <label>Username / Email</label>
-                            <input type="text" id="add-client-email" class="form-input" placeholder="user1">
-                        </div>
-                        <div>
-                            <label>Last User</label>
-                            <div style="background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; min-height: 42px; display: flex; align-items: center; padding: 8px 10px;">
-                                <span id="last-user-display" style="font-size: 0.85rem; color: var(--text-secondary); white-space: normal; word-break: break-all; overflow-wrap: break-word; line-height: 1.4;">-</span>
-                            </div>
+                <div class="modal-user-row">
+                    <div>
+                        <label>Username / Email</label>
+                        <input type="text" id="add-client-email" class="form-input" placeholder="user1">
+                    </div>
+                    <div>
+                        <label>Last User</label>
+                        <div style="background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; min-height: 42px; display: flex; align-items: center; gap:4px; padding: 4px 6px;">
+                            <span id="last-user-display" style="flex:1; min-width:0; font-size: 0.85rem; color: var(--text-secondary); white-space: nowrap; overflow:hidden; text-overflow:ellipsis; line-height: 1.4;">-</span>
+                            <span id="last-user-nav" style="display:none; align-items:center; gap:2px; flex-shrink:0;">
+                                <span id="last-user-pos" style="font-size:0.68rem; color:var(--text-secondary); margin-right:2px;"></span>
+                                <button type="button" onclick="navLastUser(-1)" title="Newer" style="background:rgba(255,255,255,0.06); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:6px; width:24px; height:24px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                                </button>
+                                <button type="button" onclick="navLastUser(1)" title="Older" style="background:rgba(255,255,255,0.06); border:1px solid var(--border-color); color:var(--text-secondary); border-radius:6px; width:24px; height:24px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </span>
                         </div>
                     </div>
-                {% else %}
-                    <label>Username / Email</label>
-                    <input type="text" id="add-client-email" class="form-input" placeholder="user1">
-                {% endif %}
+                </div>
             </div>
 
             <div class="form-group">
@@ -1928,8 +1993,12 @@
             if (!iid) continue;
             if (!byServer.has(sid)) byServer.set(sid, {});
             const clients = Array.isArray(inbound.clients) ? inbound.clients : [];
-            const last = clients.length ? clients[clients.length - 1] : null;
-            byServer.get(sid)[iid] = last && last.email ? last.email : null;
+            const emails = [];
+            for (let k = clients.length - 1; k >= 0 && emails.length < 8; k--) {
+                const em = clients[k] && clients[k].email;
+                if (em) emails.push(em);  // most recent first
+            }
+            byServer.get(sid)[iid] = emails;
         }
         for (const [sid, raw] of byServer.entries()) {
             lastUserCacheByServer.set(sid, _mergeWithOverrides(sid, raw));
@@ -2120,15 +2189,22 @@
         return list.filter(i => i && i.server_id == sid);
     }
 
-    // Merge a raw {inboundId: email} map with active local overrides before writing to cache.
+    // Cache stores, per inbound, an ARRAY of recent emails (most recent first).
+    // Merge a raw {inboundId: email|array} map with active local overrides.
     function _mergeWithOverrides(sid, rawMap) {
         const now = Date.now();
-        const merged = Object.assign({}, rawMap);
+        const merged = {};
+        for (const k in rawMap) {
+            const v = rawMap[k];
+            merged[k] = Array.isArray(v) ? v.slice() : (v ? [v] : []);
+        }
         for (const [key, ov] of _lastUserOverrides.entries()) {
             if (!key.startsWith(sid + '_')) continue;
             if (ov.until <= now) { _lastUserOverrides.delete(key); continue; }
             const iid = key.slice(sid.length + 1);
-            merged[iid] = ov.email;
+            const arr = Array.isArray(merged[iid]) ? merged[iid] : [];
+            // Freshly-created account goes to the front (deduped).
+            merged[iid] = [ov.email, ...arr.filter(e => e !== ov.email)];
         }
         return merged;
     }
@@ -2141,8 +2217,12 @@
             const inboundId = inbound && inbound.id != null ? String(inbound.id) : null;
             if (!inboundId) return;
             const clients = Array.isArray(inbound.clients) ? inbound.clients : [];
-            const lastClient = clients.length > 0 ? clients[clients.length - 1] : null;
-            raw[inboundId] = lastClient && lastClient.email ? lastClient.email : null;
+            const emails = [];
+            for (let i = clients.length - 1; i >= 0 && emails.length < 8; i--) {
+                const em = clients[i] && clients[i].email;
+                if (em) emails.push(em);  // most recent first
+            }
+            raw[inboundId] = emails;
         });
         lastUserCacheByServer.set(sid, _mergeWithOverrides(sid, raw));
     }
@@ -2154,10 +2234,11 @@
         try {
             const resp = await fetch(`/api/server/${sid}/last-users`);
             const data = await resp.json();
-            if (!data || !data.success || !data.last_users) return;
+            if (!data || !data.success) return;
 
             const sid = String(data.server_id);
-            lastUserCacheByServer.set(sid, _mergeWithOverrides(sid, data.last_users || {}));
+            // Prefer the role-filtered recent_users arrays; fall back to single last_users.
+            lastUserCacheByServer.set(sid, _mergeWithOverrides(sid, data.recent_users || data.last_users || {}));
 
             const serverSelect = document.getElementById('add-client-server-select');
             const inboundSelect = document.getElementById('add-client-inbound-select');
@@ -2843,6 +2924,109 @@
             : `<span class="client-status inactive">Disabled</span>`;
     }
 
+    // Build a unified card for a v3 server — deduplicates clients across inbounds
+    // and adds an "Inbounds" column showing which inbounds each client belongs to.
+    function _buildV3ServerCard(sid, serverInbounds) {
+        const server = (allServers || []).find(s => String(s.id) === String(sid));
+        const serverName = server ? server.name : `Server #${sid}`;
+        const cardKey = `v3s:${sid}`;
+        const isExpanded = expandedInboundKeys.has(cardKey);
+
+        // Deduplicate clients by email; collect all inbound assignments per client.
+        const emailMap = new Map();
+        for (const ib of serverInbounds) {
+            for (const c of (ib.clients || [])) {
+                if (!c.email) continue;
+                if (emailMap.has(c.email)) {
+                    emailMap.get(c.email).ibs.push({ id: ib.id, remark: ib.remark, protocol: ib.protocol });
+                } else {
+                    emailMap.set(c.email, { client: c, ibs: [{ id: ib.id, remark: ib.remark, protocol: ib.protocol }] });
+                }
+            }
+        }
+        const entries = Array.from(emailMap.values());
+        const totalCount = entries.length;
+        const activeCount = entries.filter(e => e.client.enable).length;
+
+        const ibTagsHtml = serverInbounds.map(ib =>
+            `<span class="v3-ib-tag ${(ib.protocol || '').toLowerCase()}">${escapeHtml(ib.protocol)} · ${escapeHtml(ib.remark)}</span>`
+        ).join('');
+
+        const SVG_HIDE = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
+        const SVG_SHOW = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+
+        const clientRowsHtml = entries.map(({ client, ibs }) => {
+            const firstIbId = ibs[0]?.id || client.inbound_id || '';
+            const ibPillsHtml = ibs.map(ib =>
+                `<span class="inbound-mini-badge ${(ib.protocol || '').toLowerCase()}" title="${escapeHtml(ib.remark)}">${escapeHtml((ib.protocol || '').toUpperCase())}</span>`
+            ).join('');
+            const assignBtn = IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${sid}, '${client.email}', '${firstIbId}', '${client.id || ''}')" title="Assign Owner"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><path d="M22 11h-2.5a2.5 2.5 0 0 0 0 5H22"></path></svg></button>` : '';
+            const toggleIcon = client.enable
+                ? '<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>'
+                : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>';
+            return `<tr class="${!client.enable ? 'disabled-row' : ''}">
+                <td class="select-cell"><label class="checkbox-label" style="padding-left:0;width:20px;height:20px;margin:0 auto;"><input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${cardKey}" data-server-id="${sid}" data-inbound-id="${firstIbId}" data-email="${client.email}" data-client-uuid="${client.id || ''}" data-enabled="${client.enable ? '1' : '0'}" onchange="onBulkClientCheckboxChanged(this)"><span class="checkmark"></span></label></td>
+                <td class="email-cell"><span class="email-with-online"><span class="email-name-row">${client.is_online ? '<span class="online-pulse" title="Online"></span>' : ''}<span class="email-text">${client.email}</span></span>${client.comment ? `<span class="client-comment">${escHtml(client.comment)}</span>` : ''}</span></td>
+                <td class="inbounds-cell" data-label="Inbounds"><div class="inbound-pills">${ibPillsHtml}</div></td>
+                <td class="owner-cell" data-label="Owner">${renderOwnerCell(client)}</td>
+                <td data-label="Status">${renderClientServiceState(client)}</td>
+                <td data-label="Expiry"><span class="expiry-badge ${getExpiryClass(client.expiryType)}"><span class="expiry-time">${client.expiryTime}</span>${client.expiryTimestamp ? `<span class="expiry-time">${formatTehranTime(client.expiryTimestamp)}</span>` : ''}</span></td>
+                <td class="traffic-cell" data-label="Traffic"><div class="traffic-combined-cell"><span class="up">↑ ${client.up_formatted}</span><span class="down">↓ ${client.down_formatted}</span></div></td>
+                <td class="volume-cell" data-label="Volume"><div class="volume-info"><span class="remaining ${client.volume_status || ''}">${client.remaining_formatted}</span><span class="total ${client.totalGB_formatted === 'Unlimited' ? 'expiry-start-after' : ''}">/ ${client.totalGB_formatted}</span></div></td>
+                <td class="action-cell"><div class="action-buttons">
+                    <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}', ${sid}, '${client.subId || client.id || ''}')" title="QR Code"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg></button>
+                    <button class="action-btn renew" onclick="openRenewModal(${sid}, '${firstIbId}', '${client.email}', '${client.volume_status || ''}', '${client.remaining_formatted || ''}', '${client.totalGB_formatted || ''}', '${client.expiryType || ''}', '${client.expiryTime || ''}', ${client.expiryTimestamp || 0})" title="Renew"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></button>
+                    ${renderAccountMessageButton(client)}
+                    <button class="action-btn ${client.enable ? 'danger' : 'success'}" onclick="toggleClient(${sid}, '${firstIbId}', '${client.email}', ${!client.enable})" title="${client.enable ? 'Disable' : 'Enable'}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${toggleIcon}</svg></button>
+                    <button class="action-btn warning" onclick="openResetModal(${sid}, '${firstIbId}', '${client.email}', ${client.totalGB || 0})" title="Reset Traffic"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg></button>
+                    <button class="action-btn" onclick="openEditClientModal(${sid}, '${firstIbId}', '${client.email}', ${client.totalGB || 0}, ${client.expiryTimestamp || 0})" title="Edit Client"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+                    ${assignBtn}
+                    <button class="action-btn danger" onclick="openDeleteClientModal(${sid}, '${firstIbId}', '${client.email}', '${client.id}', ${client.enable}, '${client.expiryTime}', ${client.expiryTimestamp || 0}, '${client.up}', '${client.down}', '${client.totalGB_formatted}', '${client.remaining_formatted}')" title="Delete Client"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+                </div></td>
+            </tr>`;
+        }).join('');
+
+        const clientsSectionHtml = totalCount > 0 ? `
+        <div class="clients-section">
+            <button class="toggle-clients" data-inbound-key="${cardKey}" data-client-count="${totalCount}" onclick="toggleClients(this, event)">
+                ${isExpanded ? `${SVG_HIDE} Hide Clients (${totalCount})` : `${SVG_SHOW} Show Clients (${totalCount})`}
+            </button>
+            <div class="clients-list ${isExpanded ? '' : 'hidden'}">
+                <div class="clients-table-wrapper">
+                    <table class="clients-table">
+                        <thead><tr>
+                            <th style="width:34px;"><label class="checkbox-label" style="padding-left:0;width:20px;height:20px;margin:0 auto;"><input type="checkbox" class="select-all-clients" onchange="toggleSelectAllClients('${cardKey}', this.checked)"><span class="checkmark"></span></label></th>
+                            <th>Email</th><th>Inbounds</th><th>Owner</th><th>Status</th><th>Expiry</th><th>Traffic</th><th>Volume</th><th>Actions</th>
+                        </tr></thead>
+                        <tbody>${clientRowsHtml}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>` : '';
+
+        const html = `
+        <div class="inbound-card v3-server-card">
+            <div class="inbound-header">
+                <div class="inbound-title" style="flex-wrap:wrap;gap:6px;align-items:center;">
+                    <span class="v3-badge">v3</span>
+                    <h3>${escapeHtml(serverName)}</h3>
+                    <div class="v3-ib-tags">${ibTagsHtml}</div>
+                </div>
+                <div class="inbound-status">
+                    <span class="status-pill active">Active</span>
+                    ${totalCount > 0 ? `<button class="btn btn-secondary" style="padding:6px 10px;" onclick="event.stopPropagation(); toggleSelectAllClients('${cardKey}', true)">Select All</button>` : ''}
+                </div>
+            </div>
+            <div class="inbound-meta-compact">
+                <span class="meta-tag"><span class="label">Clients:</span> <span class="value">${totalCount}</span><span style="color:#64748b;margin:0 2px;">/</span><span class="value" style="color:#4ade80;">${activeCount}</span></span>
+                <span class="meta-tag"><span class="label">Inbounds:</span> <span class="value">${serverInbounds.length}</span></span>
+            </div>
+            ${clientsSectionHtml}
+        </div>`;
+
+        return { html, clientCount: totalCount };
+    }
+
     function updateInbounds(inbounds) {
         const container = document.getElementById('inbounds-container');
         const countEl = document.getElementById('inbounds-count');
@@ -2866,11 +3050,24 @@
             return;
         }
         
-        const _cardHtmls = inbounds.map(inbound => {
+        // Build render items: v3 servers get one unified card; legacy get one per inbound.
+        const _v3Done = new Set();
+        const _renderItems = []; // { html, clientCount }
+        for (const inbound of inbounds) {
+            const _sid = String(inbound.server_id);
+            if (_serverIsV3(_sid)) {
+                if (!_v3Done.has(_sid)) {
+                    _v3Done.add(_sid);
+                    const _sibInbounds = inbounds.filter(i => String(i.server_id) === _sid);
+                    _renderItems.push(_buildV3ServerCard(_sid, _sibInbounds));
+                }
+                continue; // remaining inbounds of the same v3 server are merged in
+            }
+            // Legacy: one card per inbound
             const inboundKey = `${inbound.server_id}:${inbound.id}`;
             const isExpanded = expandedInboundKeys.has(inboundKey);
             const toggleCount = inbound.clients.length;
-            return `
+            _renderItems.push({ clientCount: toggleCount, html: `
             <div class="inbound-card ${!inbound.enable ? 'disabled' : ''}">
                 <div class="inbound-header">
                     <div class="inbound-title">
@@ -3019,8 +3216,8 @@
                 </div>
                 ` : ''}
             </div>
-        `;
-        });
+        `});
+        }
 
         // Extra (non-chunked) cards: server empty/error + pending placeholders.
         let extraHtml = '';
@@ -3132,18 +3329,18 @@
         // main thread for seconds (frozen UI: clicks, typing, dropdowns). Inject
         // the inbound cards in small batches, yielding to the event loop between
         // them so the page stays responsive while it builds.
-        container.innerHTML = (html || '');
+        container.innerHTML = '';
         const ROWS_PER_FRAME = 400;  // cap parsed client rows per frame (size-aware)
         let _ci = 0;
         const _renderChunk = () => {
             if (myToken !== _inboundsRenderToken) return; // a newer render superseded us
-            if (_ci < _cardHtmls.length) {
+            if (_ci < _renderItems.length) {
                 let buf = '';
                 let rows = 0;
                 // Always emit at least one card; otherwise stop once the row budget is hit.
-                while (_ci < _cardHtmls.length && (buf === '' || rows < ROWS_PER_FRAME)) {
-                    buf += _cardHtmls[_ci];
-                    rows += (inbounds[_ci] && inbounds[_ci].clients ? inbounds[_ci].clients.length : 0);
+                while (_ci < _renderItems.length && (buf === '' || rows < ROWS_PER_FRAME)) {
+                    buf += _renderItems[_ci].html;
+                    rows += _renderItems[_ci].clientCount;
                     _ci++;
                 }
                 const tpl = document.createElement('template');
@@ -4043,7 +4240,21 @@
 
     function openAddClientModal() {
         document.getElementById('add-client-server-select').innerHTML = '<option value="">-- Select Server --</option>';
-        document.getElementById('add-client-inbound-select').innerHTML = '<option value="">-- Select Inbound --</option>';
+        const _inbSel = document.getElementById('add-client-inbound-select');
+        _inbSel.innerHTML = '<option value="">-- Select Inbound --</option>';
+        // Restore the custom single-inbound dropdown; v3 may have hidden it for the multi list.
+        const _inbSingle = document.getElementById('add-client-inbound-single');
+        if (_inbSingle) _inbSingle.style.display = '';
+        const _inbPickLbl = document.getElementById('inbound-pick-label');
+        if (_inbPickLbl) _inbPickLbl.textContent = '-- Select Inbound --';
+        const _inbPickList = document.getElementById('inbound-pick-list');
+        if (_inbPickList) _inbPickList.innerHTML = '';
+        const _inbDd = document.getElementById('inbound-pick-dropdown');
+        if (_inbDd) _inbDd.classList.add('hidden');
+        const _multi = document.getElementById('add-client-inbound-multi');
+        if (_multi) { _multi.style.display = 'none'; document.getElementById('add-client-inbound-multi-list').innerHTML = ''; }
+        const _colLabel = document.getElementById('add-inbound-col-label');
+        if (_colLabel) _colLabel.textContent = 'Inbound';
 
         const lastUserDisplay = document.getElementById('last-user-display');
         if (lastUserDisplay) {
@@ -4060,7 +4271,8 @@
                 document.getElementById('add-client-server-select').appendChild(option);
             });
         }
-        
+        _renderServerPick();  // build the custom server dropdown list
+
         document.getElementById('add-client-email').value = '';
         const addCommentInput = document.getElementById('add-client-comment');
         if (addCommentInput) addCommentInput.value = '';
@@ -4340,46 +4552,78 @@
             lastUserDisplay.style.color = 'var(--text-secondary)';
             lastUserDisplay.title = '';
         }
+        _lastUserNav = { key: '', list: [], index: 0 };
+        const _luNav = document.getElementById('last-user-nav');
+        if (_luNav) _luNav.style.display = 'none';
 
-        if (!serverId) return;
+        if (!serverId) { _renderAddInboundMulti(serverId, []); return; }
 
         const serverInbounds = getCachedInboundsForServer(serverId);
         if (serverInbounds.length > 0) {
             updateLastUserCacheFromInbounds(serverId, serverInbounds);
-            _fillInboundOptions(inboundSelect, serverInbounds.map(ib => ({
+            const opts = serverInbounds.map(ib => ({
                 id: ib.id, server_id: ib.server_id, remark: ib.remark,
                 protocol: ib.protocol, port: ib.port,
                 active_count: (ib.active_count ?? (Array.isArray(ib.clients) ? ib.clients.filter(c => c.enable).length : 0)),
-            })));
+            }));
+            _fillInboundOptions(inboundSelect, opts);
+            _renderAddInboundMulti(serverId, opts);
             fetchLastUsersForServer(serverId).catch(() => {});
         } else {
             // Heavy dashboard cache not ready yet → pull a lightweight list straight
             // from the backend cache so the dropdown is usable immediately.
-            const loadingOpt = document.createElement('option');
-            loadingOpt.textContent = 'Loading inbounds…';
-            loadingOpt.disabled = true;
-            inboundSelect.appendChild(loadingOpt);
+            const _lbl = document.getElementById('inbound-pick-label');
+            if (_lbl) _lbl.textContent = 'Loading inbounds…';
             loadInboundOptionsLight(serverId);
         }
     }
 
     function _fillInboundOptions(inboundSelect, inbounds) {
-        // Keep only the placeholder, then add the options.
+        // Populate the hidden native select (keeps .value) AND the custom dropdown list.
         inboundSelect.innerHTML = '<option value="">-- Select Inbound --</option>';
+        const pickList = document.getElementById('inbound-pick-list');
+        const pickLabel = document.getElementById('inbound-pick-label');
+        if (pickLabel) pickLabel.textContent = '-- Select Inbound --';
         if (!inbounds || !inbounds.length) {
             const o = document.createElement('option');
             o.textContent = 'No inbounds available';
             o.disabled = true;
             inboundSelect.appendChild(o);
+            if (pickList) pickList.innerHTML = '<div style="padding:10px; color:var(--text-secondary); text-align:center;">No inbounds available</div>';
             return;
         }
+        let pickHtml = '';
         inbounds.forEach(inbound => {
             const option = document.createElement('option');
             option.value = JSON.stringify({ server_id: inbound.server_id, inbound_id: inbound.id });
             const active = inbound.active_count ?? 0;
-            option.textContent = `${inbound.remark} - ${inbound.protocol} (${inbound.port}) [${active}]`;
+            const text = `${inbound.remark} - ${inbound.protocol} (${inbound.port}) [${active}]`;
+            option.textContent = text;
             inboundSelect.appendChild(option);
+            pickHtml += `<div class="filter-item" onclick="selectInboundPick(${inbound.server_id}, ${inbound.id})">
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(text)}</span>
+            </div>`;
         });
+        if (pickList) pickList.innerHTML = pickHtml;
+    }
+    function toggleInboundPickDropdown(e) {
+        if (e) e.stopPropagation();
+        const serverSel = document.getElementById('add-client-server-select');
+        if (!serverSel || !serverSel.value) {
+            showToast('Please select a server first', 'warning');
+            return;
+        }
+        document.getElementById('inbound-pick-dropdown').classList.toggle('hidden');
+    }
+    function selectInboundPick(serverId, inboundId) {
+        const sel = document.getElementById('add-client-inbound-select');
+        const val = JSON.stringify({ server_id: serverId, inbound_id: inboundId });
+        sel.value = val;
+        const opt = Array.from(sel.options).find(o => o.value === val);
+        const lbl = document.getElementById('inbound-pick-label');
+        if (lbl) lbl.textContent = opt ? opt.textContent : 'Inbound';
+        document.getElementById('inbound-pick-dropdown').classList.add('hidden');
+        onInboundSelected();
     }
 
     async function loadInboundOptionsLight(serverId) {
@@ -4395,10 +4639,11 @@
                 return;
             }
             _fillInboundOptions(inboundSelect, data.inbounds);
-            // Seed the last-user cache from the light payload (instant "last user")
+            _renderAddInboundMulti(serverId, data.inbounds);
+            // Seed the last-user cache from the light payload (role-filtered recent list)
             const sid = String(serverId);
             const raw = {};
-            data.inbounds.forEach(ib => { raw[String(ib.id)] = ib.last_user || null; });
+            data.inbounds.forEach(ib => { raw[String(ib.id)] = ib.recent_users || (ib.last_user ? [ib.last_user] : []); });
             lastUserCacheByServer.set(sid, _mergeWithOverrides(sid, raw));
         } catch (e) {
             const inboundSelect = document.getElementById('add-client-inbound-select');
@@ -4406,17 +4651,116 @@
         }
     }
 
+    // ── Custom single-select Server dropdown (same look as the filter dropdowns) ──
+    // It mirrors a hidden <select id="add-client-server-select"> so all existing
+    // code that reads .value keeps working.
+    function _renderServerPick() {
+        const list = document.getElementById('server-pick-list');
+        if (!list) return;
+        const servers = (allServers || []).filter(s => !s.hidden);
+        list.innerHTML = servers.map(s => `
+            <div class="filter-item" onclick="selectServerPick(${s.id})">
+                <span style="font-family:monospace; color:var(--text-secondary);">#${s.id}</span>
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(s.name)}</span>
+                ${s.has_api_token ? '<span style="margin-left:auto; font-size:0.66rem; color:#4ade80; border:1px solid rgba(74,222,128,0.4); border-radius:6px; padding:1px 5px;">v3</span>' : ''}
+            </div>`).join('') || '<div style="padding:10px; color:var(--text-secondary); text-align:center;">No servers</div>';
+        document.getElementById('server-pick-label').textContent = 'Select Server';
+    }
+    function toggleServerPickDropdown(e) {
+        if (e) e.stopPropagation();
+        document.getElementById('server-pick-dropdown').classList.toggle('hidden');
+    }
+    function selectServerPick(id) {
+        const sel = document.getElementById('add-client-server-select');
+        sel.value = String(id);
+        const s = (allServers || []).find(x => String(x.id) === String(id));
+        document.getElementById('server-pick-label').textContent = s ? `#${s.id} ${s.name}` : 'Select Server';
+        document.getElementById('server-pick-dropdown').classList.add('hidden');
+        onServerSelected();
+    }
+
+    // v3 servers only: render a checkbox list so a client can be assigned to many
+    // inbounds at once. Hidden entirely for legacy panels (one inbound per client).
+    function _serverIsV3(serverId) {
+        const s = (allServers || []).find(x => String(x.id) === String(serverId));
+        return !!(s && s.has_api_token);
+    }
+    function _renderAddInboundMulti(serverId, inbounds) {
+        const wrap = document.getElementById('add-client-inbound-multi');
+        const list = document.getElementById('add-client-inbound-multi-list');
+        const singleCustom = document.getElementById('add-client-inbound-single'); // legacy custom dropdown
+        const colLabel = document.getElementById('add-inbound-col-label');
+        if (!wrap || !list) return;
+        if (!serverId || !_serverIsV3(serverId) || !inbounds || !inbounds.length) {
+            wrap.style.display = 'none';
+            list.innerHTML = '';
+            if (singleCustom) singleCustom.style.display = '';
+            if (colLabel) colLabel.textContent = 'Inbound';
+            return;
+        }
+        // v3: the checkbox dropdown drives assignment; the single dropdown is redundant.
+        if (singleCustom) singleCustom.style.display = 'none';
+        if (colLabel) colLabel.textContent = 'Assign to inbounds';
+        wrap.style.display = 'block';
+        document.getElementById('add-inbound-multi-dropdown').classList.add('hidden');
+        list.innerHTML = inbounds.map(ib => `
+            <div class="filter-item">
+                <label class="checkbox-label">
+                    <input type="checkbox" class="add-inbound-cb" value="${ib.id}" checked onchange="_updateAddInboundMultiLabel()">
+                    <span class="checkmark"></span>
+                    <span>${escHtml(ib.remark || ('Inbound ' + ib.id))} <span style="color:var(--text-secondary);">:${ib.port}</span></span>
+                </label>
+            </div>`).join('');
+        _updateAddInboundMultiLabel();
+    }
+    function toggleAddInboundDropdown(e) {
+        if (e) e.stopPropagation();
+        const serverSel = document.getElementById('add-client-server-select');
+        if (!serverSel || !serverSel.value) {
+            showToast('Please select a server first', 'warning');
+            return;
+        }
+        document.getElementById('add-inbound-multi-dropdown').classList.toggle('hidden');
+    }
+    function selectAllAddInbounds(e) {
+        if (e) e.stopPropagation();
+        const boxes = Array.from(document.querySelectorAll('#add-client-inbound-multi-list .add-inbound-cb'));
+        // If all already checked, toggle to none; else select all (mirrors filter UX).
+        const allChecked = boxes.length > 0 && boxes.every(cb => cb.checked);
+        boxes.forEach(cb => { cb.checked = !allChecked; });
+        _updateAddInboundMultiLabel();
+    }
+    function _updateAddInboundMultiLabel() {
+        const boxes = Array.from(document.querySelectorAll('#add-client-inbound-multi-list .add-inbound-cb'));
+        const checked = boxes.filter(cb => cb.checked).length;
+        const label = document.getElementById('add-inbound-multi-label');
+        const count = document.getElementById('add-inbound-multi-count');
+        if (label) {
+            label.textContent = (checked === boxes.length && boxes.length) ? 'All inbounds'
+                : (checked === 0 ? 'No inbounds' : `${checked} inbound${checked > 1 ? 's' : ''}`);
+        }
+        if (count) {
+            count.textContent = String(checked);
+            count.classList.toggle('hidden', !(checked > 0 && checked < boxes.length));
+        }
+    }
+    function _getCheckedAddInboundIds() {
+        return Array.from(document.querySelectorAll('#add-client-inbound-multi-list .add-inbound-cb'))
+            .filter(cb => cb.checked).map(cb => parseInt(cb.value)).filter(Number.isFinite);
+    }
+
+    // Current last-user navigation state (cycle through the recent clients list).
+    let _lastUserNav = { key: '', list: [], index: 0 };
+
     function onInboundSelected() {
-        if (typeof IS_SUPERADMIN !== 'undefined' && !IS_SUPERADMIN) return;
+        // Available for every role now — resellers see only THEIR own recent clients.
         const select = document.getElementById('add-client-inbound-select');
         const display = document.getElementById('last-user-display');
-
         if (!display) return;
 
         if (!select.value) {
-            display.innerText = 'Last User: -';
-            display.style.color = 'var(--text-secondary)';
-            display.title = '';
+            _lastUserNav = { key: '', list: [], index: 0 };
+            _renderLastUserNav(display);
             return;
         }
 
@@ -4425,13 +4769,11 @@
             const serverKey = String(data.server_id);
             const inboundKey = String(data.inbound_id);
 
-            // 1) Show from local cache instantly (zero latency)
+            // 1) Instant from local cache
             showLastUserFromCache(serverKey, inboundKey, display);
 
-            // 2) Fire a lightweight background fetch to refresh the cache
-            //    (catches accounts created in the last few minutes)
+            // 2) Background refresh (catches very recent accounts)
             fetchLastUsersForServer(data.server_id).then(() => {
-                // Re-apply if the same inbound is still selected
                 const curVal = select.value;
                 if (!curVal) return;
                 try {
@@ -4445,41 +4787,58 @@
             console.error(e);
             display.innerText = 'Error';
             display.style.color = 'var(--text-secondary)';
-            display.title = '';
         }
     }
 
     function showLastUserFromCache(serverKey, inboundKey, display) {
+        display = display || document.getElementById('last-user-display');
         const cachedMap = lastUserCacheByServer.get(serverKey) || {};
-        const cachedLast = Object.prototype.hasOwnProperty.call(cachedMap, inboundKey)
-            ? cachedMap[inboundKey]
-            : undefined;
-
-        if (cachedLast !== undefined) {
-            if (cachedLast) {
-                display.innerText = cachedLast;
-                display.style.color = '#fbbf24';
-                display.title = cachedLast;
-            } else {
-                display.innerText = 'None';
-                display.style.color = 'var(--text-secondary)';
-                display.title = '';
+        let arr = cachedMap[inboundKey];
+        if (!Array.isArray(arr)) {
+            // Fallback: derive from the (role-filtered) heavy cache.
+            const inbound = getCachedInboundsForServer(parseInt(serverKey)).find(i => String(i.id) === inboundKey);
+            arr = [];
+            if (inbound && Array.isArray(inbound.clients)) {
+                for (let i = inbound.clients.length - 1; i >= 0 && arr.length < 8; i--) {
+                    const em = inbound.clients[i] && inbound.clients[i].email;
+                    if (em) arr.push(em);
+                }
             }
-            return;
         }
+        // Keep the index if the same inbound is being refreshed; reset otherwise.
+        const navKey = serverKey + '_' + inboundKey;
+        if (_lastUserNav.key !== navKey) _lastUserNav.index = 0;
+        _lastUserNav = { key: navKey, list: arr || [], index: _lastUserNav.index };
+        _renderLastUserNav(display);
+    }
 
-        // Fallback: read from cached inbounds data
-        const inbound = getCachedInboundsForServer(parseInt(serverKey)).find(i => String(i.id) === inboundKey);
-        if (inbound && inbound.clients && inbound.clients.length > 0) {
-            const lastClient = inbound.clients[inbound.clients.length - 1];
-            display.innerText = lastClient.email;
-            display.style.color = '#fbbf24';
-            display.title = lastClient.email;
-        } else {
-            display.innerText = 'Last User: None';
+    function _renderLastUserNav(display) {
+        display = display || document.getElementById('last-user-display');
+        const nav = document.getElementById('last-user-nav');
+        const pos = document.getElementById('last-user-pos');
+        const isFa = (document.documentElement.lang || 'en') === 'fa';
+        const arr = _lastUserNav.list || [];
+        if (!arr.length) {
+            display.innerText = isFa ? 'تا حالا اکانتی نساختی' : 'No account yet';
             display.style.color = 'var(--text-secondary)';
             display.title = '';
+            if (nav) nav.style.display = 'none';
+            return;
         }
+        let i = Math.max(0, Math.min(_lastUserNav.index, arr.length - 1));
+        _lastUserNav.index = i;
+        display.innerText = arr[i];
+        display.style.color = '#fbbf24';
+        display.title = arr[i];
+        if (nav) nav.style.display = arr.length > 1 ? 'inline-flex' : 'none';
+        if (pos) pos.textContent = arr.length > 1 ? `${i + 1}/${arr.length}` : '';
+    }
+
+    function navLastUser(dir) {
+        const arr = _lastUserNav.list || [];
+        if (!arr.length) return;
+        _lastUserNav.index = Math.max(0, Math.min(_lastUserNav.index + dir, arr.length - 1));
+        _renderLastUserNav();
     }
 
     function closeAddClientModal() {
@@ -4492,12 +4851,23 @@
         const startAfterFirstUse = document.getElementById('add-client-start-after-first-use').checked;
         const senderCard = document.getElementById('add-client-sender-card')?.value?.trim() || '';
         const destCardId = document.getElementById('add-client-dest-card')?.value || '';
-        
-        if (!inboundSelect.value) return showToast('Select an inbound', 'error');
+
         if (!email) return showToast('Enter username', 'error');
 
-        const inboundData = JSON.parse(inboundSelect.value);
-        
+        // v3 multi-inbound mode: the checkbox list drives assignment.
+        const _multiWrap = document.getElementById('add-client-inbound-multi');
+        const _isV3Multi = _multiWrap && _multiWrap.style.display !== 'none';
+        let inboundData, _v3InboundIds = null;
+        if (_isV3Multi) {
+            _v3InboundIds = _getCheckedAddInboundIds();
+            if (!_v3InboundIds.length) return showToast('Select at least one inbound', 'error');
+            const sid = document.getElementById('add-client-server-select').value;
+            inboundData = { server_id: parseInt(sid), inbound_id: _v3InboundIds[0] };
+        } else {
+            if (!inboundSelect.value) return showToast('Select an inbound', 'error');
+            inboundData = JSON.parse(inboundSelect.value);
+        }
+
         const usePackage = Boolean(selectedPackageId);
         const payload = {
             email: email,
@@ -4518,6 +4888,9 @@
             payload.days = customDays;
             payload.volume = customVolume;
         }
+
+        // v3 multi-inbound: tell the backend every inbound this client should join.
+        if (_v3InboundIds && _v3InboundIds.length) payload.inbound_ids = _v3InboundIds;
 
         const btn = document.querySelector('#add-client-modal .btn-primary');
         const originalText = btn.innerText;
@@ -4548,11 +4921,15 @@
                 // inbound selection shows this new email without any fetch.
                 // Also store an override that survives background refreshes for 2 min.
                 const sid = String(inboundData.server_id);
-                const iid = String(inboundData.inbound_id);
+                const targetIids = (_v3InboundIds && _v3InboundIds.length)
+                    ? _v3InboundIds.map(String) : [String(inboundData.inbound_id)];
                 const map = lastUserCacheByServer.get(sid) || {};
-                map[iid] = email;
+                targetIids.forEach(iid => {
+                    const arr = Array.isArray(map[iid]) ? map[iid] : [];
+                    map[iid] = [email, ...arr.filter(e => e !== email)];  // prepend, most recent first
+                    _lastUserOverrides.set(`${sid}_${iid}`, { email, until: Date.now() + 120000 });
+                });
                 lastUserCacheByServer.set(sid, map);
-                _lastUserOverrides.set(`${sid}_${iid}`, { email, until: Date.now() + 120000 });
 
                 closeAddClientModal();
                 // Show the success modal FIRST so copy/QR are instantly available.
@@ -5031,6 +5408,27 @@
         if (expDropdown && !expDropdown.classList.contains('hidden') && !expDropdown.contains(event.target) && !expBtn.contains(event.target)) {
             expDropdown.classList.add('hidden');
         }
+
+        // v3 "Assign to inbounds" dropdown in the Add Client modal
+        const addInbDd = document.getElementById('add-inbound-multi-dropdown');
+        if (addInbDd && !addInbDd.classList.contains('hidden')) {
+            const wrap = document.getElementById('add-client-inbound-multi');
+            if (wrap && !wrap.contains(event.target)) addInbDd.classList.add('hidden');
+        }
+
+        // Custom Server picker dropdown in the Add Client modal
+        const srvDd = document.getElementById('server-pick-dropdown');
+        if (srvDd && !srvDd.classList.contains('hidden')) {
+            const w = srvDd.closest('.filter-dropdown-wrapper');
+            if (w && !w.contains(event.target)) srvDd.classList.add('hidden');
+        }
+
+        // Custom single-Inbound picker dropdown (legacy panels)
+        const inbDd = document.getElementById('inbound-pick-dropdown');
+        if (inbDd && !inbDd.classList.contains('hidden')) {
+            const w2 = inbDd.closest('.filter-dropdown-wrapper');
+            if (w2 && !w2.contains(event.target)) inbDd.classList.add('hidden');
+        }
     });
 
     function applyDisabledVisibility() {
@@ -5271,6 +5669,8 @@
         document.getElementById('server-json-path').value = '/json/';
         document.getElementById('server-sub-port').value = '';
         document.getElementById('server-panel-type').value = 'auto';
+        document.getElementById('server-api-token').value = '';
+        document.getElementById('server-api-token-hint').style.display = 'none';
         document.getElementById('server-modal').classList.remove('hidden');
         loadServers();
     }
@@ -5292,6 +5692,8 @@
         document.getElementById('server-json-path').value = server.json_path || '/json/';
         document.getElementById('server-sub-port').value = server.sub_port || '';
         document.getElementById('server-panel-type').value = server.panel_type;
+        document.getElementById('server-api-token').value = '';
+        document.getElementById('server-api-token-hint').style.display = server.has_api_token ? 'block' : 'none';
         document.getElementById('server-modal').classList.remove('hidden');
     }
 
@@ -5348,6 +5750,9 @@
             json_path: document.getElementById('server-json-path').value,
             sub_port: document.getElementById('server-sub-port').value
         };
+        // API token: only send when the user typed one (empty on edit = keep existing).
+        const _apiTok = document.getElementById('server-api-token').value.trim();
+        if (_apiTok) data.api_token = _apiTok;
 
         if (!data.name || !data.host || !data.username || !data.password) {
             showToast('All fields are required', 'error');

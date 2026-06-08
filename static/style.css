@@ -2510,6 +2510,48 @@ html[data-theme="light"] .package-price {
     display: none;
 }
 
+/* Modal-context dropdowns: stay within their column, open downward from left edge */
+#add-client-modal .filter-dropdown {
+    left: 0;
+    right: auto;
+    width: 100%;
+    min-width: 160px;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* Responsive 2-col grid inside modal */
+.modal-2col-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    align-items: start;
+}
+
+/* Email/LastUser row: align to bottom (label + input have different heights) */
+.modal-user-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    align-items: end;
+}
+
+@media (max-width: 520px) {
+    .modal-2col-grid {
+        grid-template-columns: 1fr;
+    }
+    .modal-user-row {
+        grid-template-columns: unset;
+        display: flex;
+        flex-direction: column-reverse; /* Last User on top, Email below */
+        align-items: stretch;
+        gap: 10px;
+    }
+    .modal-user-row > * {
+        width: 100%;
+    }
+}
+
 .filter-header {
     display: flex;
     justify-content: space-between;
@@ -5534,3 +5576,54 @@ html[data-theme="light"] .server-icon {
         font-size: 16px !important;
     }
 }
+
+/* ── v3 unified server card ─────────────────────────────────────────── */
+.v3-badge {
+    background: rgba(99,102,241,0.22);
+    color: #a5b4fc;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+}
+.v3-ib-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+}
+.v3-ib-tag {
+    background: rgba(100,116,139,0.14);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.67rem;
+    font-weight: 500;
+    border: 1px solid rgba(100,116,139,0.2);
+    white-space: nowrap;
+}
+.v3-ib-tag.vless { background: rgba(99,102,241,0.12); color: #818cf8; border-color: rgba(99,102,241,0.25); }
+.v3-ib-tag.vmess { background: rgba(59,130,246,0.12); color: #60a5fa; border-color: rgba(59,130,246,0.25); }
+.v3-ib-tag.trojan { background: rgba(245,158,11,0.12); color: #fbbf24; border-color: rgba(245,158,11,0.25); }
+.v3-ib-tag.shadowsocks { background: rgba(16,185,129,0.12); color: #34d399; border-color: rgba(16,185,129,0.25); }
+
+/* Inbounds column in v3 unified client table */
+.inbounds-cell { min-width: 70px; }
+.inbound-pills { display: flex; flex-wrap: wrap; gap: 3px; }
+.inbound-mini-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    background: rgba(100,116,139,0.14);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.inbound-mini-badge.vless { background: rgba(99,102,241,0.15); color: #818cf8; }
+.inbound-mini-badge.vmess { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.inbound-mini-badge.trojan { background: rgba(245,158,11,0.15); color: #fbbf24; }
+.inbound-mini-badge.shadowsocks { background: rgba(16,185,129,0.15); color: #34d399; }

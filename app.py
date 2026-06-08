@@ -1947,6 +1947,11 @@ else:
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024  # 512 MB — covers large installers/videos
+# Re-read templates from disk on each render in dev so UI edits show without a
+# full restart. Harmless in prod; production still benefits from a restart.
+if _is_dev_mode():
+    app.config['TEMPLATES_AUTO_RELOAD'] = True
+    app.jinja_env.auto_reload = True
 
 
 @app.errorhandler(413)
@@ -3111,6 +3116,9 @@ class Server(db.Model):
     sub_path = db.Column(db.String(50), default='/sub/')
     json_path = db.Column(db.String(50), default='/json/')
     sub_port = db.Column(db.Integer, nullable=True)
+    # 3x-ui v3+ API token (Bearer). When set, EVE authenticates with the token
+    # (skips cookie login + CSRF) and uses the v3 /panel/api/clients/* endpoints.
+    api_token = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -3125,6 +3133,7 @@ class Server(db.Model):
             'sub_path': self.sub_path,
             'json_path': self.json_path,
             'sub_port': self.sub_port,
+            'has_api_token': bool((self.api_token or '').strip()),
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -3598,6 +3607,9 @@ DEFAULT_WHATSAPP_TEMPLATE_WELCOME = "سلام {user}، اشتراک شما فع�
 DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY = "سلام {user}، اشتراک شما تا {time_left} دیگر منقضی می‌شود."
 ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE = 'account_info_whatsapp'
 ACCOUNT_INFO_SMS_TEMPLATE_TYPE = 'account_info_sms'
+ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE = 'royalty_info_whatsapp'
+ROYALTY_INFO_SMS_TEMPLATE_TYPE = 'royalty_info_sms'
+
 DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE = """اطلاعات اکانت شما
 اسم اکانت: {email}
 مدت زمان باقی مانده: {remaining_time}
@@ -3610,6 +3622,17 @@ DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE = """{email}
 Time: {remaining_time}
 Volume: {remaining_volume}
 Link: {dashboard_link}"""
+
+DEFAULT_ROYALTY_INFO_WHATSAPP_TEMPLATE = """سلام {email} عزیز 👋
+اکانت شما آماده‌ست ولی هنوز وصل نشدین!
+
+لینک اتصال: {dashboard_link}
+
+اگه مشکلی دارین بگین کمک کنیم 🙏"""
+
+DEFAULT_ROYALTY_INFO_SMS_TEMPLATE = """{email}
+اکانت آماده‌ست، وصل نشدی!
+لینک: {dashboard_link}"""
 
 WHATSAPP_CONFIG_KEYS = {
     WHATSAPP_DEPLOYMENT_REGION_KEY,
@@ -4575,6 +4598,30 @@ INBOUND_UPDATE_FALLBACKS = [
 ]
 
 
+def _json_field(value, default=None):
+    """Parse an x-ui inbound field (settings / streamSettings / sniffing) that may
+    arrive as a JSON-encoded STRING (x-ui v2 / Sanaei / Alireza) or as a nested
+    JSON OBJECT (3x-ui v3+, which returns these fields already decoded).
+
+    Returns a dict/list; falls back to `default` on anything unparseable.
+    This is the single compatibility shim that lets the same code path work
+    against both old and new panels.
+    """
+    if default is None:
+        default = {}
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return default
+        try:
+            return json.loads(s)
+        except Exception:
+            return default
+    return default
+
+
 def collect_endpoint_templates(panel_type, attr_name, fallbacks):
     """Return ordered list of endpoint templates for the requested action."""
     templates = []
@@ -4854,8 +4901,13 @@ with app.app_context():
                 conn.execute(text('ALTER TABLE servers ADD COLUMN hidden BOOLEAN DEFAULT FALSE'))
                 conn.commit()
             print("Added hidden column to servers table")
+        if 'api_token' not in srv_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text('ALTER TABLE servers ADD COLUMN api_token VARCHAR(255)'))
+                conn.commit()
+            print("Added api_token column to servers table")
     except Exception as e:
-        print(f"Migration error (servers.hidden): {e}")
+        print(f"Migration error (servers.hidden/api_token): {e}")
 
     # Ensure system_configs.value can store long URLs (PostgreSQL only)
     try:
@@ -5937,6 +5989,85 @@ def _format_panel_connection_error(server, exc=None):
     )
 
 
+def get_server_api_token(server) -> str:
+    """Decrypt the stored 3x-ui v3 API token (Bearer), or '' if none."""
+    raw = getattr(server, 'api_token', '') or ''
+    if not raw:
+        return ''
+    try:
+        return decrypt_server_password(raw)
+    except Exception:
+        return raw
+
+
+def server_is_v3(server) -> bool:
+    """A server is treated as 3x-ui v3+ when it has an API token configured."""
+    return bool(get_server_api_token(server))
+
+
+# ── 3x-ui v3+ client API (/panel/api/clients/*) ──────────────────────────────
+# In v3 the per-client inbound endpoints (updateClient/delClient/resetClientTraffic)
+# were removed; clients are first-class and managed by email here. Verified live:
+#   - update : POST /clients/update/{email}  body = bare client dict, id = uuid
+#   - delete : POST /clients/del/{email}     (?keepTraffic=1 to keep stats)
+#   - reset  : POST /clients/resetTraffic/{email}
+#   - add    : POST /clients/add             body = {client, inboundIds}
+
+def _v3_post(server, session_obj, path, json_body=None):
+    """POST to a v3 /panel/api/* path. Returns (ok: bool, json|None, error|None)."""
+    base, webpath = extract_base_and_webpath(server.host)
+    url = f"{base}{webpath}{path}"
+    try:
+        resp = session_obj.post(url, json=(json_body if json_body is not None else {}),
+                                verify=False, timeout=(3, 20))
+    except Exception as e:
+        return False, None, str(e)
+    j, err = _safe_response_json(resp)
+    if err:
+        return False, None, err
+    if resp.status_code == 200 and isinstance(j, dict) and j.get('success'):
+        return True, j, None
+    msg = (j.get('msg') or j.get('message')) if isinstance(j, dict) else None
+    return False, j, (msg or f"HTTP {resp.status_code}")
+
+
+def _v3_client_payload(client: dict) -> dict:
+    """Shape a client dict for v3 /clients/update|add. v3 unmarshals Client.id as a
+    string, so `id` must carry the UUID (not the numeric DB row id). Numeric fields
+    must be numbers, not empty strings."""
+    c = dict(client or {})
+    uid = c.get('uuid') or c.get('id') or ''
+    if uid:
+        c['id'] = uid
+    for k in ('tgId', 'limitIp', 'reset'):
+        if c.get(k) in ('', None):
+            c[k] = 0
+    return c
+
+
+def v3_update_client(server, session_obj, email, client: dict):
+    return _v3_post(server, session_obj,
+                    f"/panel/api/clients/update/{quote(str(email), safe='')}",
+                    _v3_client_payload(client))
+
+
+def v3_delete_client(server, session_obj, email, keep_traffic=False):
+    path = f"/panel/api/clients/del/{quote(str(email), safe='')}"
+    if keep_traffic:
+        path += "?keepTraffic=1"
+    return _v3_post(server, session_obj, path, {})
+
+
+def v3_reset_client(server, session_obj, email):
+    return _v3_post(server, session_obj,
+                    f"/panel/api/clients/resetTraffic/{quote(str(email), safe='')}", {})
+
+
+def v3_add_client(server, session_obj, client: dict, inbound_ids: list):
+    return _v3_post(server, session_obj, "/panel/api/clients/add",
+                    {"client": _v3_client_payload(client), "inboundIds": list(inbound_ids or [])})
+
+
 def get_xui_session(server):
     # Try to reuse session from cache
     now = time.time()
@@ -5953,6 +6084,15 @@ def get_xui_session(server):
     # Disable SSL verification at session level so redirects also skip cert checks
     # (self-signed certs on remote panels are supported this way)
     session_obj.verify = False
+
+    # ── 3x-ui v3+ : authenticate with the API token (Bearer) ──
+    # The token bypasses the v3 login CSRF guard and never expires, so we attach
+    # it to the session and skip the cookie-login dance entirely.
+    _api_token = get_server_api_token(server)
+    if _api_token:
+        session_obj.headers.update({'Authorization': f'Bearer {_api_token}'})
+        XUI_SESSION_CACHE[server.id] = {'session': session_obj, 'expiry': now + XUI_SESSION_TTL}
+        return session_obj, None
 
     try:
         base, webpath = extract_base_and_webpath(server.host)
@@ -6270,7 +6410,8 @@ def _normalize_server_status_payload(payload: dict) -> dict:
 
     xray_info = payload.get('xray') if isinstance(payload.get('xray'), dict) else {}
 
-    xui_version = _pick_first_value(payload, ['xui_version', 'xuiVersion', 'xui'])
+    # 'panelVersion' is the 3x-ui v3+ field for the panel version (e.g. "3.2.8").
+    xui_version = _pick_first_value(payload, ['xui_version', 'xuiVersion', 'xui', 'panelVersion'])
     if not xui_version and isinstance(payload.get('version'), str):
         xui_version = payload.get('version')
 
@@ -6620,10 +6761,7 @@ def find_client(inbounds, inbound_id, email):
     for inbound in inbounds:
         if inbound.get('id') != inbound_id:
             continue
-        try:
-            settings = json.loads(inbound.get('settings', '{}'))
-        except Exception:
-            settings = {}
+        settings = _json_field(inbound.get('settings'), {})
         for client in settings.get('clients', []):
             if client.get('email') == email:
                 return client, inbound
@@ -6677,7 +6815,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 if not accessible:
                     continue
 
-            settings = json.loads(inbound.get('settings', '{}'))
+            settings = _json_field(inbound.get('settings'), {})
             clients = settings.get('clients', [])
             client_stats = inbound.get('clientStats', [])
 
@@ -8798,32 +8936,50 @@ def api_refresh_single_server(server_id):
 @app.route('/api/server/<int:server_id>/last-users')
 @login_required
 def api_server_last_users(server_id):
-    """Return last user per inbound from cache only (fast path)."""
-    last_users = {}
+    """Recent users per inbound (most recent first), from cache only (fast path).
+    Resellers only see clients THEY own; admins/superadmins see all."""
+    user = db.session.get(Admin, session['admin_id'])
+    owned_emails = None  # None = no ownership filter (admin); set = reseller filter
+    if user and user.role == 'reseller':
+        owned_emails = {
+            (o.client_email or '').strip().lower()
+            for o in ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id).all()
+            if o.client_email
+        }
+
+    RECENT_N = 8
+    recent_users = {}
     for inbound in (GLOBAL_SERVER_DATA.get('inbounds') or []):
         try:
             if int(inbound.get('server_id', -1)) != int(server_id):
                 continue
         except Exception:
             continue
-
         inbound_id = inbound.get('id')
         if inbound_id is None:
             continue
 
-        last_email = None
+        emails = []
         clients = inbound.get('clients') or []
-        if isinstance(clients, list) and clients:
-            last_client = clients[-1] if isinstance(clients[-1], dict) else None
-            if last_client and last_client.get('email'):
-                last_email = last_client.get('email')
-
-        last_users[str(inbound_id)] = last_email
+        if isinstance(clients, list):
+            for c in reversed(clients):  # most recent first
+                if not isinstance(c, dict):
+                    continue
+                em = c.get('email')
+                if not em:
+                    continue
+                if owned_emails is not None and str(em).strip().lower() not in owned_emails:
+                    continue
+                emails.append(em)
+                if len(emails) >= RECENT_N:
+                    break
+        recent_users[str(inbound_id)] = emails
 
     return jsonify({
         'success': True,
         'server_id': server_id,
-        'last_users': last_users,
+        'recent_users': recent_users,
+        'last_users': {k: (v[0] if v else None) for k, v in recent_users.items()},
         'last_update': GLOBAL_SERVER_DATA.get('last_update')
     })
 
@@ -8840,9 +8996,16 @@ def api_add_client_inbounds(server_id):
     user = db.session.get(Admin, session['admin_id'])
     is_reseller = bool(user and user.role == 'reseller')
     allowed_map, assignments = ('*', {})
+    owned_emails = None
     if is_reseller:
         allowed_map, assignments = get_reseller_access_maps(user)
+        owned_emails = {
+            (o.client_email or '').strip().lower()
+            for o in ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id).all()
+            if o.client_email
+        }
 
+    RECENT_N = 8
     items = []
     for inbound in (GLOBAL_SERVER_DATA.get('inbounds') or []):
         try:
@@ -8870,9 +9033,20 @@ def api_add_client_inbounds(server_id):
         except Exception:
             active_count = 0
 
-        last_email = None
-        if isinstance(clients, list) and clients and isinstance(clients[-1], dict):
-            last_email = clients[-1].get('email')
+        # Recent users (most recent first), role-filtered for resellers.
+        recent = []
+        if isinstance(clients, list):
+            for c in reversed(clients):
+                if not isinstance(c, dict):
+                    continue
+                em = c.get('email')
+                if not em:
+                    continue
+                if owned_emails is not None and str(em).strip().lower() not in owned_emails:
+                    continue
+                recent.append(em)
+                if len(recent) >= RECENT_N:
+                    break
 
         items.append({
             'id': inbound_id,
@@ -8882,7 +9056,8 @@ def api_add_client_inbounds(server_id):
             'port': inbound.get('port'),
             'client_count': inbound.get('client_count', len(clients)),
             'active_count': active_count,
-            'last_user': last_email,
+            'last_user': (recent[0] if recent else None),
+            'recent_users': recent,
         })
 
     return jsonify({
@@ -9404,6 +9579,13 @@ def _toggle_client_core(user, server, inbound_id: int, email: str, enable: bool)
         target_client['enable'] = bool(enable)
         client_identifier = target_client.get('id') or target_client.get('password') or target_client.get('email')
 
+        # v3: enable/disable via the first-class client update (legacy updateClient is 404).
+        if server_is_v3(server):
+            ok, _vr, verr = v3_update_client(server, session_obj, email, target_client)
+            if ok:
+                return True, None, 200
+            return False, f"v3 toggle failed: {verr}", 502
+
         payload = {
             "id": inbound_id,
             "settings": json.dumps({"clients": [target_client]})
@@ -9500,6 +9682,25 @@ def reset_client_traffic(server_id, inbound_id):
     if error: return jsonify({"success": False, "error": error}), 400
 
     try:
+        # v3: reset the first-class client by email (legacy resetClientTraffic is 404).
+        if server_is_v3(server):
+            ok, _vr, verr = v3_reset_client(server, session_obj, email)
+            if not ok:
+                return jsonify({"success": False, "error": f"v3 reset failed: {verr}"}), 502
+            if charge_amount > 0:
+                sender_card = data.get('sender_card', '') or ''
+                card_id = data.get('card_id')
+                if user.role == 'reseller':
+                    user.credit -= charge_amount
+                    log_transaction(user.id, -charge_amount, 'reset_traffic', "Reset traffic (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
+                else:
+                    log_transaction(user.id, charge_amount, 'reset_traffic', "Reset traffic (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
+                db.session.commit()
+            response = {"success": True}
+            if user.role == 'reseller':
+                response["remaining_credit"] = user.credit
+            return jsonify(response)
+
         templates = collect_endpoint_templates(server.panel_type, 'client_reset_traffic', CLIENT_RESET_FALLBACKS)
         replacements = {
             'id': inbound_id,
@@ -9601,12 +9802,7 @@ def edit_client(server_id, inbound_id, email):
         # Check for duplicate email on the same server (excluding current client)
         if new_email != email:
             for ib in inbounds:
-                settings = ib.get('settings', '{}')
-                if isinstance(settings, str):
-                    try:
-                        settings = json.loads(settings)
-                    except:
-                        settings = {}
+                settings = _json_field(ib.get('settings'), {})
                 clients = settings.get('clients', [])
                 for c in clients:
                     if c.get('email') == new_email:
@@ -9740,6 +9936,13 @@ def _delete_client_core(user, server, inbound_id: int, email: str):
                 return False, "Client not found", 404
 
         client_id = target_client.get('id', target_client.get('password', email))
+
+        # v3: delete the first-class client by email (legacy delClient is 404).
+        if server_is_v3(server):
+            ok, _vr, verr = v3_delete_client(server, session_obj, email)
+            if ok:
+                return True, None, 200
+            return False, f"v3 delete failed: {verr}", 502
 
         replacements = {
             'id': inbound_id,
@@ -10486,6 +10689,14 @@ def renew_client(server_id, inbound_id, email):
             'email': email
         }
 
+        _is_v3 = server_is_v3(server)
+
+        class _SyntheticOK:  # lets the v3 path reuse the legacy post-success block
+            status_code = 200
+            @staticmethod
+            def json():
+                return {"success": True}
+
         templates = collect_endpoint_templates(server.panel_type, 'client_update', CLIENT_UPDATE_FALLBACKS)
         errors = []
         t_update0 = time.perf_counter()
@@ -10493,11 +10704,19 @@ def renew_client(server_id, inbound_id, email):
             full_url = build_panel_url(server.host, template, replacements)
             if not full_url:
                 continue
-            try:
-                resp = session_obj.post(full_url, json=update_payload, verify=False, timeout=10)
-            except Exception as exc:
-                errors.append(f"{template}: {exc}")
-                continue
+            if _is_v3:
+                # v3: first-class client update by email (legacy updateClient is 404)
+                ok, _vr, verr = v3_update_client(server, session_obj, email, target_client)
+                if not ok:
+                    errors.append(f"v3 update: {verr}")
+                    break
+                resp = _SyntheticOK()
+            else:
+                try:
+                    resp = session_obj.post(full_url, json=update_payload, verify=False, timeout=10)
+                except Exception as exc:
+                    errors.append(f"{template}: {exc}")
+                    continue
             if resp.status_code == 200:
                 timing["update_post_ms"] = int((time.perf_counter() - t_update0) * 1000)
                 timing["update_endpoint"] = template
@@ -10512,7 +10731,11 @@ def renew_client(server_id, inbound_id, email):
                 
                 # If reset_traffic was requested, we must call the specific reset endpoint
                 # because updateClient usually ignores 'up'/'down' fields.
-                if reset_traffic:
+                if reset_traffic and _is_v3:
+                    t_reset0 = time.perf_counter()
+                    v3_reset_client(server, session_obj, email)
+                    timing["reset_traffic_ms"] = int((time.perf_counter() - t_reset0) * 1000)
+                elif reset_traffic:
                     reset_templates = collect_endpoint_templates(server.panel_type, 'client_reset_traffic', CLIENT_RESET_FALLBACKS)
                     t_reset0 = time.perf_counter()
                     for r_template in reset_templates:
@@ -11052,6 +11275,7 @@ def add_server():
     server_password = (data.get('password') or '').strip()
     if not server_password:
         return jsonify({"success": False, "error": "Password is required"}), 400
+    _api_token = (data.get('api_token') or '').strip()
     server = Server(
         name=sanitize_html(data['name']),
         host=sanitize_html(data['host']),
@@ -11060,7 +11284,8 @@ def add_server():
         panel_type=data.get('panel_type', 'auto'),
         sub_path=data.get('sub_path', '/sub/'),
         json_path=data.get('json_path', '/json/'),
-        sub_port=data.get('sub_port')
+        sub_port=data.get('sub_port'),
+        api_token=encrypt_server_password(_api_token) if _api_token else None,
     )
     db.session.add(server)
     db.session.commit()
@@ -11088,7 +11313,13 @@ def update_server(server_id):
     server.enabled = data.get('enabled', server.enabled)
     if 'hidden' in data:
         server.hidden = bool(data['hidden'])
+    if 'api_token' in data:
+        _tok = (data.get('api_token') or '').strip()
+        # Non-empty → set/replace; explicit empty string → clear it.
+        server.api_token = encrypt_server_password(_tok) if _tok else None
     db.session.commit()
+    # Token change alters auth — drop any cached session so the next call re-auths.
+    XUI_SESSION_CACHE.pop(server_id, None)
     return jsonify({"success": True})
 
 
@@ -11166,7 +11397,17 @@ def test_server_connection(server_id):
     session_obj, error = get_xui_session(server)
     if error:
         return jsonify({"success": False, "error": error}), 400
-    return jsonify({"success": True, "panel_type": server.panel_type})
+    # Actually read data so a wrong API token / unreachable panel is caught here
+    # (Bearer auth sets a header without contacting the panel, so we must probe).
+    inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+    if fetch_err:
+        return jsonify({"success": False, "error": fetch_err}), 400
+    return jsonify({
+        "success": True,
+        "panel_type": detected_type or server.panel_type,
+        "inbound_count": len(inbounds or []),
+        "auth": "token" if server_is_v3(server) else "login",
+    })
 
 
 @app.route('/api/servers/<int:server_id>/xui-backup', methods=['GET'])
@@ -11559,6 +11800,96 @@ def add_client(server_id, inbound_id):
             "reset": 0
         }
 
+        # ── 3x-ui v3+ : assign one client to one OR MANY inbounds in a single call.
+        # Only taken when the client sent inbound_ids (v3 multi-assign UI); otherwise
+        # the universal single-inbound flow below runs (works on every panel version).
+        _req_inbound_ids = data.get('inbound_ids')
+        if server_is_v3(server) and isinstance(_req_inbound_ids, list) and _req_inbound_ids:
+            try:
+                assign_ids = sorted({int(x) for x in _req_inbound_ids if x is not None})
+            except Exception:
+                assign_ids = []
+            if not assign_ids:
+                assign_ids = [inbound_id]
+
+            ok, _vr, verr = v3_add_client(server, session_obj, new_client, assign_ids)
+            if not ok:
+                return jsonify({"success": False, "error": f"v3 add failed: {verr}"}), 502
+
+            # Billing (charged once for the whole client)
+            sender_card = data.get('sender_card', '') or ''
+            card_id = data.get('card_id')
+            if is_free:
+                log_transaction(user.id, 0, 'purchase', f"Add User (Free) - {description}", server_id=server.id, sender_card=sender_card, card_id=card_id, category=('usage' if user.role == 'reseller' else 'income'), client_email=email)
+            elif price > 0:
+                if user.role == 'reseller':
+                    user.credit -= price
+                    log_transaction(user.id, -price, 'purchase', "Add User (Credit Usage)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='usage', client_email=email)
+                else:
+                    log_transaction(user.id, price, 'purchase', "Add User (Income)", server_id=server.id, sender_card=sender_card, card_id=card_id, category='income', client_email=email)
+
+            # Ownership row per assigned inbound (price recorded once on the first)
+            for _idx, _iid in enumerate(assign_ids):
+                db.session.add(ClientOwnership(
+                    reseller_id=user.id, server_id=server.id, inbound_id=_iid,
+                    client_email=email, client_uuid=client_uuid,
+                    price=(price if _idx == 0 else 0)))
+                try:
+                    ensure_reseller_allowed_for_assignment(user, server.id, _iid)
+                except Exception:
+                    pass
+            db.session.commit()
+            invalidate_ownership_cache()
+
+            # Links from subId (one subscription aggregates all assigned inbounds)
+            parsed_host = urlparse(server.host)
+            final_port = server.sub_port if server.sub_port else parsed_host.port
+            port_str = f":{final_port}" if final_port else ""
+            base_sub = f"{parsed_host.scheme}://{parsed_host.hostname}{port_str}"
+            final_id = client_sub_id or client_uuid
+            sub_url = f"{base_sub}/{(server.sub_path or '').strip('/')}/{final_id}"
+            try:
+                app_base = request.url_root.rstrip('/')
+            except Exception:
+                app_base = ''
+            dash_sub_url = f"{app_base}/s/{server.id}/{final_id}"
+
+            # Protocol label = distinct protocols across the assigned inbounds
+            _protos = []
+            for ib in (GLOBAL_SERVER_DATA.get('inbounds') or []):
+                try:
+                    if int(ib.get('server_id', -1)) == int(server.id) and int(ib.get('id', -1)) in assign_ids:
+                        _protos.append(ib.get('protocol') or '')
+                except Exception:
+                    continue
+            proto_label = ', '.join(sorted({p for p in _protos if p})) or 'vless'
+
+            copy_text = ''
+            try:
+                active_tpl = NotificationTemplate.query.filter_by(type='client_created', is_active=True).first()
+                if active_tpl and active_tpl.content:
+                    vol_label = '♾️' if volume_gb == 0 else f'{volume_gb} GB'
+                    days_label_cc = '♾️' if days == 0 else f'{days}'
+                    copy_text = _render_text_template(active_tpl.content, {
+                        'service_name': email, 'email': email, 'protocol': proto_label,
+                        'volume': vol_label, 'days': days_label_cc, 'sub_link': sub_url,
+                        'dashboard_link': dash_sub_url, 'server_name': getattr(server, 'name', '') or '',
+                        'comment': data.get('comment', '') or '',
+                    })
+            except Exception:
+                copy_text = ''
+
+            return jsonify({
+                "success": True,
+                "copy_text": copy_text,
+                "client": {
+                    "email": email, "comment": data.get('comment', '') or '',
+                    "protocol": proto_label, "volume": volume_gb, "days": days,
+                    "sub_link": sub_url, "direct_link": None, "dashboard_link": dash_sub_url,
+                    "inbound_ids": assign_ids,
+                }
+            })
+
         inbound_data = None
         last_fetch_error = None
         last_fetch_url = None
@@ -11614,7 +11945,8 @@ def add_client(server_id, inbound_id):
                 "error": f"{details}. If this is an Alireza panel, ensure endpoints like /xui/API/... are reachable and server Panel URL/webpath is correct."
             }), 502
 
-        settings = json.loads(inbound_data['settings'])
+        settings = _json_field(inbound_data.get('settings'), {})
+        settings.setdefault('clients', [])
 
         for c in settings['clients']:
             if c['email'] == email: return jsonify({"success": False, "error": f"Email '{email}' already exists on server"})
@@ -14105,10 +14437,7 @@ def client_subscription(server_id, sub_id):
                     if not _live_err and _live_inbounds:
                         persist_detected_panel_type(server, _live_type)
                         for _inb in _live_inbounds:
-                            try:
-                                _settings = json.loads(_inb.get('settings', '{}'))
-                            except Exception:
-                                continue
+                            _settings = _json_field(_inb.get('settings'), {})
                             for _cli in _settings.get('clients', []):
                                 _c_sub = str(_cli.get('subId') or '').strip()
                                 _c_uuid = str(_cli.get('id') or '').strip()
@@ -14138,10 +14467,7 @@ def client_subscription(server_id, sub_id):
 
         # Search in raw fetched inbounds (original logic)
         for inbound in inbounds:
-            try:
-                settings = json.loads(inbound.get('settings', '{}'))
-            except Exception:
-                continue
+            settings = _json_field(inbound.get('settings'), {})
             for client in settings.get('clients', []):
                 client_sub_id = str(client.get('subId') or '').strip()
                 client_uuid = str(client.get('id') or '').strip()
@@ -16422,13 +16748,31 @@ def _account_info_channel_links(admin: 'Admin') -> dict:
 
 def _account_info_template_type(channel='whatsapp'):
     channel = (channel or 'whatsapp').strip().lower()
+    if channel == 'royalty_sms':
+        return ROYALTY_INFO_SMS_TEMPLATE_TYPE
+    if channel == 'royalty_whatsapp':
+        return ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE
     return ACCOUNT_INFO_SMS_TEMPLATE_TYPE if channel == 'sms' else ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE
 
 def _account_info_default_template(channel='whatsapp'):
-    return DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE if (channel or '').strip().lower() == 'sms' else DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE
+    channel = (channel or 'whatsapp').strip().lower()
+    if channel == 'royalty_sms':
+        return DEFAULT_ROYALTY_INFO_SMS_TEMPLATE
+    if channel == 'royalty_whatsapp':
+        return DEFAULT_ROYALTY_INFO_WHATSAPP_TEMPLATE
+    return DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE if channel == 'sms' else DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE
 
 def _account_info_channel_from_type(template_type):
+    if template_type == ROYALTY_INFO_SMS_TEMPLATE_TYPE:
+        return 'royalty_sms'
+    if template_type == ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE:
+        return 'royalty_whatsapp'
     return 'sms' if template_type == ACCOUNT_INFO_SMS_TEMPLATE_TYPE else 'whatsapp'
+
+_ALL_ACCOUNT_INFO_TYPES = (
+    ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE, ACCOUNT_INFO_SMS_TEMPLATE_TYPE,
+    ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE, ROYALTY_INFO_SMS_TEMPLATE_TYPE,
+)
 
 def _ensure_default_account_info_template(channel='whatsapp'):
     template_type = _account_info_template_type(channel)
@@ -16436,8 +16780,13 @@ def _ensure_default_account_info_template(channel='whatsapp'):
     existing = NotificationTemplate.query.filter_by(type=template_type, owner_id=None).first()
     if existing:
         return
+    name_map = {
+        ACCOUNT_INFO_SMS_TEMPLATE_TYPE: 'Default Account Info SMS',
+        ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE: 'Default Royalty Info',
+        ROYALTY_INFO_SMS_TEMPLATE_TYPE: 'Default Royalty Info SMS',
+    }
     template = NotificationTemplate(
-        name='Default Account Info SMS' if template_type == ACCOUNT_INFO_SMS_TEMPLATE_TYPE else 'Default Account Info',
+        name=name_map.get(template_type, 'Default Account Info'),
         content=_account_info_default_template(channel),
         type=template_type,
         is_active=True,
@@ -16470,13 +16819,15 @@ def _resolve_account_info_template(admin: 'Admin', channel: str = 'whatsapp') ->
 def get_account_message_templates():
     _ensure_default_account_info_template('whatsapp')
     _ensure_default_account_info_template('sms')
+    _ensure_default_account_info_template('royalty_whatsapp')
+    _ensure_default_account_info_template('royalty_sms')
 
     current_admin = db.session.get(Admin, session.get('admin_id'))
 
     # Resellers only see their own specific templates + global ones
     # Admins/superadmins see everything
     q = NotificationTemplate.query.filter(
-        NotificationTemplate.type.in_([ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE, ACCOUNT_INFO_SMS_TEMPLATE_TYPE])
+        NotificationTemplate.type.in_(_ALL_ACCOUNT_INFO_TYPES)
     )
     if current_admin and current_admin.role == 'reseller':
         q = q.filter(
@@ -16506,6 +16857,8 @@ def get_account_message_templates():
         'available_vars': _account_info_template_vars(),
         'default_content': DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE,
         'default_sms_content': DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE,
+        'default_royalty_whatsapp_content': DEFAULT_ROYALTY_INFO_WHATSAPP_TEMPLATE,
+        'default_royalty_sms_content': DEFAULT_ROYALTY_INFO_SMS_TEMPLATE,
         'resellers': resellers,
     })
 
@@ -16513,6 +16866,9 @@ def get_account_message_templates():
 @login_required
 def get_active_account_message_template():
     channel = (request.args.get('channel') or 'whatsapp').strip().lower()
+    # Normalise: 'royalty' shorthand → 'royalty_whatsapp'
+    if channel == 'royalty':
+        channel = 'royalty_whatsapp'
     _ensure_default_account_info_template(channel)
     default_content = _account_info_default_template(channel)
 

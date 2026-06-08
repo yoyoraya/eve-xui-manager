@@ -70,6 +70,12 @@
                 </select>
             </div>
 
+            <div class="form-group">
+                <label>API Token <small style="color:var(--text-secondary); font-weight:normal;">(3x-ui v3+ — Settings → Security → API Token)</small></label>
+                <input type="password" id="server-api-token" placeholder="Paste token for v3 panels; leave empty for older panels">
+                <small id="server-api-token-hint" style="display:none; color:#4ade80; font-size:0.78rem;">✓ A token is already saved. Type a new one to replace it, or leave empty to keep it.</small>
+            </div>
+
             <label class="form-group form-toggle-item" style="cursor: pointer;">
                 <div class="toggle-switch">
                     <input type="checkbox" id="server-enabled" checked>
@@ -186,6 +192,11 @@
             badges.appendChild(createBadge(server.enabled ? 'Enabled' : 'Disabled', `badge ${server.enabled ? 'active' : 'inactive'}`));
             if (isHidden) badges.appendChild(createBadge('Hidden', 'badge inactive'));
             badges.appendChild(createBadge(server.panel_type || 'Unknown', 'badge panel-type'));
+            if (server.has_api_token) {
+                const v3b = createBadge('🔑 v3 (Token)', 'badge active');
+                v3b.title = 'Authenticated with a 3x-ui v3+ API token (Bearer)';
+                badges.appendChild(v3b);
+            }
 
             const statusMeta = document.createElement('div');
             statusMeta.className = 'server-meta';
@@ -286,7 +297,9 @@
         document.getElementById('server-json-path').value = '/json/';
         document.getElementById('server-sub-port').value = '';
         document.getElementById('server-panel-type').value = 'auto';
-        
+        document.getElementById('server-api-token').value = '';
+        document.getElementById('server-api-token-hint').style.display = 'none';
+
         document.getElementById('server-enabled').checked = true;
         document.getElementById('modal-title').textContent = 'Add Server';
         document.getElementById('server-modal').classList.remove('hidden');
@@ -312,7 +325,9 @@
         document.getElementById('server-json-path').value = server.json_path || '/json/';
         document.getElementById('server-sub-port').value = server.sub_port || '';
         document.getElementById('server-panel-type').value = server.panel_type || 'auto';
-        
+        document.getElementById('server-api-token').value = '';
+        document.getElementById('server-api-token-hint').style.display = server.has_api_token ? 'block' : 'none';
+
         document.getElementById('server-enabled').checked = server.enabled;
         document.getElementById('modal-title').textContent = 'Edit Server';
         document.getElementById('server-modal').classList.remove('hidden');
@@ -349,7 +364,10 @@
         if (!id || password) {
             data.password = password;
         }
-        
+        // API token: send only when typed (empty on edit keeps the existing one).
+        const _apiTok = document.getElementById('server-api-token').value.trim();
+        if (_apiTok) data.api_token = _apiTok;
+
         const url = id ? `/api/servers/${id}` : '/api/servers';
         const method = id ? 'PUT' : 'POST';
         
