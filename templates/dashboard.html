@@ -3215,11 +3215,12 @@
         });
     }
 
-    function _buildV3ServerCard(sid, serverInbounds) {
+    function _buildV3ServerCard(sid, serverInbounds, forceExpand = false) {
         const server = (allServers || []).find(s => String(s.id) === String(sid));
         const serverName = server ? server.name : `Server #${sid}`;
         const cardKey = `v3s:${sid}`;
-        const isExpanded = expandedInboundKeys.has(cardKey);
+        // Search results force-expand so the matched client is visible immediately.
+        const isExpanded = forceExpand || expandedInboundKeys.has(cardKey);
 
         // Deduplicate clients by email; collect all inbound assignments per client.
         const emailMap = new Map();
@@ -6226,20 +6227,32 @@
             filteredResults = filteredResults.filter(r => matchesExpiryFilter(r.client));
         }
         
+        // Count UNIQUE clients (a v3 client appears once per assigned inbound in the
+        // raw results, but renders as a single row), so the header isn't inflated.
+        const _uniqueClientCount = (rows) => {
+            const seen = new Set();
+            for (const r of (rows || [])) {
+                seen.add(`${r.server_id}:${String(r?.client?.email || '').toLowerCase()}`);
+            }
+            return seen.size;
+        };
+        const totalUnique = _uniqueClientCount(results);
+        const shownUnique = _uniqueClientCount(filteredResults);
+
         if (filteredResults.length === 0) {
             searchResultsDiv.style.display = 'flex';
             if (selectAllBtn) selectAllBtn.style.display = 'none';
             if (results.length > 0) {
-                searchResultsText.textContent = `Found ${results.length} client(s), but all hidden by filters.`;
+                searchResultsText.textContent = `Found ${totalUnique} client(s), but all hidden by filters.`;
             } else {
                 searchResultsText.textContent = `No clients found matching "${query}"`;
             }
             updateInboundsFiltered([]);
             return;
         }
-        
+
         searchResultsDiv.style.display = 'flex';
-        searchResultsText.textContent = `Found ${filteredResults.length} client(s) matching "${query}"` + (results.length !== filteredResults.length ? ` (filtered from ${results.length})` : '');
+        searchResultsText.textContent = `Found ${shownUnique} client(s) matching "${query}"` + (totalUnique !== shownUnique ? ` (filtered from ${totalUnique})` : '');
         if (selectAllBtn) selectAllBtn.style.display = 'inline-flex';
         
         updateInboundsFiltered(filteredResults);
@@ -6287,8 +6300,23 @@
             }
         });
         
-        // Register search cards so data-driven bulk (select-all) works here too.
+        // Render the same way the main list does: v3 servers collapse to ONE unified
+        // card (deduped by email, one row per client, with the assigned-inbound names)
+        // instead of one row per inbound; legacy servers get one card per inbound.
+        // Cards are force-expanded so the matched client is visible immediately, and
+        // rows mount lazily — so a write-through patch + applyFilters() re-render keeps
+        // every copy of a v3 client in sync here too.
+        const _v3Done = new Set();
+        const parts = [];
         inboundsToShow.forEach(inbound => {
+            const sid = String(inbound.server_id);
+            if (_serverIsV3(sid)) {
+                if (_v3Done.has(sid)) return; // merged into the server's unified card
+                _v3Done.add(sid);
+                const sib = inboundsToShow.filter(i => String(i.server_id) === sid);
+                parts.push(_buildV3ServerCard(sid, sib, true).html);
+                return;
+            }
             const inboundKey = `${inbound.server_id}:${inbound.id}`;
             _cardRowData.set(inboundKey, {
                 items: inbound.clients,
@@ -6297,142 +6325,69 @@
                 objOf: (c) => ({ server_id: parseInt(inbound.server_id), inbound_id: parseInt(inbound.id), email: c.email, client_uuid: c.id || '' }),
                 enableOf: (c) => !!c.enable,
             });
+            parts.push(_searchInboundCardShell(inbound, inboundKey));
         });
 
-        const html = inboundsToShow.map(inbound => `
-            <div class="inbound-card ${!inbound.enable ? 'disabled' : ''}">
-                <div class="inbound-header">
-                    <div class="inbound-title">
-                        <span class="protocol-badge ${inbound.protocol.toLowerCase()}">${inbound.protocol}</span>
-                        <h3>${inbound.remark}</h3>
-                        <span class="port-badge">:${inbound.port}</span>
-                        <span class="server-badge">${inbound.server_name}</span>
-                    </div>
-                    <div class="inbound-status">
-                        ${inbound.enable 
-                            ? `<span class="status-pill active">Active</span>` 
-                            : `<span class="status-pill inactive">Inactive</span>`}
-                        ${inbound.clients.length > 0
-                            ? `<button class="btn btn-secondary" style="padding: 6px 10px;" onclick="event.stopPropagation(); toggleSelectAllClients('${inbound.server_id}:${inbound.id}', true)">Select All</button>`
-                            : ''}
-                    </div>
-                </div>
-                ${inbound.clients.length > 0 ? `
-                <div class="clients-section">
-                    <div class="clients-list">
-                        <div class="clients-table-wrapper">
-                            <table class="clients-table">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 34px;">
-                                            <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
-                                                <input type="checkbox" class="select-all-clients" onchange="toggleSelectAllClients('${inbound.server_id}:${inbound.id}', this.checked)">
-                                                <span class="checkmark"></span>
-                                            </label>
-                                        </th>
-                                        <th>Email</th>
-                                        <th>Owner</th>
-                                        <th>Status</th>
-                                        <th>Expiry</th>
-                                        <th>Traffic</th>
-                                        <th>Volume</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${inbound.clients.map(client => `
-                                    <tr class="${!client.enable ? 'disabled-row' : ''}">
-                                        <td class="select-cell">
-                                            <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
-                                                <input type="checkbox" class="client-bulk-checkbox" data-inbound-key="${inbound.server_id}:${inbound.id}" data-server-id="${inbound.server_id}" data-inbound-id="${inbound.id}" data-email="${client.email}" data-client-uuid="${client.id || ''}" data-enabled="${client.enable ? '1' : '0'}" onchange="onBulkClientCheckboxChanged(this)">
-                                                <span class="checkmark"></span>
-                                            </label>
-                                        </td>
-                                        <td class="email-cell"><span class="email-with-online"><span class="email-name-row">${client.is_online ? '<span class="online-pulse" title="Online"></span>' : ''}<span class="email-text">${client.email}</span></span>${client.comment ? `<span class="client-comment">${escHtml(client.comment)}</span>` : ''}</span></td>
-                                        <td class="owner-cell" data-label="Owner">${renderOwnerCell(client)}</td>
-                                        <td data-label="Status">${renderClientServiceState(client)}</td>
-                                        <td data-label="Expiry">
-                                            <span class="expiry-badge ${getExpiryClass(client.expiryType)}">
-                                                <span class="expiry-time">${client.expiryTime}</span>
-                                                ${client.expiryTimestamp ? `<span class="expiry-time">${formatTehranTime(client.expiryTimestamp)}</span>` : ''}
-                                            </span>
-                                        </td>
-                                        <td class="traffic-cell" data-label="Traffic">
-                                            <div class="traffic-combined-cell">
-                                                <span class="up">↑ ${client.up_formatted}</span>
-                                                <span class="down">↓ ${client.down_formatted}</span>
-                                            </div>
-                                        </td>
-                                        <td class="volume-cell" data-label="Volume">
-                                            <div class="volume-info">
-                                                <span class="remaining ${client.volume_status || ''}">${client.remaining_formatted}</span>
-                                                <span class="total ${client.totalGB_formatted === 'Unlimited' ? 'expiry-start-after' : ''}">/ ${client.totalGB_formatted}</span>
-                                            </div>
-                                        </td>
-                                        <td class="action-cell">
-                                            <div class="action-buttons">
-                                                <button class="action-btn" onclick="showQrCode('${encodeURIComponent(client.link || '')}', '${client.email}', '${client.sub_url || ''}', '${client.json_url || ''}', '${client.dash_sub_url || ''}', ${inbound.server_id}, '${client.subId || client.id || ''}')" title="QR Code">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        <rect x="3" y="3" width="7" height="7"></rect>
-                                                        <rect x="14" y="3" width="7" height="7"></rect>
-                                                        <rect x="14" y="14" width="7" height="7"></rect>
-                                                        <rect x="3" y="14" width="7" height="7"></rect>
-                                                    </svg>
-                                                </button>
-                                                <button class="action-btn renew" onclick="openRenewModal(${inbound.server_id}, '${inbound.id}', '${client.email}', '${client.volume_status || ''}', '${client.remaining_formatted || ''}', '${client.totalGB_formatted || ''}', '${client.expiryType || ''}', '${client.expiryTime || ''}', ${client.expiryTimestamp || 0})" title="Renew">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        <circle cx="12" cy="12" r="10"></circle>
-                                                        <polyline points="12 6 12 12 16 14"></polyline>
-                                                    </svg>
-                                                </button>
-                                                ${renderAccountMessageButton(client)}
-                                                <button class="action-btn ${client.enable ? 'danger' : 'success'}" onclick="toggleClient(${inbound.server_id}, '${inbound.id}', '${client.email}', ${!client.enable})" title="${client.enable ? 'Disable' : 'Enable'}">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        ${client.enable 
-                                                            ? '<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>'
-                                                            : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'}
-                                                    </svg>
-                                                </button>
-                                                <button class="action-btn warning" onclick="openResetModal(${inbound.server_id}, '${inbound.id}', '${client.email}', ${client.totalGB || 0})" title="Reset Traffic">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        <polyline points="1 4 1 10 7 10"></polyline>
-                                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-                                                    </svg>
-                                                </button>
-                                                <button class="action-btn" onclick="openEditClientModal(${inbound.server_id}, '${inbound.id}', '${client.email}', ${client.totalGB || 0}, ${client.expiryTimestamp || 0})" title="Edit Client">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                                                    </svg>
-                                                </button>
-                                                ${IS_SUPERADMIN ? `<button class="action-btn" onclick="openAssignModal(${inbound.server_id}, '${client.email}', '${inbound.id}', '${client.id || ''}')" title="Assign Owner">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="10" cy="7" r="4"></circle><path d="M22 11h-2.5a2.5 2.5 0 0 0 0 5H22"></path>
-                                                    </svg>
-                                                </button>` : ''}
-                                                <button class="action-btn danger" onclick="openDeleteClientModal(${inbound.server_id}, '${inbound.id}', '${client.email}', '${client.id}', ${client.enable}, '${client.expiryTime}', ${client.expiryTimestamp || 0}, '${client.up}', '${client.down}', '${client.totalGB_formatted}', '${client.remaining_formatted}')" title="Delete Client">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                                        <polyline points="3 6 5 6 21 6"></polyline>
-                                                        <path d="M19 6v14a2 2 0 0 1-2-2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                                    </svg>
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-                ` : ''}
-            </div>
-        `).join('');
-        
-        container.innerHTML = html;
-
+        container.innerHTML = parts.join('');
+        mountExpandedCards();   // build rows for the force-expanded search cards
         applyBulkSelectionToDOM();
         updateBulkUI();
+    }
+
+    // Legacy (non-v3) search-result card shell: header + an expanded, empty-<tbody>
+    // clients table. Rows are mounted lazily from _cardRowData via _legacyClientRowHtml,
+    // matching the main list exactly.
+    function _searchInboundCardShell(inbound, inboundKey) {
+        const count = inbound.clients.length;
+        const SVG_HIDE = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
+        return `
+        <div class="inbound-card ${!inbound.enable ? 'disabled' : ''}">
+            <div class="inbound-header">
+                <div class="inbound-title">
+                    <span class="protocol-badge ${String(inbound.protocol || '').toLowerCase()}">${inbound.protocol}</span>
+                    <h3>${inbound.remark}</h3>
+                    <span class="port-badge">:${inbound.port}</span>
+                    <span class="server-badge">${inbound.server_name}</span>
+                </div>
+                <div class="inbound-status">
+                    ${inbound.enable
+                        ? `<span class="status-pill active">Active</span>`
+                        : `<span class="status-pill inactive">Inactive</span>`}
+                    ${count > 0
+                        ? `<button class="btn btn-secondary" style="padding: 6px 10px;" onclick="event.stopPropagation(); toggleSelectAllClients('${inboundKey}', true)">Select All</button>`
+                        : ''}
+                </div>
+            </div>
+            ${count > 0 ? `
+            <div class="clients-section">
+                <button class="toggle-clients" data-inbound-key="${inboundKey}" data-client-count="${count}" onclick="toggleClients(this, event)">${SVG_HIDE} Hide Clients (${count})</button>
+                <div class="clients-list">
+                    <div class="clients-table-wrapper">
+                        <table class="clients-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 34px;">
+                                        <label class="checkbox-label" style="padding-left: 0; width: 20px; height: 20px; margin: 0 auto;">
+                                            <input type="checkbox" class="select-all-clients" onchange="toggleSelectAllClients('${inboundKey}', this.checked)">
+                                            <span class="checkmark"></span>
+                                        </label>
+                                    </th>
+                                    <th>Email</th>
+                                    <th>Owner</th>
+                                    <th>Status</th>
+                                    <th>Expiry</th>
+                                    <th>Traffic</th>
+                                    <th>Volume</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+        </div>`;
     }
 
     function getSelectedClientsForBulk() {
