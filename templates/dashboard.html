@@ -5945,6 +5945,9 @@
                         style="font-size:11px;">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"/></svg>
                     </button>
+                    ${USER_ROLE !== 'reseller' ? `<button class="action-btn" onclick="downloadServerBackup(${server.id}, this)" title="Backup Database" id="srv-backup-${server.id}">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </button>` : ''}
                     <button class="action-btn" onclick="editServer(${server.id})" title="Edit">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -5988,6 +5991,38 @@
             await loadServers();
         } catch (e) {
             showToast('Could not fetch panel info', 'error');
+        }
+    }
+
+    async function downloadServerBackup(serverId, btn) {
+        const orig = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.12-9.36L1 10"/></svg>`;
+        try {
+            const res = await fetch(`/api/servers/${serverId}/xui-backup`, { cache: 'no-store' });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                showToast(data.error || `Backup failed (${res.status})`, 'error');
+                return;
+            }
+            const cd = res.headers.get('Content-Disposition') || '';
+            const match = cd.match(/filename[^;=\n]*=["']?([^"';\n]+)/i);
+            const filename = match ? match[1].trim() : `xui_backup_${serverId}.db`;
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            showToast('Backup downloaded');
+        } catch (e) {
+            showToast('Network error: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = orig;
         }
     }
 
