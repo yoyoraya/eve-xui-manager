@@ -848,7 +848,7 @@
                 <div class="modal-user-row">
                     <div>
                         <label>Username / Email</label>
-                        <input type="text" id="add-client-email" class="form-input" placeholder="user1">
+                        <input type="text" id="add-client-email" class="form-input" placeholder="user1" oninput="sanitizeEmailInput(this)">
                     </div>
                     <div>
                         <label>Last User</label>
@@ -2009,7 +2009,21 @@
 
     function toEnglishDigits(str) {
         if (!str) return str;
-        return str.replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
+        // Persian (۰-۹) and Arabic-Indic (٠-٩) → ASCII
+        return str.replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+                  .replace(/[٠-٩]/g, d => d.charCodeAt(0) - 0x0660);
+    }
+
+    function sanitizeEmailInput(el) {
+        const sel = el.selectionStart;
+        const before = el.value;
+        const after = toEnglishDigits(before).replace(/\s/g, '');
+        if (after !== before) {
+            el.value = after;
+            // restore caret, adjusted for removed chars
+            const removed = before.length - after.length;
+            el.setSelectionRange(Math.max(0, sel - removed), Math.max(0, sel - removed));
+        }
     }
 
     function initShamsiPicker() {
