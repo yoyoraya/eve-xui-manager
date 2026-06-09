@@ -4514,7 +4514,6 @@
             if (!Array.isArray(pkgs) || pkgs.length === 0) {
                 container.innerHTML = '<div style="grid-column: span 2; text-align: center; padding: 10px;">No packages defined</div>';
                 selectedPackageId = null;
-                updateAddPriceDisplay();
                 return;
             }
 
@@ -4532,12 +4531,11 @@
                     active.style.borderColor = 'var(--primary)';
                     active.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
                 }
+                updateAddPriceDisplay();
             }
-            updateAddPriceDisplay();
-        } catch (e) { 
+        } catch (e) {
             container.innerHTML = '<div style="grid-column: span 2; color: #ef4444; text-align: center;">Error loading packages</div>';
             selectedPackageId = null;
-            updateAddPriceDisplay();
         }
     }
 
@@ -4590,7 +4588,6 @@
             if (!Array.isArray(pkgs) || pkgs.length === 0) {
                 container.innerHTML = '<div style="grid-column: span 2; text-align: center; padding: 15px; color: var(--text-secondary);">No packages defined.</div>';
                 selectedRenewPackageId = null;
-                refreshRenewPriceDisplay();
                 return;
             }
 
@@ -4608,12 +4605,11 @@
                     active.style.borderColor = 'var(--primary)';
                     active.style.backgroundColor = 'rgba(99, 102, 241, 0.1)';
                 }
+                refreshRenewPriceDisplay();
             }
-            refreshRenewPriceDisplay();
         } catch (e) {
             container.innerHTML = '<div style="grid-column: span 2; color: #ef4444; text-align: center;">Error loading packages</div>';
             selectedRenewPackageId = null;
-            refreshRenewPriceDisplay();
         }
     }
 
