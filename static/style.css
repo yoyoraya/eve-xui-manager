@@ -3470,6 +3470,7 @@ html[data-theme="light"] .server-icon {
 
 .toast.success { background: var(--success); color: white; }
 .toast.error { background: var(--danger); color: white; }
+.toast.warning { background: #f59e0b; color: white; }
 .toast.hidden { display: none; }
 
 @keyframes slideUp {

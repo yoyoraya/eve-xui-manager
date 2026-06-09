@@ -4824,6 +4824,8 @@
             showToast('Please select a server first', 'warning');
             return;
         }
+        document.getElementById('server-pick-dropdown')?.classList.add('hidden');
+        document.getElementById('add-inbound-multi-dropdown')?.classList.add('hidden');
         document.getElementById('inbound-pick-dropdown').classList.toggle('hidden');
     }
     function selectInboundPick(serverId, inboundId) {
@@ -4879,6 +4881,8 @@
     }
     function toggleServerPickDropdown(e) {
         if (e) e.stopPropagation();
+        document.getElementById('inbound-pick-dropdown')?.classList.add('hidden');
+        document.getElementById('add-inbound-multi-dropdown')?.classList.add('hidden');
         document.getElementById('server-pick-dropdown').classList.toggle('hidden');
     }
     function selectServerPick(id) {
@@ -4953,6 +4957,8 @@
             showToast('Please select a server first', 'warning');
             return;
         }
+        document.getElementById('server-pick-dropdown')?.classList.add('hidden');
+        document.getElementById('inbound-pick-dropdown')?.classList.add('hidden');
         document.getElementById('add-inbound-multi-dropdown').classList.toggle('hidden');
     }
     function selectAllAddInbounds(e) {
