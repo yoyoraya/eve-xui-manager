@@ -6379,6 +6379,8 @@ def _v3_client_payload(client: dict) -> dict:
     for k in ('tgId', 'limitIp', 'reset'):
         if c.get(k) in ('', None):
             c[k] = 0
+    if isinstance(c.get('email'), str):
+        c['email'] = _v3_sanitize_email(c['email'])
     return c
 
 
@@ -6387,15 +6389,143 @@ def _v3_sanitize_email(email: str) -> str:
     return (email or '').replace(' ', '')
 
 
+def _v3_get(server, session_obj, path):
+    """GET a v3 /panel/api/* path. Returns (ok: bool, json|None, error|None)."""
+    base, webpath = extract_base_and_webpath(server.host)
+    url = f"{base}{webpath}{path}"
+    try:
+        resp = session_obj.get(url, verify=False, timeout=(3, 20))
+    except Exception as e:
+        return False, None, str(e)
+    j, err = _safe_response_json(resp)
+    if err:
+        return False, None, err
+    if resp.status_code == 200 and isinstance(j, dict) and j.get('success'):
+        return True, j, None
+    msg = (j.get('msg') or j.get('message')) if isinstance(j, dict) else None
+    return False, j, (msg or f"HTTP {resp.status_code}")
+
+
+def _v3_get_client(server, session_obj, email):
+    """Fetch one client via GET /clients/get/{email}. Returns the client dict or None."""
+    ok, j, _err = _v3_get(server, session_obj,
+                          f"/panel/api/clients/get/{quote(str(email or ''), safe='')}")
+    if not ok or not isinstance(j, dict):
+        return None
+    obj = j.get('obj')
+    if not isinstance(obj, dict):
+        return None
+    inner = obj.get('client')
+    if isinstance(inner, dict) and inner.get('email'):
+        return inner
+    return obj if obj.get('email') else None
+
+
+def _v3_rename_email_via_inbounds(server, session_obj, old_email, new_email):
+    """Fallback rename: rewrite the client's email inside every inbound that
+    contains it and push the full inbounds back via the universal
+    /inbounds/update/:id endpoint (works even when the per-client API refuses
+    the spaced email entirely)."""
+    inbounds, fetch_err, _dt = fetch_inbounds(session_obj, server.host, server.panel_type)
+    if fetch_err or not inbounds:
+        return False
+    old_found = False
+    clean_taken = False
+    for ib in inbounds:
+        for c in _json_field(ib.get('settings'), {}).get('clients', []) or []:
+            if c.get('email') == old_email:
+                old_found = True
+            elif c.get('email') == new_email:
+                clean_taken = True
+    if not old_found:
+        # already renamed earlier (clean_taken) or genuinely missing
+        return clean_taken
+    if clean_taken:
+        return False  # a different client already owns the space-free email
+    renamed_any = False
+    for ib in inbounds:
+        settings = _json_field(ib.get('settings'), {})
+        clients = settings.get('clients', []) or []
+        if not any(c.get('email') == old_email for c in clients):
+            continue
+        for c in clients:
+            if c.get('email') == old_email:
+                c['email'] = new_email
+        settings['clients'] = clients
+        ok_push, _perr = _push_full_inbound(server, session_obj, ib, settings)
+        renamed_any = renamed_any or ok_push
+    return renamed_any
+
+
+def _rename_client_email_local(server, old_email, new_email):
+    """After a panel-side rename, move ownership rows and the live cache to the
+    new email so reseller access checks and the dashboard keep matching."""
+    try:
+        rows = ClientOwnership.query.filter(
+            ClientOwnership.server_id == server.id,
+            func.lower(ClientOwnership.client_email) == (old_email or '').strip().lower(),
+        ).all()
+        for own in rows:
+            own.client_email = new_email
+        if rows:
+            db.session.commit()
+    except Exception as exc:
+        app.logger.debug(f"ownership rename '{old_email}' -> '{new_email}' failed: {exc}")
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+    try:
+        patch_cached_client(server.id, old_email, new_email=new_email)
+    except Exception:
+        pass
+
+
+def _v3_fix_spaced_email(server, session_obj, email, client_obj=None):
+    """v3 panels reject per-client API calls when the client's email contains
+    spaces ("update failed"), so the client must FIRST be renamed on the panel
+    to the space-free email, and only then can it be updated/deleted/reset.
+    Returns the email all subsequent v3 calls should use."""
+    original = str(email or '')
+    clean = _v3_sanitize_email(original)
+    if clean == original or not clean:
+        return original
+
+    # Rename via the first-class client update, looking the client up under its
+    # current (spaced) email; the body carries the space-free email.
+    payload = None
+    if isinstance(client_obj, dict) and client_obj.get('email'):
+        payload = dict(client_obj)
+    else:
+        payload = _v3_get_client(server, session_obj, original)
+    renamed = False
+    if isinstance(payload, dict):
+        payload['email'] = clean
+        renamed, _j, _err = _v3_post(
+            server, session_obj,
+            f"/panel/api/clients/update/{quote(original, safe='')}",
+            _v3_client_payload(payload))
+
+    if not renamed:
+        renamed = _v3_rename_email_via_inbounds(server, session_obj, original, clean)
+
+    if not renamed:
+        app.logger.warning(f"v3: could not strip spaces from client email '{original}'")
+        return original
+    _rename_client_email_local(server, original, clean)
+    app.logger.info(f"v3: client email '{original}' renamed to '{clean}' (v3 rejects spaces)")
+    return clean
+
+
 def v3_update_client(server, session_obj, email, client: dict):
-    email = _v3_sanitize_email(email)
+    email = _v3_fix_spaced_email(server, session_obj, email, client_obj=client)
     return _v3_post(server, session_obj,
                     f"/panel/api/clients/update/{quote(email, safe='')}",
                     _v3_client_payload(client))
 
 
 def v3_delete_client(server, session_obj, email, keep_traffic=False):
-    email = _v3_sanitize_email(email)
+    email = _v3_fix_spaced_email(server, session_obj, email)
     path = f"/panel/api/clients/del/{quote(email, safe='')}"
     if keep_traffic:
         path += "?keepTraffic=1"
@@ -6403,7 +6533,7 @@ def v3_delete_client(server, session_obj, email, keep_traffic=False):
 
 
 def v3_reset_client(server, session_obj, email):
-    email = _v3_sanitize_email(email)
+    email = _v3_fix_spaced_email(server, session_obj, email)
     return _v3_post(server, session_obj,
                     f"/panel/api/clients/resetTraffic/{quote(email, safe='')}", {})
 
