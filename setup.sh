@@ -1124,7 +1124,7 @@ server {
         text/xml;
     # ---------------------------------
 
-    client_max_body_size 512m;
+    client_max_body_size 2048m;
 
     # SSE endpoints — must NOT be buffered by nginx
     location ~* /stream\$ {
@@ -1243,7 +1243,7 @@ server {
         text/xml;
     # ---------------------------------
 
-    client_max_body_size 512m;
+    client_max_body_size 2048m;
 
     # SSE endpoints — must NOT be buffered by nginx
     location ~* /stream\$ {
@@ -1315,7 +1315,7 @@ server {
         text/xml;
     # ---------------------------------
 
-    client_max_body_size 512m;
+    client_max_body_size 2048m;
 
     # SSE endpoints — must NOT be buffered by nginx
     location ~* /stream\$ {
@@ -1860,15 +1860,26 @@ _offer_rollback() {
 }
 
 patch_nginx_backup_location() {
-    # Idempotently add the /protected-backups/ internal location to the live
-    # nginx config so large backup downloads bypass the gunicorn worker.
-    # Safe to call multiple times — skips if already present.
+    # Idempotently fix the live nginx config for large backups:
+    #   1. Raise client_max_body_size so 600 MB+ migration bundles can be uploaded.
+    #   2. Add the /protected-backups/ internal location so large downloads
+    #      bypass the gunicorn worker (X-Accel-Redirect).
+    # Safe to call multiple times.
     local NGINX_CONF="/etc/nginx/sites-available/${SERVICE_NAME}"
     if [ ! -f "$NGINX_CONF" ]; then
         return 0
     fi
+
+    # 1. Raise upload size limit (old installs had 512m, too small for migration bundles)
+    if grep -q 'client_max_body_size 512m;' "$NGINX_CONF" 2>/dev/null; then
+        print_warning "Raising nginx client_max_body_size 512m -> 2048m for large uploads..."
+        sed -i 's/client_max_body_size 512m;/client_max_body_size 2048m;/g' "$NGINX_CONF"
+    fi
+
+    # 2. Add the internal backup location if missing
     if grep -q 'protected-backups' "$NGINX_CONF" 2>/dev/null; then
         print_success "Nginx backup location already configured"
+        if nginx -t 2>/dev/null; then systemctl reload nginx; fi
         return 0
     fi
     print_warning "Patching nginx config: adding /protected-backups/ internal location..."

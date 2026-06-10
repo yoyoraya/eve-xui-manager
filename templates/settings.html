@@ -307,6 +307,31 @@
                         <strong>Create Backup</strong> = database only. <strong>Full Migration Backup</strong> = database + all uploaded files (app icons, receipts, tutorial files) as a <code>.zip</code> — use this to move everything to another server.
                     </small>
                 </div>
+
+                <!-- Upload progress panel: clearly shows upload state for large files -->
+                <div id="backup-upload-progress" class="upload-progress" hidden>
+                    <div class="upload-progress-head">
+                        <div class="upload-progress-icon" id="upp-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        </div>
+                        <div class="upload-progress-info">
+                            <div class="upload-progress-name" id="upp-name">file.zip</div>
+                            <div class="upload-progress-status" id="upp-status">Preparing…</div>
+                        </div>
+                        <div class="upload-progress-percent" id="upp-percent">0%</div>
+                        <button type="button" class="upload-progress-close" id="upp-close" onclick="dismissUploadProgress()" title="Close" hidden>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </button>
+                    </div>
+                    <div class="upload-progress-track">
+                        <div class="upload-progress-bar" id="upp-bar"></div>
+                    </div>
+                    <div class="upload-progress-meta">
+                        <span id="upp-bytes">0 B / 0 B</span>
+                        <span id="upp-speed"></span>
+                    </div>
+                </div>
+
                 <div class="table-responsive">
                     <table class="table">
                         <thead>
@@ -1522,6 +1547,110 @@
     .file-upload-wrapper.uploading {
         pointer-events: none;
         opacity: 0.8;
+    }
+
+    /* ── Upload progress panel ───────────────────────── */
+    .upload-progress {
+        margin-top: 16px;
+        padding: 16px;
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        background-color: var(--bg-dark);
+    }
+    .upload-progress.is-success { border-color: rgba(34, 197, 94, 0.5); }
+    .upload-progress.is-error   { border-color: rgba(239, 68, 68, 0.5); }
+    .upload-progress-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .upload-progress-icon {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        border-radius: 9px;
+        background-color: rgba(99, 102, 241, 0.15);
+        color: var(--primary);
+    }
+    .upload-progress.is-success .upload-progress-icon { background-color: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    .upload-progress.is-error   .upload-progress-icon { background-color: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .upload-progress-info { flex: 1; min-width: 0; }
+    .upload-progress-name {
+        font-weight: 600;
+        font-size: 0.92rem;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .upload-progress-status {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        margin-top: 2px;
+    }
+    .upload-progress.is-success .upload-progress-status { color: #22c55e; }
+    .upload-progress.is-error   .upload-progress-status { color: #ef4444; }
+    .upload-progress-percent {
+        flex-shrink: 0;
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        font-size: 1.1rem;
+        color: var(--text-primary);
+    }
+    .upload-progress-close {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border: none;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: background-color 0.2s, color 0.2s;
+    }
+    .upload-progress-close:hover { background-color: var(--bg-card-hover); color: var(--text-primary); }
+    .upload-progress-track {
+        margin-top: 12px;
+        height: 8px;
+        border-radius: 99px;
+        background-color: var(--bg-card-hover);
+        overflow: hidden;
+    }
+    .upload-progress-bar {
+        height: 100%;
+        width: 0%;
+        border-radius: 99px;
+        background: linear-gradient(90deg, var(--primary), #818cf8);
+        transition: width 0.2s ease;
+    }
+    .upload-progress.is-success .upload-progress-bar { background: #22c55e; }
+    .upload-progress.is-error   .upload-progress-bar { background: #ef4444; }
+    /* Indeterminate animation while server processes the uploaded file */
+    .upload-progress.is-processing .upload-progress-bar {
+        width: 40% !important;
+        animation: upp-indeterminate 1.1s ease-in-out infinite;
+    }
+    @keyframes upp-indeterminate {
+        0%   { margin-left: -40%; }
+        100% { margin-left: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .upload-progress.is-processing .upload-progress-bar { animation: none; width: 100% !important; opacity: 0.6; }
+        .upload-progress-bar { transition: none; }
+    }
+    .upload-progress-meta {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
     }
     .file-upload-btn {
         display: flex;
@@ -3378,40 +3507,147 @@
         }
     }
 
-    async function handleUpload(input) {
+    // ── Upload progress UI helpers ─────────────────────────────
+    function uppEls() {
+        return {
+            panel:   document.getElementById('backup-upload-progress'),
+            icon:    document.getElementById('upp-icon'),
+            name:    document.getElementById('upp-name'),
+            status:  document.getElementById('upp-status'),
+            percent: document.getElementById('upp-percent'),
+            bar:     document.getElementById('upp-bar'),
+            bytes:   document.getElementById('upp-bytes'),
+            speed:   document.getElementById('upp-speed'),
+            close:   document.getElementById('upp-close'),
+        };
+    }
+
+    function uppReset(fileName, totalBytes) {
+        const e = uppEls();
+        e.panel.classList.remove('is-success', 'is-error', 'is-processing');
+        e.panel.hidden = false;
+        e.close.hidden = true;
+        e.name.textContent = fileName;
+        e.status.textContent = 'Uploading…';
+        e.percent.textContent = '0%';
+        e.bar.style.width = '0%';
+        e.bytes.textContent = '0 B / ' + formatBytes(totalBytes);
+        e.speed.textContent = '';
+    }
+
+    function uppUpdate(loaded, total, speedBps) {
+        const e = uppEls();
+        const pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+        e.percent.textContent = pct + '%';
+        e.bar.style.width = pct + '%';
+        e.bytes.textContent = formatBytes(loaded) + ' / ' + formatBytes(total);
+        if (speedBps && speedBps > 0) {
+            const remain = total > loaded ? (total - loaded) / speedBps : 0;
+            e.speed.textContent = formatBytes(speedBps) + '/s · ' + uppEta(remain) + ' left';
+        }
+    }
+
+    function uppEta(seconds) {
+        if (!isFinite(seconds) || seconds <= 0) return '0s';
+        const m = Math.floor(seconds / 60), s = Math.round(seconds % 60);
+        return m > 0 ? (m + 'm ' + s + 's') : (s + 's');
+    }
+
+    function uppProcessing() {
+        const e = uppEls();
+        e.panel.classList.add('is-processing');
+        e.status.textContent = 'Processing on server…';
+        e.percent.textContent = '100%';
+        e.bar.style.width = '100%';
+        e.speed.textContent = '';
+    }
+
+    function uppFinish(ok, message) {
+        const e = uppEls();
+        e.panel.classList.remove('is-processing');
+        e.panel.classList.add(ok ? 'is-success' : 'is-error');
+        e.bar.style.width = '100%';
+        e.percent.textContent = ok ? '✓' : '✕';
+        e.status.textContent = message;
+        e.close.hidden = false;
+        const ic = ok
+            ? '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>'
+            : '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
+        e.icon.innerHTML = ic;
+    }
+
+    function dismissUploadProgress() {
+        const e = uppEls();
+        e.panel.hidden = true;
+    }
+
+    function handleUpload(input) {
         if (!input.files || !input.files[0]) return;
-        
+
         const file = input.files[0];
         document.getElementById('backup-file-name').textContent = file.name;
-        
-        // Show loading state on button
+
         const wrapper = document.getElementById('backup-upload-container');
         const btn = document.getElementById('backup-upload-btn');
         wrapper.classList.add('uploading');
         btn.classList.add('loading');
 
+        uppReset(file.name, file.size);
+
         const formData = new FormData();
         formData.append('file', file);
-        
-        try {
-            const res = await fetch('/api/backups/upload', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await res.json();
-            
-            if (data.success) {
+
+        // XMLHttpRequest is required for upload progress (fetch can't report it).
+        const xhr = new XMLHttpRequest();
+        const startTime = Date.now();
+
+        xhr.upload.onprogress = (ev) => {
+            if (!ev.lengthComputable) return;
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = elapsed > 0 ? ev.loaded / elapsed : 0;
+            uppUpdate(ev.loaded, ev.total, speed);
+        };
+
+        // Bytes are all sent; server now writes/validates the file.
+        xhr.upload.onload = () => uppProcessing();
+
+        const cleanup = () => {
+            wrapper.classList.remove('uploading');
+            btn.classList.remove('loading');
+            // Reset the input so the same file can be re-selected.
+            input.value = '';
+            document.getElementById('backup-file-name').textContent = 'No file chosen';
+        };
+
+        xhr.onload = () => {
+            cleanup();
+            let data = {};
+            try { data = JSON.parse(xhr.responseText); } catch (_) {}
+            if (xhr.status >= 200 && xhr.status < 300 && data.success) {
+                uppFinish(true, 'Upload complete — ' + file.name);
                 showToast('Backup uploaded successfully');
                 loadBackups();
             } else {
-                showToast(data.error || 'Error uploading backup', 'error');
+                const msg = data.error || ('Upload failed (HTTP ' + xhr.status + ')');
+                uppFinish(false, msg);
+                showToast(msg, 'error', 8000);
             }
-        } catch (e) {
-            showToast('Network error', 'error');
-        } finally {
-            wrapper.classList.remove('uploading');
-            btn.classList.remove('loading');
-        }
+        };
+
+        xhr.onerror = () => {
+            cleanup();
+            uppFinish(false, 'Network error — upload interrupted');
+            showToast('Network error during upload', 'error', 8000);
+        };
+
+        xhr.ontimeout = () => {
+            cleanup();
+            uppFinish(false, 'Upload timed out');
+            showToast('Upload timed out', 'error', 8000);
+        };
+
+        xhr.open('POST', '/api/backups/upload');
+        xhr.send(formData);
     }
 
     async function loadBackups() {

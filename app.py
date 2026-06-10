@@ -340,7 +340,7 @@ TELEGRAM_BACKUP_JOBS_LOCK = threading.Lock()
 TELEGRAM_BACKUP_MAX_JOBS = 20
 
 MAX_FILE_SIZE = 10 * 1024 * 1024        # 10 MB  — general file uploads
-BACKUP_UPLOAD_MAX_SIZE = 512 * 1024 * 1024  # 512 MB — DB backup uploads
+BACKUP_UPLOAD_MAX_SIZE = 2048 * 1024 * 1024  # 2 GB — full migration bundles (DB + all uploaded files) can exceed 512 MB
 
 # Allowed HTML tags and attributes for FAQ content (XSS Prevention)
 ALLOWED_FAQ_TAGS = [
@@ -2283,7 +2283,7 @@ else:
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024  # 512 MB — covers large installers/videos
+app.config['MAX_CONTENT_LENGTH'] = 2048 * 1024 * 1024  # 2 GB — covers large migration bundles / installers / videos
 # Re-read templates from disk on each render in dev so UI edits show without a
 # full restart. Harmless in prod; production still benefits from a restart.
 if _is_dev_mode():
