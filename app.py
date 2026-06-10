@@ -221,8 +221,8 @@ _OWNERSHIP_CACHE: dict = {
 _OWNERSHIP_CACHE_LOCK = threading.Lock()
 OWNERSHIP_CACHE_TTL = 30  # seconds — ownership refreshed at most every 30 s
 
-def _build_ownership_maps() -> tuple[dict, dict]:
-    """Query DB once and return (email_map, uuid_map).  Called with lock held."""
+def _build_ownership_maps() -> tuple[dict, dict, bool]:
+    """Query DB once and return (email_map, uuid_map, success)."""
     email_map: dict = {}
     uuid_map:  dict = {}
     try:
@@ -254,9 +254,10 @@ def _build_ownership_maps() -> tuple[dict, dict]:
                 ex = uuid_map.get(key)
                 if not ex or created >= ex.get('created_at', datetime.min):
                     uuid_map[key] = info
+        return email_map, uuid_map, True
     except Exception:
-        pass
-    return email_map, uuid_map
+        app.logger.exception("_build_ownership_maps failed — ownership cache not updated")
+        return email_map, uuid_map, False
 
 def _get_ownership_maps(force: bool = False) -> tuple[dict, dict]:
     """Return cached (email_map, uuid_map); rebuild from DB if stale."""
@@ -265,11 +266,13 @@ def _get_ownership_maps(force: bool = False) -> tuple[dict, dict]:
         if not force and now - _OWNERSHIP_CACHE['updated_at'] < OWNERSHIP_CACHE_TTL:
             return _OWNERSHIP_CACHE['email_map'], _OWNERSHIP_CACHE['uuid_map']
     # Build outside lock to avoid blocking other threads
-    em, um = _build_ownership_maps()
+    em, um, ok = _build_ownership_maps()
     with _OWNERSHIP_CACHE_LOCK:
         _OWNERSHIP_CACHE['email_map'] = em
         _OWNERSHIP_CACHE['uuid_map']  = um
-        _OWNERSHIP_CACHE['updated_at'] = time.monotonic()
+        if ok:
+            # Only cache on success — if DB failed, next request retries immediately
+            _OWNERSHIP_CACHE['updated_at'] = time.monotonic()
     return em, um
 
 def invalidate_ownership_cache() -> None:
@@ -15196,6 +15199,65 @@ def sub_usage_history(server_id, sub_id):
     })
 
 
+def _fa_digits(value) -> str:
+    """Convert ASCII digits in `value` to Persian digits."""
+    return str(value).translate(str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹'))
+
+
+def _build_status_config_line(state: dict, expiry_info: dict, remaining_bytes, total_limit: int, lang: str = 'fa') -> str | None:
+    """Return a single non-routable vmess:// 'status' config.
+
+    Its display name (the vmess `ps` field) summarizes the customer's service
+    state, remaining days and remaining volume. It is appended as the LAST entry
+    of a subscription so customers can read their status from inside their VPN
+    app (each config shows by name in the server list) without ever opening the
+    subscription page. It points at 127.0.0.1:1 and never carries traffic.
+    Recomputed on every request, so it always reflects the latest status.
+    """
+    try:
+        fa = _normalize_ui_lang(lang, default='en') == 'fa'
+        key = (state or {}).get('key') or 'active'
+        emoji = (state or {}).get('emoji') or ''
+        label = (state or {}).get('label') or ('فعال' if fa else 'Active')
+
+        parts = [f"{emoji} {label}".strip()]
+
+        if key in ('expired', 'volume_ended', 'inactive'):
+            # Terminal states: the label already says it; add a renew nudge.
+            parts.append('لطفا تمدید کنید' if fa else 'Please renew')
+        else:
+            etype = str((expiry_info or {}).get('type') or '').lower()
+            days = (expiry_info or {}).get('days')
+            if etype in ('unlimited', 'start_after_use'):
+                parts.append('زمان نامحدود' if fa else 'Unlimited time')
+            elif isinstance(days, (int, float)) and days > 0:
+                d = int(days)
+                parts.append(f"{_fa_digits(d)} روز مانده" if fa else f"{d} days left")
+
+            if total_limit and total_limit > 0:
+                gb = max(int(remaining_bytes or 0), 0) / (1024 ** 3)
+                gb_str = f"{gb:.1f}".rstrip('0').rstrip('.')
+                parts.append(f"{_fa_digits(gb_str)} گیگ مانده" if fa else f"{gb_str} GB left")
+            else:
+                parts.append('حجم نامحدود' if fa else 'Unlimited data')
+
+        # Make clear this entry is informational only — it must not be connected to.
+        parts.append('🚫 انتخاب نکنید' if fa else '🚫 Do not select')
+
+        name = ' | '.join(p for p in parts if p)
+        vmess_obj = {
+            "v": "2", "ps": name, "add": "127.0.0.1", "port": "1",
+            "id": "00000000-0000-0000-0000-000000000000", "aid": "0",
+            "scy": "auto", "net": "tcp", "type": "none",
+            "host": "", "path": "", "tls": "",
+        }
+        payload = base64.b64encode(json.dumps(vmess_obj, ensure_ascii=False).encode()).decode()
+        return f"vmess://{payload}"
+    except Exception:
+        app.logger.exception("status config build failed")
+        return None
+
+
 @app.route('/s/<int:server_id>/<sub_id>')
 def client_subscription(server_id, sub_id):
     server = db.session.get(Server, server_id)
@@ -15586,6 +15648,16 @@ def client_subscription(server_id, sub_id):
                 if not normalized_payload.strip():
                     raise ValueError("Upstream returned empty subscription content")
 
+                # Append the live status config as the last entry (plain-text payloads only).
+                _status_line = _build_status_config_line(subscription_state, expiry_info, remaining, total_limit, page_lang)
+                if _status_line:
+                    try:
+                        _payload_text = normalized_payload.decode('utf-8', errors='ignore')
+                        if '://' in _payload_text:
+                            normalized_payload = (_payload_text.rstrip('\n') + '\n' + _status_line).encode('utf-8')
+                    except Exception:
+                        pass
+
                 if wants_b64:
                     encoded = base64.b64encode(normalized_payload).decode('utf-8')
                     upstream_headers['Content-Type'] = 'text/plain; charset=utf-8'
@@ -15607,6 +15679,11 @@ def client_subscription(server_id, sub_id):
             configs.append(direct_link)
 
     subscription_entries = [entry for entry in configs if entry]
+    # Append the live status config as the last entry (client-app payload only;
+    # the HTML view uses `configs`, which we keep clean).
+    _status_line = _build_status_config_line(subscription_state, expiry_info, remaining, total_limit, page_lang)
+    if _status_line:
+        subscription_entries.append(_status_line)
     # Do NOT fall back to sub_url — returning a URL as a "config" causes
     # "Subscription does not contain valid configurations" in every V2Ray client.
     subscription_blob = '\n'.join(subscription_entries)
