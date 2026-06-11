@@ -1661,6 +1661,15 @@ remote_db_migration() {
         fi
         print_success "DB dump saved to $DUMP_FILE"
 
+        # The fresh install already created the schema/tables, so a plain restore
+        # would fail with "relation already exists". Wipe the target schema first
+        # so the old server's data lands in a clean database.
+        print_warning "Resetting target schema (public) before restore..."
+        if ! psql "$NEW_DB_URL" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO ${NEW_DB_USER}; GRANT ALL ON SCHEMA public TO public;"; then
+            print_error "Could not reset target schema. Aborting to avoid a half-migrated DB."
+            exit 1
+        fi
+
         print_warning "Restoring DB on new server..."
         if ! gunzip -c "$DUMP_FILE" | psql "$NEW_DB_URL" -v ON_ERROR_STOP=1; then
             print_error "Restore failed. Check DB credentials or dump file."
