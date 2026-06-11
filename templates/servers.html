@@ -102,7 +102,7 @@
     
     async function loadServers() {
         try {
-            const response = await fetch('/api/servers');
+            const response = await fetch('/api/servers', { cache: 'no-store' });
             servers = await response.json();
             renderServers();
         } catch (error) {

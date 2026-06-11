@@ -12219,7 +12219,12 @@ def get_servers():
         })
         payload.append(item)
 
-    return jsonify(payload)
+    # Never cache the server list — edits must show immediately, not a stale
+    # browser/proxy copy.
+    resp = jsonify(payload)
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 @app.route('/api/servers', methods=['POST'])
 @login_required
