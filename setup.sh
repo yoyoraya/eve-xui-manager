@@ -1627,6 +1627,17 @@ remote_db_migration() {
     print_warning "Syncing instance/ folder (read-only from old server)..."
     rsync -az -e "ssh -p ${OLD_SSH_PORT}" "${OLD_SSH}:${OLD_APP_DIR}/instance/" "$APP_DIR/instance/" || true
 
+    # Uploaded files (tutorial files, app icons, receipt images) live under static/,
+    # NOT instance/, so they must be synced separately or they go missing after migration.
+    print_warning "Syncing uploaded files (static/app-files, static/uploads)..."
+    for _sub in static/app-files static/uploads; do
+        rsync -az -e "ssh -p ${OLD_SSH_PORT}" \
+            "${OLD_SSH}:${OLD_APP_DIR}/${_sub}/" "$APP_DIR/${_sub}/" 2>/dev/null \
+            && print_success "Synced ${_sub}" \
+            || print_warning "Skipped ${_sub} (not present on old server)"
+    done
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR/static" 2>/dev/null || true
+
     # Decide migration path based on old DATABASE_URL
     # - If old server used SQLite (or DATABASE_URL missing), we copy instance/servers.db then migrate into new Postgres.
     # - If old server used Postgres, we stream pg_dump over SSH and restore directly.
