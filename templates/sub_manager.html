@@ -2623,14 +2623,18 @@
     async function loadFAQs() {
         try {
             const response = await fetch('/api/faqs', { credentials: 'same-origin' });
+            console.log('[FAQ] fetch status:', response.status, response.ok);
             if (!response.ok) {
                 const txt = await response.text().catch(() => '');
-                throw new Error(`HTTP ${response.status}: ${txt.slice(0,120)}`);
+                throw new Error(`HTTP ${response.status}: ${txt.slice(0,200)}`);
             }
             const data = await response.json();
+            console.log('[FAQ] data received:', data);
             faqs = Array.isArray(data) ? data : (data.faqs || []);
+            console.log('[FAQ] faqs array length:', faqs.length);
             renderFAQs();
         } catch (e) {
+            console.error('[FAQ] loadFAQs error:', e);
             showToast('Error loading FAQs: ' + (e.message || e), 'error');
         }
     }
