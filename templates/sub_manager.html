@@ -2622,8 +2622,11 @@
 
     async function loadFAQs() {
         try {
-            const response = await fetch('/api/faqs');
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const response = await fetch('/api/faqs', { credentials: 'same-origin' });
+            if (!response.ok) {
+                const txt = await response.text().catch(() => '');
+                throw new Error(`HTTP ${response.status}: ${txt.slice(0,120)}`);
+            }
             const data = await response.json();
             faqs = Array.isArray(data) ? data : (data.faqs || []);
             renderFAQs();
