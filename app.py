@@ -11951,7 +11951,7 @@ def renew_client(server_id, inbound_id, email):
 
                 active_tpl = RenewTemplate.query.filter_by(is_active=True).first()
                 tpl_content = active_tpl.content if active_tpl else DEFAULT_RENEW_TEMPLATE
-                copy_text = _render_text_template(tpl_content, {
+                _renew_tpl_vars = {
                     'email': email,
                     'days': msg_days,
                     'days_label': days_label,
@@ -11961,7 +11961,8 @@ def renew_client(server_id, inbound_id, email):
                     'server_name': getattr(server, 'name', '') or '',
                     'mode': mode,
                     'dashboard_link': dashboard_link,
-                })
+                }
+                copy_text = _render_text_template(tpl_content, _renew_tpl_vars)
 
                 whatsapp_runtime = _get_whatsapp_runtime_settings()
                 _client_comment = (target_client.get('comment') or '') if target_client else ''
@@ -11988,7 +11989,7 @@ def renew_client(server_id, inbound_id, email):
                 except Exception:
                     pass
 
-                return _finish({"success": True, "copy_text": copy_text, "verify": verify, "whatsapp": whatsapp_meta, "was_reactivated": _was_disabled})
+                return _finish({"success": True, "copy_text": copy_text, "tpl_vars": _renew_tpl_vars, "verify": verify, "whatsapp": whatsapp_meta, "was_reactivated": _was_disabled})
 
             errors.append(f"{template}: {resp.status_code}")
             timing["update_endpoint"] = template
@@ -13149,31 +13150,33 @@ def add_client(server_id, inbound_id):
                 direct_link = generate_client_link(new_client, inbound_data, server.host)
 
             # Render the active Client Created Notification template (if any).
+            vol_label = '♾️' if volume_gb == 0 else f'{volume_gb} GB'
+            days_label_cc = '♾️' if days == 0 else f'{days}'
+            _cc_tpl_vars = {
+                'service_name': email,
+                'email': email,
+                'protocol': inbound_data.get('protocol', 'vless'),
+                'volume': vol_label,
+                'days': days_label_cc,
+                'sub_link': sub_url,
+                'dashboard_link': dash_sub_url,
+                'server_name': getattr(server, 'name', '') or '',
+                'comment': data.get('comment', '') or '',
+            }
             copy_text = ''
             try:
                 active_tpl = NotificationTemplate.query.filter_by(
                     type='client_created', is_active=True
                 ).first()
                 if active_tpl and active_tpl.content:
-                    vol_label = '♾️' if volume_gb == 0 else f'{volume_gb} GB'
-                    days_label_cc = '♾️' if days == 0 else f'{days}'
-                    copy_text = _render_text_template(active_tpl.content, {
-                        'service_name': email,
-                        'email': email,
-                        'protocol': inbound_data.get('protocol', 'vless'),
-                        'volume': vol_label,
-                        'days': days_label_cc,
-                        'sub_link': sub_url,
-                        'dashboard_link': dash_sub_url,
-                        'server_name': getattr(server, 'name', '') or '',
-                        'comment': data.get('comment', '') or '',
-                    })
+                    copy_text = _render_text_template(active_tpl.content, _cc_tpl_vars)
             except Exception:
                 copy_text = ''
 
             return jsonify({
                 "success": True,
                 "copy_text": copy_text,
+                "tpl_vars": _cc_tpl_vars,
                 "client": {
                     "email": email,
                     "comment": data.get('comment', '') or '',

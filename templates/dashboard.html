@@ -1910,6 +1910,49 @@
             }
         }
 
+        // Render a template string by substituting {key} from a vars object.
+        function _renderTplVars(templateStr, vars) {
+            return String(templateStr || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (m, k) =>
+                (vars && Object.prototype.hasOwnProperty.call(vars, k)) ? vars[k] : m);
+        }
+
+        // Channel-aware send for Client-Created / Renew. Picks phone, then channel,
+        // then fetches the group+channel template (e.g. renew_whatsapp), renders it
+        // with the server-provided variables, and opens wa.me / sms:. Falls back to
+        // the on-screen text if no channel template is configured.
+        function sendTemplatedMessageToClient(ctx, title) {
+            try {
+                const phones = extractWhatsAppNumbers(
+                    { label: 'Account name', value: ctx.email },
+                    { label: 'Comment', value: ctx.comment },
+                    { label: 'Saved phone', value: ctx.phone }
+                );
+                const deliver = async (channel, phone) => {
+                    if (!phone) return;
+                    let message = ctx.fallback || '';
+                    try {
+                        const chKey = `${ctx.group}_${channel === 'sms' ? 'sms' : 'whatsapp'}`;
+                        const res = await fetch(`/api/account-message-templates/active?channel=${encodeURIComponent(chKey)}`, { cache: 'no-store' });
+                        const data = await res.json();
+                        if (data && data.content) message = _renderTplVars(data.content, ctx.tplVars || {});
+                    } catch (_) { /* fall back to on-screen text */ }
+                    const href = channel === 'sms'
+                        ? `sms:${phone.display || ('+' + phone.number)}?body=${encodeURIComponent(message)}`
+                        : `https://wa.me/${phone.number}?text=${encodeURIComponent(message)}`;
+                    window.open(href, '_blank', 'noopener');
+                };
+                if (!phones.length) {
+                    openMessageChannelChoice(null, null, { noPhone: true, message: ctx.fallback || '', title });
+                    return;
+                }
+                openPhoneChoiceModal(phones, (phone) => {
+                    openMessageChannelChoice(phone, deliver, { message: ctx.fallback || '', title });
+                }, 'Select mobile number', { alwaysShow: true });
+            } catch (e) {
+                showToast('Unable to prepare message', 'error');
+            }
+        }
+
         function openClientAccountMessageChannel(button) {
             try {
                 const client = JSON.parse(decodeURIComponent(button?.dataset?.clientMessage || '%7B%7D'));
@@ -4495,6 +4538,9 @@
                     email: String(email || ''),
                     comment: (_renewClientData?.comment) || '',
                     phone: (_renewClientData?.phone) || '',
+                    group: 'renew',
+                    tplVars: (data && data.tpl_vars) ? data.tpl_vars : { email: String(email || '') },
+                    fallback: successText,
                 };
                 document.getElementById('renew-success-modal').classList.remove('hidden');
 
@@ -5396,7 +5442,7 @@
                 closeAddClientModal();
                 // Show the success modal FIRST so copy/QR are instantly available.
                 if (data.client) {
-                    showNewClientModal(data.client, data.copy_text || '');
+                    showNewClientModal(data.client, data.copy_text || '', data.tpl_vars || null);
                 }
                 // Defer the server refresh so it doesn't compete with the modal
                 // render. Non-blocking (no wait:true) — on large panels (10k+
@@ -5486,20 +5532,30 @@
 
     function sendNewClientToUser() {
         if (!_sendCtxNewClient) { showToast(_L.noCtx, 'error'); return; }
-        const msg = document.getElementById('new-client-details').value || '';
-        sendCustomMessageToClient(_sendCtxNewClient, msg, _L.sendToUser);
+        _sendCtxNewClient.fallback = document.getElementById('new-client-details').value || _sendCtxNewClient.fallback || '';
+        sendTemplatedMessageToClient(_sendCtxNewClient, _L.sendToUser);
     }
 
     function sendRenewToUser() {
         if (!_sendCtxRenew) { showToast(_L.noCtx, 'error'); return; }
-        const msg = document.getElementById('renew-success-text').innerText || '';
-        sendCustomMessageToClient(_sendCtxRenew, msg, _L.sendToUser);
+        // Keep fallback in sync with whatever is shown on screen.
+        _sendCtxRenew.fallback = document.getElementById('renew-success-text').innerText || _sendCtxRenew.fallback || '';
+        sendTemplatedMessageToClient(_sendCtxRenew, _L.sendToUser);
     }
 
-    async function showNewClientModal(client, copyTextFromServer) {
+    async function showNewClientModal(client, copyTextFromServer, tplVars) {
         const modal = document.getElementById('new-client-modal');
         const detailsText = document.getElementById('new-client-details');
-        _sendCtxNewClient = { email: client.email || '', comment: client.comment || '', phone: client.phone || '' };
+        _sendCtxNewClient = {
+            email: client.email || '', comment: client.comment || '', phone: client.phone || '',
+            group: 'client_created',
+            tplVars: tplVars || {
+                email: client.email || '', volume: client.volume || '', days: client.days || '',
+                sub_link: client.sub_link || '', dashboard_link: client.dashboard_link || '',
+                server_name: client.server_name || '',
+            },
+            fallback: (copyTextFromServer || '').trim(),
+        };
         function _fitTextarea() {
             detailsText.style.height = '1px';
             detailsText.style.height = Math.min(detailsText.scrollHeight + 2, 240) + 'px';
