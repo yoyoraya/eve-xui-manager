@@ -3280,9 +3280,14 @@
 
         const clientsSectionHtml = totalCount > 0 ? `
         <div class="clients-section">
-            <button class="toggle-clients" data-inbound-key="${cardKey}" data-client-count="${totalCount}" onclick="toggleClients(this, event)">
-                ${isExpanded ? `${SVG_HIDE} Hide Clients (${totalCount})` : `${SVG_SHOW} Show Clients (${totalCount})`}
-            </button>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <button class="toggle-clients" style="flex:1;" data-inbound-key="${cardKey}" data-client-count="${totalCount}" onclick="toggleClients(this, event)">
+                    ${isExpanded ? `${SVG_HIDE} Hide Clients (${totalCount})` : `${SVG_SHOW} Show Clients (${totalCount})`}
+                </button>
+                <button class="btn btn-secondary" style="padding: 6px 10px;" title="Remaining-volume distribution" onclick="event.stopPropagation(); openVolumeStatsModal('${cardKey}')">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                </button>
+            </div>
             <div class="clients-list ${isExpanded ? '' : 'hidden'}">
                 <div class="clients-table-wrapper">
                     <table class="clients-table">
