@@ -209,6 +209,20 @@
                     <!-- Templates will be loaded here -->
                 </div>
             </div>
+
+            <div class="panel-card" style="margin-top:16px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Client Created — WhatsApp / SMS</h2>
+                        <p class="text-secondary">Separate WhatsApp &amp; SMS templates sent via the gateway with the "Send" buttons shown after creating a client. Per-reseller supported.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="openAccountMessageTemplateModal('client_created')">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Template
+                    </button>
+                </div>
+                <div class="templates-grid" id="client-created-templates-container"></div>
+            </div>
         </div>
 
         <div id="tab-renew_template" class="tab-pane">
@@ -226,6 +240,20 @@
                 <div class="templates-grid" id="renew-templates-container">
                     <!-- Renew Templates will be loaded here -->
                 </div>
+            </div>
+
+            <div class="panel-card" style="margin-top:16px;">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>Renew — WhatsApp / SMS</h2>
+                        <p class="text-secondary">Separate WhatsApp &amp; SMS templates sent via the gateway with the "Send" buttons shown after a renew. Per-reseller supported.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="openAccountMessageTemplateModal('renew')">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Template
+                    </button>
+                </div>
+                <div class="templates-grid" id="renew-channel-templates-container"></div>
             </div>
         </div>
 
@@ -1124,6 +1152,10 @@
                     <option value="sms">SMS</option>
                     <option value="royalty_whatsapp">Royalty — WhatsApp</option>
                     <option value="royalty_sms">Royalty — SMS</option>
+                    <option value="client_created_whatsapp">Client Created — WhatsApp</option>
+                    <option value="client_created_sms">Client Created — SMS</option>
+                    <option value="renew_whatsapp">Renew — WhatsApp</option>
+                    <option value="renew_sms">Renew — SMS</option>
                 </select>
             </div>
             <div class="form-group">
@@ -2050,8 +2082,8 @@
             if (onclick.includes("'overview'")) loadOverview();
             else
             if (onclick.includes("'general'")) syncThemeToggleUI();
-            else if (onclick.includes("'templates'")) loadTemplates();
-            else if (onclick.includes("'renew_template'")) loadRenewTemplates();
+            else if (onclick.includes("'templates'")) { loadTemplates(); loadAccountMessageTemplates(); }
+            else if (onclick.includes("'renew_template'")) { loadRenewTemplates(); loadAccountMessageTemplates(); }
             else if (onclick.includes("'account_message'")) loadAccountMessageTemplates();
             else if (onclick.includes("'backups'")) { loadBackups(); loadBackupSettings(); }
             else if (onclick.includes("'telegram_backup'")) loadTelegramBackupSettings();
@@ -2118,10 +2150,12 @@
             loadSessionSettings();
         } else if (tabName === 'renew_template') {
             loadRenewTemplates();
+            loadAccountMessageTemplates();
         } else if (tabName === 'account_message') {
             loadAccountMessageTemplates();
         } else if (tabName === 'templates') {
             loadTemplates();
+            loadAccountMessageTemplates();
         } else if (tabName === 'health_logs') {
             loadHealthLogs();
         }
@@ -4272,6 +4306,10 @@
     let accountMessageDefaultSmsContent = '';
     let accountMessageDefaultRoyaltyWhatsappContent = '';
     let accountMessageDefaultRoyaltySmsContent = '';
+    let accountMessageDefaultCcWhatsappContent = '';
+    let accountMessageDefaultCcSmsContent = '';
+    let accountMessageDefaultRenewWhatsappContent = '';
+    let accountMessageDefaultRenewSmsContent = '';
     let accountMessageChannelLinks = { telegram_channel: '', whatsapp_channel: '' };
 
     function renderAccountMessagePreviewText(content) {
@@ -4356,6 +4394,10 @@
                 sms: accountMessageDefaultSmsContent || '{email}\nTime: {remaining_time}\nVolume: {remaining_volume}\nLink: {dashboard_link}',
                 royalty_whatsapp: accountMessageDefaultRoyaltyWhatsappContent,
                 royalty_sms: accountMessageDefaultRoyaltySmsContent,
+                client_created_whatsapp: accountMessageDefaultCcWhatsappContent,
+                client_created_sms: accountMessageDefaultCcSmsContent,
+                renew_whatsapp: accountMessageDefaultRenewWhatsappContent,
+                renew_sms: accountMessageDefaultRenewSmsContent,
             };
             const newDefault = defaults[channel] || '';
             // Only auto-fill if current content matches another default (user hasn't customised it)
@@ -4381,6 +4423,10 @@
             accountMessageDefaultSmsContent = data.default_sms_content || '';
             accountMessageDefaultRoyaltyWhatsappContent = data.default_royalty_whatsapp_content || '';
             accountMessageDefaultRoyaltySmsContent = data.default_royalty_sms_content || '';
+            accountMessageDefaultCcWhatsappContent = data.default_client_created_whatsapp_content || '';
+            accountMessageDefaultCcSmsContent = data.default_client_created_sms_content || '';
+            accountMessageDefaultRenewWhatsappContent = data.default_renew_whatsapp_content || '';
+            accountMessageDefaultRenewSmsContent = data.default_renew_sms_content || '';
             accountMessageResellers = data.resellers || [];
 
             // Load channel links for preview (from active template endpoint which resolves per-user)
@@ -4446,24 +4492,28 @@
         </div>`;
     }
 
+    // Which channels belong to each template group/card
+    const GROUP_CHANNELS = {
+        account_info:   ['whatsapp', 'sms'],
+        royalty:        ['royalty_whatsapp', 'royalty_sms'],
+        client_created: ['client_created_whatsapp', 'client_created_sms'],
+        renew:          ['renew_whatsapp', 'renew_sms'],
+    };
+
     function renderAccountMessageTemplates(templates) {
-        const accountContainer = document.getElementById('account-message-templates-container');
-        const royaltyContainer = document.getElementById('royalty-message-templates-container');
-
-        const royaltyChannels = new Set(['royalty_whatsapp', 'royalty_sms']);
-        const accountTemplates = (templates || []).filter(t => !royaltyChannels.has(t.channel));
-        const royaltyTemplates = (templates || []).filter(t => royaltyChannels.has(t.channel));
-
-        if (accountContainer) {
-            accountContainer.innerHTML = accountTemplates.length
-                ? accountTemplates.map(_renderTemplateCard).join('')
-                : '<div class="empty-state"><p>No account info templates. Create one!</p></div>';
-        }
-        if (royaltyContainer) {
-            royaltyContainer.innerHTML = royaltyTemplates.length
-                ? royaltyTemplates.map(_renderTemplateCard).join('')
-                : '<div class="empty-state"><p>No royalty templates. Create one!</p></div>';
-        }
+        const all = templates || [];
+        const byGroup = (channels) => all.filter(t => channels.includes(t.channel));
+        const fill = (containerId, list, emptyMsg) => {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            el.innerHTML = list.length
+                ? list.map(_renderTemplateCard).join('')
+                : `<div class="empty-state"><p>${emptyMsg}</p></div>`;
+        };
+        fill('account-message-templates-container', byGroup(GROUP_CHANNELS.account_info),   'No account info templates. Create one!');
+        fill('royalty-message-templates-container', byGroup(GROUP_CHANNELS.royalty),        'No royalty templates. Create one!');
+        fill('client-created-templates-container',  byGroup(GROUP_CHANNELS.client_created), 'No Client Created WhatsApp/SMS templates. Create one!');
+        fill('renew-channel-templates-container',   byGroup(GROUP_CHANNELS.renew),          'No Renew WhatsApp/SMS templates. Create one!');
     }
 
     function _buildResellerSelect(selectedId) {
@@ -4481,24 +4531,44 @@
         </div>`;
     }
 
+    const _GROUP_TITLES = {
+        account_info:   'Add Account Message Template',
+        royalty:        'Add Royalty Info Template',
+        client_created: 'Add Client Created Template',
+        renew:          'Add Renew Template',
+    };
+
+    function _groupDefaultContent(channel) {
+        const map = {
+            whatsapp: accountMessageDefaultContent,
+            sms: accountMessageDefaultSmsContent,
+            royalty_whatsapp: accountMessageDefaultRoyaltyWhatsappContent,
+            royalty_sms: accountMessageDefaultRoyaltySmsContent,
+            client_created_whatsapp: accountMessageDefaultCcWhatsappContent,
+            client_created_sms: accountMessageDefaultCcSmsContent,
+            renew_whatsapp: accountMessageDefaultRenewWhatsappContent,
+            renew_sms: accountMessageDefaultRenewSmsContent,
+        };
+        return map[channel] || '';
+    }
+
     function openAccountMessageTemplateModal(group) {
         group = group || 'account_info';
-        const isRoyalty = group === 'royalty';
+        const channels = GROUP_CHANNELS[group] || GROUP_CHANNELS.account_info;
 
         document.getElementById('account-message-template-modal-title').textContent =
-            isRoyalty ? 'Add Royalty Info Template' : 'Add Account Message Template';
+            _GROUP_TITLES[group] || 'Add Template';
         document.getElementById('edit-account-message-template-id').value = '';
         document.getElementById('account-message-template-group').value = group;
         document.getElementById('account-message-template-name').value = '';
 
-        // Set the default channel for this group and hide irrelevant options
+        // Show only the channels belonging to this group; default to the first.
         const channelSel = document.getElementById('account-message-template-channel');
         if (channelSel) {
             Array.from(channelSel.options).forEach(opt => {
-                const isRoyaltyOpt = opt.value.startsWith('royalty_');
-                opt.hidden = isRoyalty ? !isRoyaltyOpt : isRoyaltyOpt;
+                opt.hidden = !channels.includes(opt.value);
             });
-            channelSel.value = isRoyalty ? 'royalty_whatsapp' : 'whatsapp';
+            channelSel.value = channels[0];
         }
 
         // Inject reseller dropdown
@@ -4511,18 +4581,7 @@
         }
 
         const textarea = document.getElementById('account-message-template-content');
-        textarea.value = isRoyalty
-            ? (accountMessageDefaultRoyaltyWhatsappContent || 'سلام {email} عزیز 👋\nاکانت شما آماده‌ست ولی هنوز وصل نشدین!\n\nلینک اتصال: {dashboard_link}\n\nاگه مشکلی دارین بگین کمک کنیم 🙏')
-            : (accountMessageDefaultContent || [
-                'اطلاعات اکانت شما',
-                'اسم اکانت: {email}',
-                'مدت زمان باقی مانده: {remaining_time}',
-                'حجم باقی مانده: {remaining_volume}',
-                'لینک dash sub: {dashboard_link}',
-                '{telegram_channel}',
-                '',
-                'لطفا از طریق لینک بالا به سرویس خود متصل شین .'
-            ].join('\n'));
+        textarea.value = _groupDefaultContent(channels[0]) || '';
         updateAccountMessageModalPreview(textarea.value);
         document.getElementById('account-message-template-modal').classList.remove('hidden');
     }

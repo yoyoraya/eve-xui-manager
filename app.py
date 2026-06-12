@@ -3950,6 +3950,11 @@ ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE = 'account_info_whatsapp'
 ACCOUNT_INFO_SMS_TEMPLATE_TYPE = 'account_info_sms'
 ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE = 'royalty_info_whatsapp'
 ROYALTY_INFO_SMS_TEMPLATE_TYPE = 'royalty_info_sms'
+# Channel-specific variants for Client-Created and Renew notifications
+CLIENT_CREATED_WHATSAPP_TEMPLATE_TYPE = 'client_created_whatsapp'
+CLIENT_CREATED_SMS_TEMPLATE_TYPE = 'client_created_sms'
+RENEW_WHATSAPP_TEMPLATE_TYPE = 'renew_whatsapp'
+RENEW_SMS_TEMPLATE_TYPE = 'renew_sms'
 
 DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE = """اطلاعات اکانت شما
 اسم اکانت: {email}
@@ -3974,6 +3979,27 @@ DEFAULT_ROYALTY_INFO_WHATSAPP_TEMPLATE = """سلام {email} عزیز 👋
 DEFAULT_ROYALTY_INFO_SMS_TEMPLATE = """{email}
 اکانت آماده‌ست، وصل نشدی!
 لینک: {dashboard_link}"""
+
+DEFAULT_CLIENT_CREATED_WHATSAPP_TEMPLATE = """اکانت شما ساخته شد ✅
+اسم اکانت: {email}
+حجم: {volume} | مدت: {days} روز
+لینک اتصال: {dashboard_link}
+
+لطفا از طریق لینک بالا به سرویس خود متصل شین."""
+
+DEFAULT_CLIENT_CREATED_SMS_TEMPLATE = """{email}
+Volume: {volume} | Days: {days}
+Link: {dashboard_link}"""
+
+DEFAULT_RENEW_WHATSAPP_TEMPLATE = """تمدید شد ✅
+اسم اکانت: {email}
+{days_label} | {volume_label}
+تاریخ انقضا: {date}
+لینک: {dashboard_link}"""
+
+DEFAULT_RENEW_SMS_TEMPLATE = """{email}
+{days_label} | {volume_label}
+Renewed. Link: {dashboard_link}"""
 
 WHATSAPP_CONFIG_KEYS = {
     WHATSAPP_DEPLOYMENT_REGION_KEY,
@@ -17885,32 +17911,46 @@ def _account_info_channel_links(admin: 'Admin') -> dict:
         'whatsapp_channel': (admin.channel_whatsapp or '').strip(),
     }
 
+# channel name → (template type, default content)
+_CHANNEL_TEMPLATE_MAP = {
+    'whatsapp':                (lambda: ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE,   lambda: DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE),
+    'sms':                     (lambda: ACCOUNT_INFO_SMS_TEMPLATE_TYPE,        lambda: DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE),
+    'royalty_whatsapp':        (lambda: ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE,   lambda: DEFAULT_ROYALTY_INFO_WHATSAPP_TEMPLATE),
+    'royalty_sms':             (lambda: ROYALTY_INFO_SMS_TEMPLATE_TYPE,        lambda: DEFAULT_ROYALTY_INFO_SMS_TEMPLATE),
+    'client_created_whatsapp': (lambda: CLIENT_CREATED_WHATSAPP_TEMPLATE_TYPE, lambda: DEFAULT_CLIENT_CREATED_WHATSAPP_TEMPLATE),
+    'client_created_sms':      (lambda: CLIENT_CREATED_SMS_TEMPLATE_TYPE,      lambda: DEFAULT_CLIENT_CREATED_SMS_TEMPLATE),
+    'renew_whatsapp':          (lambda: RENEW_WHATSAPP_TEMPLATE_TYPE,          lambda: DEFAULT_RENEW_WHATSAPP_TEMPLATE),
+    'renew_sms':               (lambda: RENEW_SMS_TEMPLATE_TYPE,               lambda: DEFAULT_RENEW_SMS_TEMPLATE),
+}
+_TYPE_TO_CHANNEL = {
+    ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE: 'whatsapp',
+    ACCOUNT_INFO_SMS_TEMPLATE_TYPE: 'sms',
+    ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE: 'royalty_whatsapp',
+    ROYALTY_INFO_SMS_TEMPLATE_TYPE: 'royalty_sms',
+    CLIENT_CREATED_WHATSAPP_TEMPLATE_TYPE: 'client_created_whatsapp',
+    CLIENT_CREATED_SMS_TEMPLATE_TYPE: 'client_created_sms',
+    RENEW_WHATSAPP_TEMPLATE_TYPE: 'renew_whatsapp',
+    RENEW_SMS_TEMPLATE_TYPE: 'renew_sms',
+}
+
 def _account_info_template_type(channel='whatsapp'):
     channel = (channel or 'whatsapp').strip().lower()
-    if channel == 'royalty_sms':
-        return ROYALTY_INFO_SMS_TEMPLATE_TYPE
-    if channel == 'royalty_whatsapp':
-        return ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE
-    return ACCOUNT_INFO_SMS_TEMPLATE_TYPE if channel == 'sms' else ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE
+    entry = _CHANNEL_TEMPLATE_MAP.get(channel)
+    return entry[0]() if entry else ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE
 
 def _account_info_default_template(channel='whatsapp'):
     channel = (channel or 'whatsapp').strip().lower()
-    if channel == 'royalty_sms':
-        return DEFAULT_ROYALTY_INFO_SMS_TEMPLATE
-    if channel == 'royalty_whatsapp':
-        return DEFAULT_ROYALTY_INFO_WHATSAPP_TEMPLATE
-    return DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE if channel == 'sms' else DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE
+    entry = _CHANNEL_TEMPLATE_MAP.get(channel)
+    return entry[1]() if entry else DEFAULT_ACCOUNT_INFO_WHATSAPP_TEMPLATE
 
 def _account_info_channel_from_type(template_type):
-    if template_type == ROYALTY_INFO_SMS_TEMPLATE_TYPE:
-        return 'royalty_sms'
-    if template_type == ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE:
-        return 'royalty_whatsapp'
-    return 'sms' if template_type == ACCOUNT_INFO_SMS_TEMPLATE_TYPE else 'whatsapp'
+    return _TYPE_TO_CHANNEL.get(template_type, 'whatsapp')
 
 _ALL_ACCOUNT_INFO_TYPES = (
     ACCOUNT_INFO_WHATSAPP_TEMPLATE_TYPE, ACCOUNT_INFO_SMS_TEMPLATE_TYPE,
     ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE, ROYALTY_INFO_SMS_TEMPLATE_TYPE,
+    CLIENT_CREATED_WHATSAPP_TEMPLATE_TYPE, CLIENT_CREATED_SMS_TEMPLATE_TYPE,
+    RENEW_WHATSAPP_TEMPLATE_TYPE, RENEW_SMS_TEMPLATE_TYPE,
 )
 
 def _ensure_default_account_info_template(channel='whatsapp'):
@@ -17923,6 +17963,10 @@ def _ensure_default_account_info_template(channel='whatsapp'):
         ACCOUNT_INFO_SMS_TEMPLATE_TYPE: 'Default Account Info SMS',
         ROYALTY_INFO_WHATSAPP_TEMPLATE_TYPE: 'Default Royalty Info',
         ROYALTY_INFO_SMS_TEMPLATE_TYPE: 'Default Royalty Info SMS',
+        CLIENT_CREATED_WHATSAPP_TEMPLATE_TYPE: 'Default Client Created WhatsApp',
+        CLIENT_CREATED_SMS_TEMPLATE_TYPE: 'Default Client Created SMS',
+        RENEW_WHATSAPP_TEMPLATE_TYPE: 'Default Renew WhatsApp',
+        RENEW_SMS_TEMPLATE_TYPE: 'Default Renew SMS',
     }
     template = NotificationTemplate(
         name=name_map.get(template_type, 'Default Account Info'),
@@ -17956,10 +18000,10 @@ def _resolve_account_info_template(admin: 'Admin', channel: str = 'whatsapp') ->
 @app.route('/api/account-message-templates', methods=['GET'])
 @user_management_required
 def get_account_message_templates():
-    _ensure_default_account_info_template('whatsapp')
-    _ensure_default_account_info_template('sms')
-    _ensure_default_account_info_template('royalty_whatsapp')
-    _ensure_default_account_info_template('royalty_sms')
+    for _ch in ('whatsapp', 'sms', 'royalty_whatsapp', 'royalty_sms',
+                'client_created_whatsapp', 'client_created_sms',
+                'renew_whatsapp', 'renew_sms'):
+        _ensure_default_account_info_template(_ch)
 
     current_admin = db.session.get(Admin, session.get('admin_id'))
 
@@ -17998,6 +18042,10 @@ def get_account_message_templates():
         'default_sms_content': DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE,
         'default_royalty_whatsapp_content': DEFAULT_ROYALTY_INFO_WHATSAPP_TEMPLATE,
         'default_royalty_sms_content': DEFAULT_ROYALTY_INFO_SMS_TEMPLATE,
+        'default_client_created_whatsapp_content': DEFAULT_CLIENT_CREATED_WHATSAPP_TEMPLATE,
+        'default_client_created_sms_content': DEFAULT_CLIENT_CREATED_SMS_TEMPLATE,
+        'default_renew_whatsapp_content': DEFAULT_RENEW_WHATSAPP_TEMPLATE,
+        'default_renew_sms_content': DEFAULT_RENEW_SMS_TEMPLATE,
         'resellers': resellers,
     })
 
