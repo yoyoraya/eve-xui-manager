@@ -1775,7 +1775,15 @@ def fetch_and_update_server_data(server_id: int):
     if fetch_error:
         raise RuntimeError(fetch_error)
 
-    online_index, _ = fetch_onlines(session_obj, server.host, server.panel_type)
+    # Onlines = web-UI route needing a cookie login; v3 token session can't reach it.
+    onlines_session = session_obj
+    if get_server_api_token(server) and getattr(server, 'username', '') and get_server_password(server):
+        _cookie = get_xui_cookie_session(
+            server.host, server.username, get_server_password(server),
+            server.panel_type, cache_key=f"sid:{server.id}")
+        if _cookie is not None:
+            onlines_session = _cookie
+    online_index, _ = fetch_onlines(onlines_session, server.host, server.panel_type)
     status_payload, status_error, _status_type = fetch_server_status(session_obj, server.host, server.panel_type)
 
     # Enrich status_payload with online_count from onlines endpoint
@@ -7061,6 +7069,54 @@ def fetch_inbounds(session_obj, host, panel_type='auto'):
     return None, (last_error or "Failed to fetch inbounds from all known endpoints"), 'auto'
 
 
+XUI_COOKIE_SESSION_CACHE = {}  # cache_key -> {'session': requests.Session, 'expiry': float}
+
+
+def get_xui_cookie_session(host, username, password, panel_type='auto', cache_key=None):
+    """Return a COOKIE-authenticated session (username/password login).
+
+    v3 panels are normally accessed with a Bearer API token, but some panel
+    routes — notably the web-UI `/panel/inbound/onlines` — are NOT exposed on
+    the token-authenticated API router and return 404 unless you present a
+    valid login cookie. This logs in and caches the cookie session.
+    """
+    if not username or not password:
+        return None
+    now = time.time()
+    ck = cache_key or f"{host}|{username}"
+    cached = XUI_COOKIE_SESSION_CACHE.get(ck)
+    if cached and now < cached['expiry']:
+        return cached['session']
+
+    try:
+        base, webpath = extract_base_and_webpath(host)
+        normalized_type = (panel_type or 'auto').strip().lower()
+        panel_api = get_panel_api(normalized_type)
+        login_ep = (getattr(panel_api, 'login_endpoint', None) if panel_api else None) or '/login'
+        login_url = login_ep if login_ep.startswith('http') else f"{base}{webpath}{login_ep}"
+
+        s = requests.Session()
+        s.trust_env = False
+        s.proxies = {'http': None, 'https': None}
+        s.verify = False
+        creds = {"username": username, "password": password}
+        for use_json in (True, False):
+            try:
+                if use_json:
+                    r = s.post(login_url, json=creds, timeout=8, headers={"Accept": "application/json"})
+                else:
+                    r = s.post(login_url, data=creds, timeout=8)
+                j, err = _safe_response_json(r)
+                if r.status_code == 200 and isinstance(j, dict) and j.get('success'):
+                    XUI_COOKIE_SESSION_CACHE[ck] = {'session': s, 'expiry': now + XUI_SESSION_TTL}
+                    return s
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def fetch_onlines(session_obj, host, panel_type='auto'):
     """Fetch online clients from panel (best-effort).
 
@@ -9288,7 +9344,17 @@ def fetch_worker(server_dict):
             return server_dict['id'], None, None, None, None, error, 'auto'
         
         inbounds, fetch_error, detected_type = fetch_inbounds(session_obj, server_obj.host, server_obj.panel_type)
-        online_index, _ = fetch_onlines(session_obj, server_obj.host, server_obj.panel_type)
+        # Onlines lives on the web-UI route which needs a cookie login; the v3
+        # Bearer-token session can't reach it (404). Use a cookie session when
+        # the panel is token-based (v3) but we have username/password.
+        onlines_session = session_obj
+        if get_server_api_token(server_obj) and getattr(server_obj, 'username', '') and getattr(server_obj, 'password', ''):
+            _cookie = get_xui_cookie_session(
+                server_obj.host, server_obj.username, server_obj.password,
+                server_obj.panel_type, cache_key=f"sid:{server_dict['id']}")
+            if _cookie is not None:
+                onlines_session = _cookie
+        online_index, _ = fetch_onlines(onlines_session, server_obj.host, server_obj.panel_type)
         status_payload, status_error, _status_type = fetch_server_status(session_obj, server_obj.host, server_obj.panel_type)
 
         # Enrich status_payload with online_count from the onlines endpoint
