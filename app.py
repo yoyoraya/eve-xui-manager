@@ -7134,6 +7134,13 @@ def fetch_onlines(session_obj, host, panel_type='auto'):
                     else:
                         index['emails'].add(email_l)
 
+                try:
+                    app.logger.info(
+                        f"[onlines] {normalized_type} {method} {ep} -> "
+                        f"{len(index['pairs'])} pairs, {len(index['emails'])} emails"
+                    )
+                except Exception:
+                    pass
                 return index, None
             except Exception as e:
                 last_error = str(e)
@@ -7142,6 +7149,10 @@ def fetch_onlines(session_obj, host, panel_type='auto'):
         # If we tried endpoints but none worked, return a hint (caller still treats it best-effort).
         if candidates:
             hint = last_error or (f"HTTP {last_status}" if last_status is not None else "No response")
+            try:
+                app.logger.warning(f"[onlines] all endpoints failed ({normalized_type}): {hint}")
+            except Exception:
+                pass
             return index, f"Failed to fetch onlines ({normalized_type}): {hint}"
 
         return index, None
@@ -7558,6 +7569,10 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
             _app_base = ""  # background thread (no request context)
     _is_sanaei = (server.panel_type == 'sanaei')
     _server_id = server.id
+    # On v3 the same client (by email) is mirrored across several inbounds.
+    # Count each person ONCE for all aggregate stats so totals aren't inflated.
+    _is_v3 = server_is_v3(server)
+    _v3_seen_emails = set()
 
     for inbound in inbounds:
         try:
@@ -7593,9 +7608,17 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 if dedup_key != ('', '') and dedup_key in seen_client_keys:
                     continue
                 seen_client_keys.add(dedup_key)
-                
+
                 if user.role == 'reseller' and email.lower() not in owned_emails:
-                    continue 
+                    continue
+
+                # v3: only the first inbound where this email appears feeds the stats.
+                if _is_v3 and email_l:
+                    _count_stat = email_l not in _v3_seen_emails
+                    if _count_stat:
+                        _v3_seen_emails.add(email_l)
+                else:
+                    _count_stat = True
                 
                 sub_id = client.get('subId', '')
                 sub_url = ""
@@ -7616,7 +7639,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 remaining_bytes = max(total_bytes - (client_up + client_down), 0) if total_bytes > 0 else None
                 total_formatted = format_bytes_gb_tb(total_bytes) if total_bytes > 0 else "Unlimited"
 
-                if total_bytes <= 0:
+                if _count_stat and total_bytes <= 0:
                     stats["unlimited_volume_clients"] += 1
                 
                 volume_status = ""
@@ -7697,16 +7720,17 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 }
                 processed_clients.append(client_data)
 
-                if is_online:
-                    stats["online_clients"] += 1
-                
-                if client.get('enable', True): stats["active_clients"] += 1
-                else: stats["inactive_clients"] += 1
-                stats["upload_raw"] += client_up
-                stats["download_raw"] += client_down
-                # Accumulate remaining for active limited-volume clients only
-                if client.get('enable', True) and remaining_bytes is not None and remaining_bytes >= 0:
-                    stats["remaining_raw"] += int(remaining_bytes)
+                if _count_stat:
+                    stats["total_clients"] += 1
+                    if is_online:
+                        stats["online_clients"] += 1
+                    if client.get('enable', True): stats["active_clients"] += 1
+                    else: stats["inactive_clients"] += 1
+                    stats["upload_raw"] += client_up
+                    stats["download_raw"] += client_down
+                    # Accumulate remaining for active limited-volume clients only
+                    if client.get('enable', True) and remaining_bytes is not None and remaining_bytes >= 0:
+                        stats["remaining_raw"] += int(remaining_bytes)
             
             # استخراج network و security از settings
             streamSettings = settings.get('streamSettings', {})
@@ -7744,7 +7768,7 @@ def process_inbounds(inbounds, server, user, allowed_map='*', assignments=None, 
                 "remaining_total": format_bytes(_inbound_remaining_raw) if _inbound_remaining_raw > 0 else None,
             })
             
-            stats["total_clients"] += len(processed_clients)
+            # total_clients is now counted per-client above (v3-deduplicated).
             if inbound.get('enable', False): stats["active_inbounds"] += 1
             
         except Exception as e:
