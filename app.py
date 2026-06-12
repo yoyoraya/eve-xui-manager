@@ -16353,8 +16353,9 @@ def delete_sub_app(app_id):
 @user_management_required
 def get_faqs():
     faqs = FAQ.query.order_by(FAQ.created_at.desc()).all()
-    app.logger.info(f'[get_faqs] returning {len(faqs)} FAQs')
-    return jsonify([f.to_dict() for f in faqs])
+    resp = jsonify([f.to_dict() for f in faqs])
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return resp
 
 @app.route('/api/faqs', methods=['POST'])
 @user_management_required
@@ -16444,7 +16445,9 @@ def delete_faq(faq_id):
 @user_management_required
 def get_announcements():
     items = Announcement.query.order_by(Announcement.created_at.desc()).all()
-    return jsonify([a.to_dict() for a in items])
+    resp = jsonify([a.to_dict() for a in items])
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return resp
 
 
 def _parse_announcement_payload(data: dict) -> tuple[dict | None, str | None]:
