@@ -1722,6 +1722,7 @@
             const values = {
                 email:             client?.email || '-',
                 account_name:      client?.email || '-',
+                service_name:      client?.email || '-',
                 remaining_time:    client?.expiryTime || '-',
                 remaining_volume:  client?.remaining_formatted || '-',
                 dashboard_link:    absolutePanelUrl(client?.dash_sub_url || client?.sub_url || ''),
@@ -1934,7 +1935,16 @@
                         const chKey = `${ctx.group}_${channel === 'sms' ? 'sms' : 'whatsapp'}`;
                         const res = await fetch(`/api/account-message-templates/active?channel=${encodeURIComponent(chKey)}`, { cache: 'no-store' });
                         const data = await res.json();
-                        if (data && data.content) message = _renderTplVars(data.content, ctx.tplVars || {});
+                        if (data && data.content) {
+                            // Channel links ({telegram_channel}/{whatsapp_channel}) are
+                            // resolved server-side by role and returned alongside the
+                            // template — merge them so those placeholders fill too.
+                            const vars = Object.assign({}, ctx.tplVars || {}, {
+                                telegram_channel: data.telegram_channel || '',
+                                whatsapp_channel: data.whatsapp_channel || '',
+                            });
+                            message = _renderTplVars(data.content, vars);
+                        }
                     } catch (_) { /* fall back to on-screen text */ }
                     const href = channel === 'sms'
                         ? `sms:${phone.display || ('+' + phone.number)}?body=${encodeURIComponent(message)}`

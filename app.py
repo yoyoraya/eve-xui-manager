@@ -12011,6 +12011,8 @@ def renew_client(server_id, inbound_id, email):
 
                 active_tpl = RenewTemplate.query.filter_by(is_active=True).first()
                 tpl_content = active_tpl.content if active_tpl else DEFAULT_RENEW_TEMPLATE
+                _ch_links = _account_info_channel_links(db.session.get(Admin, session.get('admin_id'))) \
+                    if session.get('admin_id') else {'telegram_channel': '', 'whatsapp_channel': ''}
                 _renew_tpl_vars = {
                     'email': email,
                     'days': msg_days,
@@ -12029,6 +12031,9 @@ def renew_client(server_id, inbound_id, email):
                     'remaining_time': days_label,
                     'remaining_volume': volume_label,
                     'sub_link': dashboard_link,
+                    # Channel links resolved by role (superadmin→global, reseller→own).
+                    'telegram_channel': _ch_links.get('telegram_channel', ''),
+                    'whatsapp_channel': _ch_links.get('whatsapp_channel', ''),
                 }
                 copy_text = _render_text_template(tpl_content, _renew_tpl_vars)
 
@@ -13220,6 +13225,8 @@ def add_client(server_id, inbound_id):
             # Render the active Client Created Notification template (if any).
             vol_label = '♾️' if volume_gb == 0 else f'{volume_gb} GB'
             days_label_cc = '♾️' if days == 0 else f'{days}'
+            _cc_ch_links = _account_info_channel_links(db.session.get(Admin, session.get('admin_id'))) \
+                if session.get('admin_id') else {'telegram_channel': '', 'whatsapp_channel': ''}
             _cc_tpl_vars = {
                 'service_name': email,
                 'email': email,
@@ -13234,6 +13241,9 @@ def add_client(server_id, inbound_id):
                 'account_name': email,
                 'remaining_time': days_label_cc,
                 'remaining_volume': vol_label,
+                # Channel links resolved by role (superadmin→global, reseller→own).
+                'telegram_channel': _cc_ch_links.get('telegram_channel', ''),
+                'whatsapp_channel': _cc_ch_links.get('whatsapp_channel', ''),
             }
             copy_text = ''
             try:
@@ -17987,15 +17997,37 @@ def _account_info_template_vars():
 
 
 def _account_info_channel_links(admin: 'Admin') -> dict:
-    """Return telegram_channel / whatsapp_channel for an admin/reseller.
+    """Return telegram_channel / whatsapp_channel for the logged-in admin,
+    resolved by role exactly like the public subscription page:
 
-    - superadmin / admin  → uses their own channel fields
-    - reseller            → uses the reseller's own channel fields
-    - not set             → empty string (template var stays blank, not shown)
+    - reseller            → the reseller's own channel fields, falling back to
+                            the global SystemConfig channels if unset.
+    - superadmin / admin  → the global SystemConfig channels
+                            ('channel_telegram' / 'channel_whatsapp'), falling
+                            back to any value stored on the admin row.
+
+    (Superadmin channels live in SystemConfig, NOT on the Admin row, which is
+    why reading only admin.channel_* left {whatsapp_channel} blank for them.)
+    - still not set       → empty string (template var stays blank, not shown).
     """
+    def _cfg(key):
+        row = db.session.get(SystemConfig, key)
+        return ((row.value if row else '') or '').strip()
+
+    own_tg = (getattr(admin, 'channel_telegram', '') or '').strip()
+    own_wa = (getattr(admin, 'channel_whatsapp', '') or '').strip()
+    glob_tg = _cfg('channel_telegram')
+    glob_wa = _cfg('channel_whatsapp')
+
+    is_reseller = (getattr(admin, 'role', None) == 'reseller')
+    if is_reseller:
+        return {
+            'telegram_channel': own_tg or glob_tg,
+            'whatsapp_channel': own_wa or glob_wa,
+        }
     return {
-        'telegram_channel': (admin.channel_telegram or '').strip(),
-        'whatsapp_channel': (admin.channel_whatsapp or '').strip(),
+        'telegram_channel': glob_tg or own_tg,
+        'whatsapp_channel': glob_wa or own_wa,
     }
 
 # channel name → (template type, default content)
