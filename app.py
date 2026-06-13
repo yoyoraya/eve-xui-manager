@@ -12021,6 +12021,14 @@ def renew_client(server_id, inbound_id, email):
                     'server_name': getattr(server, 'name', '') or '',
                     'mode': mode,
                     'dashboard_link': dashboard_link,
+                    # Account-Info-style aliases so a template written with the
+                    # account-info placeholders ({service_name}/{remaining_time}/
+                    # {remaining_volume}/{account_name}/{sub_link}) also renders.
+                    'service_name': email,
+                    'account_name': email,
+                    'remaining_time': days_label,
+                    'remaining_volume': volume_label,
+                    'sub_link': dashboard_link,
                 }
                 copy_text = _render_text_template(tpl_content, _renew_tpl_vars)
 
@@ -13222,6 +13230,10 @@ def add_client(server_id, inbound_id):
                 'dashboard_link': dash_sub_url,
                 'server_name': getattr(server, 'name', '') or '',
                 'comment': data.get('comment', '') or '',
+                # Account-Info-style aliases so account-info placeholders render too.
+                'account_name': email,
+                'remaining_time': days_label_cc,
+                'remaining_volume': vol_label,
             }
             copy_text = ''
             try:
