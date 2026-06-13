@@ -15485,13 +15485,25 @@ def sub_usage_history(server_id, sub_id):
                 .limit(30)
                 .all())
 
-    renewal_rows = [{
-        'renewed_at': r.renewed_at.isoformat() + 'Z',
-        'volume_bytes': r.volume_bytes,
-        'days': r.days,
-        'is_unlimited_volume': r.is_unlimited_volume,
-        'is_unlimited_time': r.is_unlimited_time,
-    } for r in renewals]
+    # Collapse near-identical renewals (same minute + same volume/days) that v3
+    # could have recorded once per inbound before dedup was added.
+    renewal_rows = []
+    _seen_renewals = set()
+    for r in renewals:
+        _key = (
+            r.renewed_at.replace(second=0, microsecond=0).isoformat(),
+            r.volume_bytes, r.days, r.is_unlimited_volume, r.is_unlimited_time,
+        )
+        if _key in _seen_renewals:
+            continue
+        _seen_renewals.add(_key)
+        renewal_rows.append({
+            'renewed_at': r.renewed_at.isoformat() + 'Z',
+            'volume_bytes': r.volume_bytes,
+            'days': r.days,
+            'is_unlimited_volume': r.is_unlimited_volume,
+            'is_unlimited_time': r.is_unlimited_time,
+        })
 
     # Latest snapshot for current state
     latest = (UsageSnapshot.query
@@ -20930,6 +20942,11 @@ def _take_usage_snapshots():
         now = datetime.utcnow()
         new_snapshots = []
         renewals = []
+        # On v3 (sanaei) the same subId/email exists across multiple inbounds,
+        # so a single renewal would otherwise be detected once per inbound and
+        # produce duplicate "Renewed" cards. Record at most one renewal per
+        # sub_id per run.
+        _renewal_seen_subs = set()
         for inbound in inbounds:
             server_id = inbound.get('server_id')
             if not server_id:
@@ -20968,15 +20985,21 @@ def _take_usage_snapshots():
                     prev_total = prev.total_bytes
                     prev_limit = prev.volume_limit_bytes or 0
                     # Traffic reset (current total_used < previous) = quota refill / renewal
-                    if total_used < prev_total and prev_total > 0:
+                    if total_used < prev_total and prev_total > 0 and sub_id not in _renewal_seen_subs:
+                        _renewal_seen_subs.add(sub_id)
                         try:
                             expiry_ts = int(client.get('expiryTimestamp') or client.get('expiryTime') or 0)
                             days = None
                             is_unlimited_time = False
-                            if expiry_ts and expiry_ts > 0:
+                            if expiry_ts > 0:
                                 expiry_dt = datetime.utcfromtimestamp(expiry_ts / 1000)
                                 delta_days = (expiry_dt - now).days
                                 days = max(delta_days, 0)
+                            elif expiry_ts < 0:
+                                # "Start after first use": 3x-ui stores the duration
+                                # as a negative number of milliseconds until the
+                                # timer starts on first connect. Show that duration.
+                                days = max(int(round(abs(expiry_ts) / 86400000.0)), 0)
                             else:
                                 is_unlimited_time = True
                             renewals.append(RenewalEvent(

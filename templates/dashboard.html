@@ -6382,9 +6382,17 @@
     async function performGlobalSearch(immediate = false) {
         const searchInput = document.getElementById('global-search-input');
         const clearBtn = document.getElementById('clear-search-btn');
-        // Convert Persian/Arabic digits to ASCII so phone numbers typed in
-        // Persian (۰۹۱۲…) match the stored English digits.
-        const query = toEnglishDigits(searchInput.value.trim()).toLowerCase();
+        // Convert Persian/Arabic digits to ASCII *in the box itself* so phone
+        // numbers typed/pasted in Persian (۰۹۱۲…) become English (0912…) and
+        // match the stored English digits. Digit replacement is 1:1 in length,
+        // so we can restore the caret position after rewriting the value.
+        const _converted = toEnglishDigits(searchInput.value);
+        if (_converted !== searchInput.value) {
+            const _caret = searchInput.selectionStart;
+            searchInput.value = _converted;
+            try { searchInput.setSelectionRange(_caret, _caret); } catch (e) {}
+        }
+        const query = searchInput.value.trim().toLowerCase();
 
         // Toggle clear button visibility
         if (searchInput.value.length > 0) {
