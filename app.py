@@ -9251,6 +9251,11 @@ def get_monitor_alerts():
     }
 
     alerts = []
+    # A v3 client assigned to several inbounds appears once per inbound in the
+    # snapshot. Those copies are the same account (same UUID), so collapse them to
+    # one alert card — keyed by (server_id, UUID), falling back to (server_id,
+    # email) for protocols without a UUID (e.g. Shadowsocks).
+    seen_clients = set()
 
     for inbound in inbounds:
         sid = inbound.get('server_id')
@@ -9287,6 +9292,12 @@ def get_monitor_alerts():
                     continue
                 if email_l not in owned_emails_by_server.get(sid_norm, set()):
                     continue
+
+            # Collapse the per-inbound copies of one v3 client into a single card.
+            dedupe_key = ('u', sid_norm, client_uuid_l) if client_uuid_l else ('e', sid_norm, email_l)
+            if dedupe_key in seen_clients:
+                continue
+            seen_clients.add(dedupe_key)
 
             enabled = bool(client.get('enable', True))
             # IMPORTANT: We do NOT skip disabled clients here. Sanaei-style panels
