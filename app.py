@@ -216,15 +216,20 @@ def load_snapshot_from_redis(force: bool = False) -> bool:
 _OWNERSHIP_CACHE: dict = {
     'email_map': {},   # {(server_id, email_lower): {'id':..,'username':..,'created_at':..}}
     'uuid_map':  {},   # {(server_id, uuid_lower):  {'id':..,'username':..,'created_at':..}}
+    'uuid_global_map': {},  # {uuid_lower: {...}} — server-independent fallback so
+                            # ownership survives a server re-add (new server_id) or
+                            # an inbound rebuild (new inbound_id). 3X-UI UUIDs are
+                            # globally unique, so matching by UUID alone is safe.
     'updated_at': 0.0, # time.monotonic()
 }
 _OWNERSHIP_CACHE_LOCK = threading.Lock()
 OWNERSHIP_CACHE_TTL = 30  # seconds — ownership refreshed at most every 30 s
 
-def _build_ownership_maps() -> tuple[dict, dict, bool]:
-    """Query DB once and return (email_map, uuid_map, success)."""
+def _build_ownership_maps() -> tuple[dict, dict, dict, bool]:
+    """Query DB once and return (email_map, uuid_map, uuid_global_map, success)."""
     email_map: dict = {}
     uuid_map:  dict = {}
+    uuid_global_map: dict = {}
     try:
         rows = (
             db.session.query(ClientOwnership, Admin)
@@ -254,26 +259,38 @@ def _build_ownership_maps() -> tuple[dict, dict, bool]:
                 ex = uuid_map.get(key)
                 if not ex or created >= ex.get('created_at', datetime.min):
                     uuid_map[key] = info
-        return email_map, uuid_map, True
+                exg = uuid_global_map.get(uu)
+                if not exg or created >= exg.get('created_at', datetime.min):
+                    uuid_global_map[uu] = info
+        return email_map, uuid_map, uuid_global_map, True
     except Exception:
         app.logger.exception("_build_ownership_maps failed — ownership cache not updated")
-        return email_map, uuid_map, False
+        return email_map, uuid_map, uuid_global_map, False
 
 def _get_ownership_maps(force: bool = False) -> tuple[dict, dict]:
     """Return cached (email_map, uuid_map); rebuild from DB if stale."""
+    _refresh_ownership_cache_if_stale(force)
+    return _OWNERSHIP_CACHE['email_map'], _OWNERSHIP_CACHE['uuid_map']
+
+def _get_ownership_uuid_global(force: bool = False) -> dict:
+    """Return the server-independent {uuid: info} map (rebuilt if stale)."""
+    _refresh_ownership_cache_if_stale(force)
+    return _OWNERSHIP_CACHE['uuid_global_map']
+
+def _refresh_ownership_cache_if_stale(force: bool = False) -> None:
     now = time.monotonic()
     with _OWNERSHIP_CACHE_LOCK:
         if not force and now - _OWNERSHIP_CACHE['updated_at'] < OWNERSHIP_CACHE_TTL:
-            return _OWNERSHIP_CACHE['email_map'], _OWNERSHIP_CACHE['uuid_map']
+            return
     # Build outside lock to avoid blocking other threads
-    em, um, ok = _build_ownership_maps()
+    em, um, ug, ok = _build_ownership_maps()
     with _OWNERSHIP_CACHE_LOCK:
         _OWNERSHIP_CACHE['email_map'] = em
         _OWNERSHIP_CACHE['uuid_map']  = um
+        _OWNERSHIP_CACHE['uuid_global_map'] = ug
         if ok:
             # Only cache on success — if DB failed, next request retries immediately
             _OWNERSHIP_CACHE['updated_at'] = time.monotonic()
-    return em, um
 
 def invalidate_ownership_cache() -> None:
     """Call after any ownership change so next request rebuilds from DB."""
@@ -9387,7 +9404,8 @@ def enrich_inbounds_with_ownership(inbounds):
             return inbounds
 
         email_map, uuid_map = _get_ownership_maps()
-        if not email_map and not uuid_map:
+        uuid_global = _get_ownership_uuid_global()
+        if not email_map and not uuid_map and not uuid_global:
             return inbounds
 
         for inbound in inbounds:
@@ -9401,6 +9419,10 @@ def enrich_inbounds_with_ownership(inbounds):
                 info = uuid_map.get((sid, uu)) if uu else None
                 if not info and em:
                     info = email_map.get((sid, em))
+                # Final fallback: match by UUID alone, so ownership survives a
+                # server re-add (new server_id) or inbound rebuild (new inbound_id).
+                if not info and uu:
+                    info = uuid_global.get(uu)
                 if info and info.get('username'):
                     client['owner_reseller_id'] = info.get('id')
                     client['owner_username']    = info.get('username')
@@ -9515,12 +9537,19 @@ def api_refresh():
     loose_matches = set()
     exact_uuid_matches = set()
     loose_uuid_matches = set()
-    
+    # UUID alone, independent of server_id/inbound_id. A reseller still only sees
+    # clients inside inbounds they have access to (gated separately below), so
+    # matching their owned UUIDs globally is safe and survives a server re-add or
+    # an inbound rebuild that changes the numeric inbound_id.
+    owned_uuid_any = set()
+
     for server_id_val, inbound_id_val, client_email_val, client_uuid_val in owned_ownerships:
         c_email = (client_email_val or '').lower()
         c_uuid = (client_uuid_val or '').strip().lower()
         sid = int(server_id_val)
-        
+        if c_uuid:
+            owned_uuid_any.add(c_uuid)
+
         if inbound_id_val is not None:
             exact_matches.add((sid, int(inbound_id_val), c_email))
             if c_uuid:
@@ -9581,7 +9610,11 @@ def api_refresh():
             # 2. تطابق بدون اینباند (سرور، ایمیل) - برای رکوردهای قدیمی یا ناقص
             is_assigned = False
             if c_uuid:
-                is_assigned = (sid, iid, c_uuid) in exact_uuid_matches or (sid, c_uuid) in loose_uuid_matches
+                is_assigned = (
+                    c_uuid in owned_uuid_any
+                    or (sid, iid, c_uuid) in exact_uuid_matches
+                    or (sid, c_uuid) in loose_uuid_matches
+                )
             if not is_assigned:
                 is_assigned = (sid, iid, c_email) in exact_matches or (sid, c_email) in loose_matches
             
