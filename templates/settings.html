@@ -2997,6 +2997,15 @@
     }
 
     // ── Upload: send zip to this server ──────────────────────────────────
+    function _showSslFixCommand(statusEl, errorText, fixCmd) {
+        statusEl.style.display = 'block';
+        statusEl.style.background = 'rgba(239,68,68,0.08)';
+        statusEl.style.color = '#ef4444';
+        statusEl.innerHTML = `<div style="margin-bottom:8px;">✗ ${escapeHtml(errorText.split('\n')[0])}</div>`
+            + `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:6px;">Run this command on the server once, then retry:</div>`
+            + `<code style="display:block;background:#0d0d1a;padding:10px;border-radius:6px;font-size:0.75rem;white-space:pre-wrap;color:#7eb8f7;word-break:break-all;">${escapeHtml(fixCmd)}</code>`;
+    }
+
     async function uploadSSL() {
         const input = document.getElementById('ssl-zip-input');
         const statusEl = document.getElementById('ssl-upload-status');
@@ -3020,18 +3029,22 @@
             if (data.success) {
                 statusEl.style.background = 'rgba(34,197,94,0.12)';
                 statusEl.style.color = '#22c55e';
-                statusEl.textContent = `✓ ${data.message} — cert: ${data.cert_path}`;
+                statusEl.textContent = `✓ ${data.message} — applying to nginx…`;
                 loadSSLSettings();
-                showToast('SSL files uploaded. Click "Apply SSL to nginx" to enable HTTPS.', 'success', 6000);
+                // Auto-apply nginx config after successful upload
+                const applyStatusEl = document.getElementById('ssl-apply-status');
+                applyStatusEl.style.display = 'block';
+                applyStatusEl.style.background = 'rgba(148,163,184,0.1)';
+                applyStatusEl.style.color = '#94a3b8';
+                applyStatusEl.textContent = '⏳ Applying SSL to nginx…';
+                await applySSL(true);
             } else {
-                statusEl.style.display = 'block';
-                statusEl.style.background = 'rgba(239,68,68,0.08)';
-                statusEl.style.color = '#ef4444';
                 if (data.fix_command) {
-                    statusEl.innerHTML = `<div style="margin-bottom:8px;">✗ ${escapeHtml(data.error.split('\n')[0])}</div>`
-                        + `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:6px;">Run this command on the server once, then retry:</div>`
-                        + `<code style="display:block;background:#0d0d1a;padding:10px;border-radius:6px;font-size:0.75rem;white-space:pre-wrap;color:#7eb8f7;word-break:break-all;">${escapeHtml(data.fix_command)}</code>`;
+                    _showSslFixCommand(statusEl, data.error, data.fix_command);
                 } else {
+                    statusEl.style.display = 'block';
+                    statusEl.style.background = 'rgba(239,68,68,0.08)';
+                    statusEl.style.color = '#ef4444';
                     statusEl.textContent = `✗ ${data.error}`;
                 }
             }
@@ -3044,12 +3057,14 @@
     }
 
     // ── Apply: write nginx config + reload ───────────────────────────────
-    async function applySSL() {
+    async function applySSL(calledFromUpload) {
         const statusEl = document.getElementById('ssl-apply-status');
-        statusEl.style.display = 'block';
-        statusEl.style.background = 'rgba(148,163,184,0.1)';
-        statusEl.style.color = '#94a3b8';
-        statusEl.textContent = '⏳ Applying SSL to nginx…';
+        if (!calledFromUpload) {
+            statusEl.style.display = 'block';
+            statusEl.style.background = 'rgba(148,163,184,0.1)';
+            statusEl.style.color = '#94a3b8';
+            statusEl.textContent = '⏳ Applying SSL to nginx…';
+        }
 
         try {
             const res  = await fetch('/api/settings/ssl/apply', {
@@ -3062,13 +3077,24 @@
                 statusEl.style.background = 'rgba(34,197,94,0.12)';
                 statusEl.style.color = '#22c55e';
                 statusEl.textContent = `✓ ${data.message}`;
+                // Also update upload status if called from upload flow
+                if (calledFromUpload) {
+                    const uploadStatusEl = document.getElementById('ssl-upload-status');
+                    uploadStatusEl.style.background = 'rgba(34,197,94,0.12)';
+                    uploadStatusEl.style.color = '#22c55e';
+                    uploadStatusEl.textContent = '✓ SSL files installed and nginx updated — panel is now HTTPS.';
+                }
                 loadSSLSettings();
                 showToast(data.message, 'success', 6000);
             } else {
-                statusEl.style.background = 'rgba(239,68,68,0.1)';
-                statusEl.style.color = '#ef4444';
-                statusEl.textContent = `✗ ${data.error}`;
-                showToast(data.error, 'error', 8000);
+                if (data.fix_command) {
+                    _showSslFixCommand(statusEl, data.error, data.fix_command);
+                } else {
+                    statusEl.style.background = 'rgba(239,68,68,0.1)';
+                    statusEl.style.color = '#ef4444';
+                    statusEl.textContent = `✗ ${data.error}`;
+                }
+                if (!calledFromUpload) showToast(data.error, 'error', 8000);
             }
         } catch (e) {
             statusEl.style.background = 'rgba(239,68,68,0.1)';

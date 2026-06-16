@@ -220,16 +220,52 @@
         return '';
     }
 
+    function _openLink(href) {
+        // Use <a> click — more reliable than window.open on iOS Safari for universal links
+        const a = document.createElement('a');
+        a.href = href;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+
     async function send(channel, phone, client, opts) {
         try {
             const prefix = _resolveChannelPrefix((opts && opts.templateType) || '');
             const apiChannel = prefix + channel; // e.g. 'royalty_whatsapp' or 'whatsapp'
-            const tpl = await getTemplate(apiChannel);
-            const message = renderMessage(tpl, client);
-            const href = channel === 'sms'
-                ? buildSms(phone, message)
-                : `https://wa.me/${phone.number}?text=${encodeURIComponent(message)}`;
-            window.open(href, '_blank', 'noopener');
+
+            // Synchronous fast-path: if template is already cached, build href and open
+            // immediately within the user-gesture context (iOS Safari blocks window.open
+            // after any await, even for a resolved promise).
+            if (templateCache[apiChannel] !== undefined) {
+                const message = renderMessage(templateCache[apiChannel], client);
+                const href = channel === 'sms'
+                    ? buildSms(phone, message)
+                    : `https://wa.me/${phone.number}?text=${encodeURIComponent(message)}`;
+                _openLink(href);
+                return;
+            }
+
+            // Slow path: open a blank window NOW (within user-gesture), then navigate it
+            // once we have the template — avoids iOS popup blocker.
+            const newWin = window.open('', '_blank');
+            try {
+                const tpl = await getTemplate(apiChannel);
+                const message = renderMessage(tpl, client);
+                const href = channel === 'sms'
+                    ? buildSms(phone, message)
+                    : `https://wa.me/${phone.number}?text=${encodeURIComponent(message)}`;
+                if (newWin && !newWin.closed) {
+                    newWin.location.href = href;
+                } else {
+                    _openLink(href);
+                }
+            } catch (_) {
+                if (newWin && !newWin.closed) newWin.close();
+                throw _;
+            }
         } catch (_) {
             if (global.showToast) global.showToast('Unable to prepare account message', 'error');
         }
@@ -252,10 +288,12 @@
         }, 'Select mobile number');
     }
 
-    // Warm the templates so the first click is instant
+    // Warm the templates so the first click is instant (sync fast-path in send())
     function warm() {
         getTemplate('whatsapp'); getTemplate('sms');
         getTemplate('royalty_whatsapp'); getTemplate('royalty_sms');
+        getTemplate('client_created_whatsapp'); getTemplate('client_created_sms');
+        getTemplate('renew_whatsapp'); getTemplate('renew_sms');
     }
 
     global.AccountMessage = { open, warm, extractNumbers };

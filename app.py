@@ -2255,6 +2255,7 @@ def _security_per_request_setup():
     _maybe_migrate_server_passwords()
 
 app = Flask(__name__)
+app.json.ensure_ascii = False  # send emoji/Persian as real UTF-8, not \uXXXX escapes
 # Trust one proxy hop (nginx SSL termination) so Flask sees correct scheme/host
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -19699,6 +19700,7 @@ def ssl_sync():
         "evemgr ALL=(root) NOPASSWD: /bin/systemctl reload nginx\n"
         "evemgr ALL=(root) NOPASSWD: /usr/sbin/nginx -t\n"
         "evemgr ALL=(root) NOPASSWD: /usr/bin/tee /etc/nginx/sites-available/eve-manager\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/tee /etc/nginx/sites-available/eve-manager\n"
         "EOF\n"
         "chmod 440 /etc/sudoers.d/eve-ssl'"
     )
@@ -19922,6 +19924,7 @@ def ssl_upload():
             "evemgr ALL=(root) NOPASSWD: /bin/systemctl reload nginx\n"
             "evemgr ALL=(root) NOPASSWD: /usr/sbin/nginx -t\n"
             "evemgr ALL=(root) NOPASSWD: /usr/bin/tee /etc/nginx/sites-available/eve-manager\n"
+            "evemgr ALL=(root) NOPASSWD: /bin/tee /etc/nginx/sites-available/eve-manager\n"
             "EOF\n"
             "chmod 440 /etc/sudoers.d/eve-ssl'"
         )
@@ -20050,6 +20053,24 @@ server {{
 }}
 """
 
+    SUDO_FIX_CMD = (
+        "sudo bash -c '"
+        "mkdir -p /etc/ssl/eve-manager && "
+        "chown evemgr:evemgr /etc/ssl/eve-manager && "
+        "chmod 700 /etc/ssl/eve-manager && "
+        "cat > /etc/sudoers.d/eve-ssl <<EOF\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/fullchain.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/live/*/privkey.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/fullchain*.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/cat /etc/letsencrypt/archive/*/privkey*.pem\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/systemctl reload nginx\n"
+        "evemgr ALL=(root) NOPASSWD: /usr/sbin/nginx -t\n"
+        "evemgr ALL=(root) NOPASSWD: /usr/bin/tee /etc/nginx/sites-available/eve-manager\n"
+        "evemgr ALL=(root) NOPASSWD: /bin/tee /etc/nginx/sites-available/eve-manager\n"
+        "EOF\n"
+        "chmod 440 /etc/sudoers.d/eve-ssl'"
+    )
+
     # Write config via sudo tee (evemgr needs sudo tee permission — added in setup.sh)
     try:
         result = subprocess.run(
@@ -20058,8 +20079,16 @@ server {{
             capture_output=True, timeout=10,
         )
         if result.returncode != 0:
+            stderr = result.stderr.strip()
+            is_sudo_perm = 'password' in stderr.lower() or 'terminal' in stderr.lower()
+            if is_sudo_perm:
+                return jsonify({
+                    'success': False,
+                    'error': f'Could not write nginx config: {stderr}',
+                    'fix_command': SUDO_FIX_CMD,
+                }), 500
             return jsonify({'success': False,
-                            'error': f'Could not write nginx config: {result.stderr.strip()}'}), 500
+                            'error': f'Could not write nginx config: {stderr}'}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': f'Failed to write nginx config: {e}'}), 500
 
