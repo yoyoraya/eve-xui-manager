@@ -226,10 +226,12 @@
     let includeResellerUsers = false;
     const MONITOR_STATUS_KEYS = ['ended', 'expired', 'low', 'soon'];
     const activeStatusFilters = new Set(['low', 'soon']);
+    let royaltyTemplates = { sms: '', whatsapp: '' };
 
     document.addEventListener('DOMContentLoaded', async () => {
         await loadMonitorSettings();
         await refreshAlerts();
+        loadRoyaltyTemplates();
         updateStatusChips();
         document.getElementById('monitor-search').addEventListener('input', handleMonitorSearch);
         document.getElementById('monitor-server-filter').addEventListener('change', renderAlerts);
@@ -243,6 +245,19 @@
             });
         }
     });
+
+    async function loadRoyaltyTemplates() {
+        try {
+            const [smsResp, waResp] = await Promise.all([
+                fetch('/api/templates/active?type=royalty_info_sms'),
+                fetch('/api/templates/active?type=royalty_info_whatsapp'),
+            ]);
+            const smsData = await smsResp.json();
+            const waData = await waResp.json();
+            royaltyTemplates.sms = smsData.content || '';
+            royaltyTemplates.whatsapp = waData.content || '';
+        } catch (_) {}
+    }
 
     async function loadMonitorSettings() {
         try {
@@ -585,7 +600,25 @@
         return row;
     }
 
-    function buildMessage(alert) {
+    function buildMessage(alert, channel) {
+        // Zero-usage users get the Royalty Information template
+        if (alert.zero_usage) {
+            const royaltyTpl = channel === 'whatsapp' ? royaltyTemplates.whatsapp : royaltyTemplates.sms;
+            if (royaltyTpl) {
+                return royaltyTpl
+                    .replace(/\{email\}/g, alert.email || '-')
+                    .replace(/\{account_name\}/g, alert.email || '-')
+                    .replace(/\{server_name\}/g, alert.server_name || '-')
+                    .replace(/\{remaining_time\}/g, alert.time_left || '-')
+                    .replace(/\{remaining_volume\}/g, alert.remaining || '-')
+                    .replace(/\{dashboard_link\}/g, '')
+                    .replace(/\{sub_link\}/g, '')
+                    .replace(/\{telegram_channel\}/g, '')
+                    .replace(/\{whatsapp_channel\}/g, '')
+                    .replace(/\{gift_volume\}/g, '')
+                    .replace(/\{if_gift\}[\s\S]*?\{\/if_gift\}/g, '');
+            }
+        }
         const templates = (monitorSettings || {}).templates || {};
         const template = templates[alert.status] || '';
         const vars = {
@@ -676,7 +709,7 @@
             return;
         }
 
-        const message = buildMessage(alert);
+        const message = buildMessage(alert, channel);
         const openTarget = (phone) => {
             const href = channel === 'sms'
                 ? buildSmsLink(phone.display, message)
