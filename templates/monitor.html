@@ -128,8 +128,8 @@
 
             <div class="monitor-filter-row">
                 <div class="monitor-status-filters">
-                    <button class="chip active" data-status="ended" data-label="Ended" onclick="toggleStatusFilter(this)">Ended (0)</button>
-                    <button class="chip active" data-status="expired" data-label="Expired" onclick="toggleStatusFilter(this)">Expired (0)</button>
+                    <button class="chip" data-status="ended" data-label="Ended" onclick="toggleStatusFilter(this)">Ended (0)</button>
+                    <button class="chip" data-status="expired" data-label="Expired" onclick="toggleStatusFilter(this)">Expired (0)</button>
                     <button class="chip active" data-status="low" data-label="Low" onclick="toggleStatusFilter(this)">Low (0)</button>
                     <button class="chip active" data-status="soon" data-label="Soon" onclick="toggleStatusFilter(this)">Soon (0)</button>
                     <button class="chip" data-status="disabled" data-label="Disabled" onclick="toggleStatusFilter(this)">Disabled (0)</button>
@@ -137,7 +137,7 @@
                 </div>
                 {% if role != 'reseller' %}
                 <label class="filter-toggle" title="Include reseller-owned users">
-                    <input type="checkbox" id="monitor-reseller-users-toggle" checked>
+                    <input type="checkbox" id="monitor-reseller-users-toggle">
                     <span class="toggle-track"></span>
                     <span class="toggle-text">Reseller users</span>
                 </label>
@@ -174,9 +174,9 @@
     let monitorSettings = null;
     let monitorTimezone = 'Asia/Tehran';
     let allAlerts = [];
-    let includeResellerUsers = true;
+    let includeResellerUsers = false;
     const MONITOR_STATUS_KEYS = ['ended', 'expired', 'low', 'soon'];
-    const activeStatusFilters = new Set(['ended', 'expired', 'low', 'soon']);
+    const activeStatusFilters = new Set(['low', 'soon']);
 
     document.addEventListener('DOMContentLoaded', async () => {
         await loadMonitorSettings();
