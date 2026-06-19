@@ -818,18 +818,18 @@
             overlay.innerHTML = `
                 <div class="modal" style="max-width: 400px;">
                     <div class="modal-header">
-                        <h2>تمدید رویالتی — بدون مصرف</h2>
+                        <h2>Add Days — No Usage</h2>
                         <button class="modal-close" type="button" data-royalty-close>&times;</button>
                     </div>
                     <div class="modal-body">
                         <p style="margin-bottom:12px; color: var(--text-secondary); font-size: 0.9rem;" id="royalty-modal-email-label"></p>
                         <div class="form-group">
-                            <label>تعداد روز اضافه</label>
+                            <label>Days to add</label>
                             <input type="number" id="royalty-days-input" min="1" max="365" value="30" style="width:100%">
                         </div>
                         <div style="display:flex; gap:8px; margin-top:16px;">
-                            <button class="btn btn-primary" style="flex:1" onclick="applyRoyaltyFromModal()">اعمال تمدید</button>
-                            <button class="btn btn-secondary" type="button" data-royalty-close>لغو</button>
+                            <button class="btn btn-primary" style="flex:1" onclick="applyRoyaltyFromModal()">Apply</button>
+                            <button class="btn btn-secondary" type="button" data-royalty-close>Cancel</button>
                         </div>
                     </div>
                 </div>
@@ -845,7 +845,7 @@
         overlay._serverId = serverId;
         overlay._inboundId = inboundId;
         overlay._email = email;
-        overlay.querySelector('#royalty-modal-email-label').textContent = `کاربر: ${email}`;
+        overlay.querySelector('#royalty-modal-email-label').textContent = `User: ${email}`;
         overlay.querySelector('#royalty-days-input').value = 30;
         overlay.classList.remove('hidden');
     }
@@ -860,7 +860,7 @@
         const days = parseInt(document.getElementById('royalty-days-input').value || '30', 10);
 
         if (!days || days <= 0) {
-            showToast('تعداد روز باید بیشتر از صفر باشد', 'error');
+            showToast('Days must be greater than zero', 'error');
             return;
         }
 
@@ -878,7 +878,7 @@
             });
             const result = await resp.json();
             if (result.success || result.job_id) {
-                showToast(`${days} روز به ${email} اضافه شد`, 'success');
+                showToast(`${days} days added to ${email}`, 'success');
                 const existing = allAlerts.find(
                     (a) => a.server_id === serverId && a.email === email
                 );
@@ -887,10 +887,10 @@
                     renderAlerts();
                 }
             } else {
-                showToast(result.error || 'خطا در تمدید', 'error');
+                showToast(result.error || 'Failed to add days', 'error');
             }
         } catch (err) {
-            showToast('خطا در ارتباط با سرور', 'error');
+            showToast('Server error, please try again', 'error');
         }
     }
 
