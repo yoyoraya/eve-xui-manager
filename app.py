@@ -9461,16 +9461,17 @@ def get_monitor_alerts():
             if total_bytes > 0 and remaining_bytes is not None:
                 if remaining_bytes <= 0:
                     status = 'ended'
-                    status_rank = 4
+                    status_rank = 3
                 elif remaining_gb is not None and remaining_gb < warning_gb:
                     status = 'low'
                     status_rank = 2
 
-            # Time-based reason
+            # Time-based reason — time takes priority over volume.
+            # expired (rank 4) always beats ended (rank 3) and low (rank 2).
             if expiry_ts and expiry_info.get('type') == 'expired':
-                if status_rank < 3:
+                if status_rank < 4:
                     status = 'expired'
-                    status_rank = 3
+                    status_rank = 4
             elif expiry_ts and expiry_info.get('type') in ('today', 'soon'):
                 if int(expiry_info.get('days') or 0) <= warning_days and status_rank < 1:
                     status = 'soon'
