@@ -7673,6 +7673,79 @@ def generate_client_link(client, inbound, server_host):
         app.logger.debug(f"Link gen failed: {exc}")
         return None
 
+def build_subscription_configs(server, sub_id, fallback_client=None, fallback_inbound=None):
+    """Return ALL protocol config links for a subscription id.
+
+    On 3x-ui v3 a single subId is attached to MULTIPLE inbounds; the panel's
+    own /sub server aggregates them into one subscription. When we can't proxy
+    that separate sub server (wrong/unreachable sub_port, v3.3.1 changes), we
+    must reproduce the full set ourselves instead of emitting only the first
+    inbound — otherwise client apps load fewer inbounds than the panel does.
+
+    Strategy (most authoritative first; each falls through on failure):
+      1) v3 API  GET /panel/api/clients/subLinks/{subId} — full link set, via
+         the main panel API port (reliable; independent of the sub server).
+      2) Live fetch_inbounds → generate_client_link for EVERY inbound whose
+         clients contain this subId (or a matching uuid when subId is empty).
+      3) Last resort: single (fallback_client, fallback_inbound) link.
+    """
+    sub_id = str(sub_id or '').strip()
+
+    session_obj = None
+    try:
+        session_obj, _login_err = get_xui_session(server)
+    except Exception:
+        session_obj = None
+
+    # 1) v3 authoritative endpoint — covers all attached inbounds at once.
+    if session_obj and sub_id and server_is_v3(server):
+        try:
+            ok, j, _e = _v3_get(server, session_obj, f"/panel/api/clients/subLinks/{quote(sub_id)}")
+            if ok and isinstance(j, dict):
+                obj = j.get('obj')
+                links = []
+                if isinstance(obj, list):
+                    for it in obj:
+                        if isinstance(it, str) and '://' in it:
+                            links.append(it.strip())
+                        elif isinstance(it, dict):
+                            u = (it.get('link') or it.get('url') or '').strip()
+                            if '://' in u:
+                                links.append(u)
+                if links:
+                    return links
+        except Exception as e:
+            app.logger.debug(f"v3 subLinks fetch failed for sub {sub_id}: {e}")
+
+    # 2) Aggregate generate_client_link across every inbound holding this subId.
+    if session_obj:
+        try:
+            inbounds, ferr, _t = fetch_inbounds(session_obj, server.host, server.panel_type)
+            if not ferr and inbounds:
+                links = []
+                seen = set()
+                for inb in inbounds:
+                    settings = _json_field(inb.get('settings'), {})
+                    for cli in settings.get('clients', []):
+                        c_sub = str(cli.get('subId') or '').strip()
+                        c_uuid = str(cli.get('id') or '').strip()
+                        if sub_id and (sub_id == c_sub or (not c_sub and sub_id == c_uuid)):
+                            link = generate_client_link(cli, inb, server.host)
+                            if link and link not in seen:
+                                seen.add(link)
+                                links.append(link)
+                if links:
+                    return links
+        except Exception as e:
+            app.logger.debug(f"Multi-inbound link aggregation failed for sub {sub_id}: {e}")
+
+    # 3) Last resort: the single inbound we already matched in the route.
+    if fallback_client and fallback_inbound:
+        link = generate_client_link(fallback_client, fallback_inbound, server.host)
+        if link:
+            return [link]
+    return []
+
 def find_client(inbounds, inbound_id, email):
     for inbound in inbounds:
         if inbound.get('id') != inbound_id:
@@ -16170,14 +16243,13 @@ def client_subscription(server_id, sub_id):
         except Exception as e:
             app.logger.error(f"Upstream sub fetch error: {e}")
 
-    # Use upstream configs if available, otherwise fallback to manual generation
+    # Use upstream configs if available, otherwise fallback to manual generation.
+    # On v3 a subId spans multiple inbounds: build the FULL set ourselves so we
+    # don't drop inbounds when the separate sub server can't be proxied.
     if upstream_configs:
         configs = upstream_configs
     else:
-        configs = []
-        direct_link = generate_client_link(target_client, target_inbound, server.host)
-        if direct_link:
-            configs.append(direct_link)
+        configs = build_subscription_configs(server, normalized_sub_id, target_client, target_inbound)
 
     subscription_entries = [entry for entry in configs if entry]
     # Append the live status config as the last entry (client-app payload only;
