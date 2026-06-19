@@ -9560,6 +9560,8 @@ def get_monitor_alerts():
                 'zero_usage': zero_usage,
                 'sms_count': msg_counts.get((sid_norm or 0, email_l), {}).get('sms', 0),
                 'wa_count': msg_counts.get((sid_norm or 0, email_l), {}).get('whatsapp', 0),
+                'sub_url': client.get('sub_url') or '',
+                'dash_sub_url': client.get('dash_sub_url') or '',
             })
 
     alerts.sort(key=lambda row: (
