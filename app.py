@@ -3421,6 +3421,7 @@ class Admin(db.Model):
     credit = db.Column(db.Integer, default=0)
     allow_negative_credit = db.Column(db.Boolean, default=False)
     negative_credit_limit = db.Column(db.Integer, default=0)
+    allow_free_creation = db.Column(db.Boolean, default=False)
     allowed_servers = db.Column(db.Text, default='[]')
     enabled = db.Column(db.Boolean, default=True)
     discount_percent = db.Column(db.Integer, default=0)
@@ -3453,6 +3454,7 @@ class Admin(db.Model):
             'credit': self.credit,
             'allow_negative_credit': bool(self.allow_negative_credit),
             'negative_credit_limit': self.negative_credit_limit or 0,
+            'allow_free_creation': bool(self.allow_free_creation),
             'allowed_servers': parse_allowed_servers(self.allowed_servers),
             'enabled': self.enabled,
             'discount_percent': self.discount_percent,
@@ -5748,6 +5750,7 @@ with app.app_context():
             ('channel_whatsapp',      'TEXT'),
             ('allow_negative_credit', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
             ('negative_credit_limit', 'INTEGER DEFAULT 0'),
+            ('allow_free_creation', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
             ('sub_shown_package_ids', "TEXT DEFAULT '[]'"),
             ('support_sms', 'VARCHAR(64)'),
         ]
@@ -8701,6 +8704,7 @@ def dashboard():
                          admin_username=user.username,
                          is_superadmin=(user.role == 'superadmin' or user.is_superadmin),
                          role=user.role,
+                         allow_free=(user.role != 'reseller' or bool(getattr(user, 'allow_free_creation', False))),
                          credit=user.credit,
                          base_cost_day=user_cost_day,
                          base_cost_gb=user_cost_gb,
@@ -11217,6 +11221,14 @@ def _get_cached_raw_client(server_id: int, inbound_id: int, email: str):
     return target_client
 
 
+def _reseller_can_create_free(user) -> bool:
+    """Free creation/renew is allowed for admins/superadmins, and only for
+    resellers explicitly granted the permission in their user settings."""
+    if getattr(user, 'role', None) != 'reseller':
+        return True
+    return bool(getattr(user, 'allow_free_creation', False))
+
+
 def _user_can_afford(user, price: int) -> tuple[bool, str | None]:
     """Check if user can afford price, respecting negative credit allowance.
     Returns (ok, error_message_or_None).
@@ -11387,6 +11399,8 @@ def reset_client_traffic(server_id, inbound_id):
     user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
     
     is_free = bool(data.get('is_free', False))
+    if is_free and not _reseller_can_create_free(user):
+        return jsonify({"success": False, "error": "Free creation is not permitted for your account"}), 403
     if is_free:
         charge_amount = 0
     else:
@@ -12269,6 +12283,8 @@ def renew_client(server_id, inbound_id, email):
     start_after_first_use = bool(data.get('start_after_first_use', False))
     reset_traffic = bool(data.get('reset_traffic', False))
     is_free = bool(data.get('free', False))
+    if is_free and not _reseller_can_create_free(user):
+        return _finish({"success": False, "error": "Free renewal is not permitted for your account"}, 403)
     mode = (data.get('mode') or 'custom').lower()
     if mode not in ('package', 'custom'):
         mode = 'custom'
@@ -13106,6 +13122,7 @@ def add_admin():
         credit=int(data.get('credit', 0)),
         allow_negative_credit=bool(data.get('allow_negative_credit', False)),
         negative_credit_limit=max(0, int(data.get('negative_credit_limit', 0) or 0)),
+        allow_free_creation=bool(data.get('allow_free_creation', False)),
         allowed_servers=serialize_allowed_servers(data.get('allowed_servers', [])),
         enabled=data.get('enabled', True),
         discount_percent=int(data.get('discount_percent', 0)),
@@ -13190,6 +13207,7 @@ def update_admin(admin_id):
     if 'credit' in data: admin.credit = int(data['credit'])
     if 'allow_negative_credit' in data: admin.allow_negative_credit = bool(data['allow_negative_credit'])
     if 'negative_credit_limit' in data: admin.negative_credit_limit = max(0, int(data['negative_credit_limit'] or 0))
+    if 'allow_free_creation' in data: admin.allow_free_creation = bool(data['allow_free_creation'])
     if 'allowed_servers' in data: admin.allowed_servers = serialize_allowed_servers(data['allowed_servers'])
     if 'enabled' in data: admin.enabled = data['enabled']
     if 'discount_percent' in data: admin.discount_percent = int(data['discount_percent'])
@@ -13730,7 +13748,9 @@ def add_client(server_id, inbound_id):
     mode = data.get('mode', 'custom')
     start_after_first_use = bool(data.get('start_after_first_use', False))
     is_free = bool(data.get('free', False))
-    
+    if is_free and not _reseller_can_create_free(user):
+        return jsonify({"success": False, "error": "Free creation is not permitted for your account"}), 403
+
     if not email: return jsonify({"success": False, "error": "Email is required"})
 
     price = 0

@@ -578,7 +578,7 @@
             </div>
 
             <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; align-items: stretch; margin-bottom: 5px;">
-                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                <label class="form-group form-toggle-item free-toggle-wrap" style="cursor: pointer; margin: 0;">
                     <div class="toggle-switch">
                         <input type="checkbox" id="renew-free-toggle" onchange="refreshRenewPriceDisplay()">
                         <span class="slider"></span>
@@ -735,7 +735,7 @@
                     </div>
 
                     <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; align-items: stretch; margin-bottom: 15px;">
-                        <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                        <label class="form-group form-toggle-item free-toggle-wrap" style="cursor: pointer; margin: 0;">
                             <div class="toggle-switch">
                                 <input type="checkbox" id="reset-free-toggle" onchange="updateResetCost()">
                                 <span class="slider"></span>
@@ -906,7 +906,7 @@
             </div>
 
             <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; align-items: stretch; margin-bottom: 5px;">
-                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                <label class="form-group form-toggle-item free-toggle-wrap" style="cursor: pointer; margin: 0;">
                     <div class="toggle-switch">
                         <input type="checkbox" id="add-client-free-toggle" onchange="updateAddPriceDisplay()">
                         <span class="slider"></span>
@@ -1528,6 +1528,18 @@
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
+    const ALLOW_FREE = {{ 'true' if allow_free else 'false' }};
+
+    // Resellers without the "Free creation" permission must not see any Free toggle.
+    function applyFreePermissionUI() {
+        if (ALLOW_FREE) return;
+        document.querySelectorAll('.free-toggle-wrap').forEach(el => {
+            el.style.display = 'none';
+            const cb = el.querySelector('input[type="checkbox"]');
+            if (cb) cb.checked = false;
+        });
+    }
+    document.addEventListener('DOMContentLoaded', applyFreePermissionUI);
         function escapeHtml(value) {
             const s = String(value ?? '');
             return s

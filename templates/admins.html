@@ -544,6 +544,15 @@
                     <small style="color: var(--text-secondary);">عملیات تا زمانی که موجودی بالاتر از این مقدار منفی باشد مجاز است</small>
                 </div>
 
+                <label class="form-group form-toggle-item" style="cursor: pointer; margin-bottom: 4px;">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="admin-allow-free">
+                        <span class="slider"></span>
+                    </div>
+                    <span>مجاز به ساخت/تمدید رایگان (Allow Free Creation)</span>
+                </label>
+                <small style="color: var(--text-secondary); display:block; margin: -2px 0 10px;">در صورت فعال بودن، این کاربر گزینه Free را هنگام ساخت، تمدید و ریست مشاهده می‌کند</small>
+
                 <div class="form-group">
                     <label>Support Links (Subscription Page)</label>
                     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
@@ -1231,6 +1240,7 @@
         document.getElementById('admin-credit').value = '0';
         document.getElementById('admin-allow-negative').checked = false;
         document.getElementById('admin-negative-limit').value = '0';
+        document.getElementById('admin-allow-free').checked = false;
         toggleNegativeLimitField();
         document.getElementById('admin-allowed-servers').value = '*';
         document.getElementById('admin-discount').value = '0';
@@ -1264,6 +1274,7 @@
         document.getElementById('admin-credit').value = Number(admin.credit || 0).toLocaleString('en-US');
         document.getElementById('admin-allow-negative').checked = !!admin.allow_negative_credit;
         document.getElementById('admin-negative-limit').value = (admin.negative_credit_limit || 0).toLocaleString();
+        document.getElementById('admin-allow-free').checked = !!admin.allow_free_creation;
         toggleNegativeLimitField();
         const normalizedAllowed = normalizeAllowedInput(admin.allowed_servers);
         applyAllowedServers(normalizedAllowed);
@@ -1413,6 +1424,7 @@
             credit: parseInt(creditRaw) || 0,
             allow_negative_credit: document.getElementById('admin-allow-negative').checked,
             negative_credit_limit: Math.max(0, parseInt(negLimitRaw) || 0),
+            allow_free_creation: document.getElementById('admin-allow-free').checked,
             allowed_servers: allowedServers,
             enabled: document.getElementById('admin-enabled').checked,
             discount_percent: parseInt(document.getElementById('admin-discount').value) || 0,
