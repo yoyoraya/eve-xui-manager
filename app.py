@@ -4756,6 +4756,140 @@ def _whatsapp_render_bot_template(event_name: str, vars_dict: dict, runtime_cfg:
         return ''
 
 
+def _public_base_url() -> str:
+    """Absolute base URL of the panel, derived from the configured domain.
+    Used to build dashboard links from background workers (no request context)."""
+    domain = (_get_system_setting_value(PANEL_DOMAIN_SETTING_KEY, '') or '').strip().rstrip('/')
+    if not domain:
+        return ''
+    if domain.startswith('http://') or domain.startswith('https://'):
+        return domain
+    proto = 'http' if _is_ip_address(domain) else 'https'
+    return f"{proto}://{domain}"
+
+
+def _run_whatsapp_depletion_scan() -> dict:
+    """Scan cached clients and proactively message accounts whose time or volume
+    is about to run out, once per cooldown window. Honors enable/region/warm-up/
+    rate-limit via _send_whatsapp_message; stops early when the daily cap or pace
+    gate is hit so it never bursts."""
+    cfg = _get_whatsapp_runtime_settings()
+    if cfg.get('deployment_region') == 'iran' or not cfg.get('enabled') or not cfg.get('depletion_enabled'):
+        return {'scanned': 0, 'sent': 0, 'reason': 'disabled'}
+
+    expiry_days = int(cfg.get('depletion_expiry_days') or 3)
+    volume_gb_thr = float(cfg.get('depletion_volume_gb') or 2.0)
+    cooldown_days = int(cfg.get('depletion_cooldown_days') or 7)
+    base_url = _public_base_url()
+    cooldown_cut = datetime.utcnow() - timedelta(days=cooldown_days)
+
+    inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    scanned = 0
+    sent = 0
+    seen = set()
+
+    for inbound in inbounds:
+        sid = inbound.get('server_id')
+        try:
+            sid_norm = int(sid)
+        except (TypeError, ValueError):
+            sid_norm = None
+        for client in (inbound.get('clients') or []):
+            email = (client.get('email') or '').strip()
+            email_l = email.lower()
+            if not email_l:
+                continue
+            dedupe = (sid_norm, email_l)
+            if dedupe in seen:
+                continue
+            seen.add(dedupe)
+            scanned += 1
+
+            recipient = _extract_iran_mobile_from_text(email, client.get('comment') or '')
+            if not recipient:
+                continue
+
+            total_bytes = int(client.get('totalGB') or 0)
+            try:
+                used = int(client.get('up') or 0) + int(client.get('down') or 0)
+            except Exception:
+                used = 0
+            rem_bytes = client.get('remaining_bytes')
+            if rem_bytes is None or rem_bytes == -1:
+                rem_bytes = max(total_bytes - used, 0) if total_bytes > 0 else None
+            rem_gb = (float(rem_bytes) / (1024 ** 3)) if rem_bytes is not None else None
+
+            expiry_ts = int(client.get('expiryTimestamp') or 0)
+            exp = format_remaining_days(expiry_ts)
+            days_left = int(exp.get('days') or 0)
+            near_time = bool(expiry_ts and exp.get('type') in ('today', 'soon') and days_left <= expiry_days)
+            near_vol = bool(rem_gb is not None and 0 < rem_gb <= volume_gb_thr)
+            if not (near_time or near_vol):
+                continue
+
+            try:
+                recent = WhatsappBotLog.query.filter(
+                    WhatsappBotLog.email == email_l,
+                    WhatsappBotLog.server_id == (sid_norm or 0),
+                    WhatsappBotLog.event == 'depletion',
+                    WhatsappBotLog.sent_at >= cooldown_cut,
+                ).first()
+            except Exception:
+                recent = None
+            if recent:
+                continue
+
+            final_id = client.get('subId') or client.get('id') or ''
+            dash = (client.get('dash_sub_url') or '').strip()
+            if dash and not dash.startswith('http') and base_url:
+                dash = base_url + (dash if dash.startswith('/') else f"/{dash}")
+            elif not dash and base_url and final_id and sid_norm is not None:
+                dash = f"{base_url}/s/{sid_norm}/{final_id}"
+
+            vars_dict = {
+                'email': email, 'account_name': email, 'user': email,
+                'remaining_time': exp.get('text') or '-',
+                'remaining_volume': client.get('remaining_formatted') or '-',
+                'dashboard_link': dash, 'sub_link': dash,
+                'server_name': inbound.get('server_name') or '',
+            }
+            text_msg = _whatsapp_render_bot_template('depletion', vars_dict, cfg)
+            if not text_msg:
+                continue
+
+            res = _send_whatsapp_message('depletion', email, text_msg, recipient_comment=client.get('comment') or '')
+            if res.get('sent'):
+                try:
+                    db.session.add(WhatsappBotLog(email=email_l, server_id=(sid_norm or 0), event='depletion'))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                sent += 1
+            else:
+                reason = res.get('reason') or ''
+                # Cap/pace hit → stop this cycle; the next scan will resume.
+                if reason in ('daily_limit_reached', 'pace_gated'):
+                    return {'scanned': scanned, 'sent': sent, 'stopped': reason}
+
+    return {'scanned': scanned, 'sent': sent}
+
+
+def whatsapp_bot_worker():
+    """Background loop running the near-depletion scan periodically."""
+    while True:
+        try:
+            with app.app_context():
+                result = _run_whatsapp_depletion_scan()
+                if result.get('sent'):
+                    app.logger.info(f"[whatsapp-bot] depletion scan sent={result.get('sent')} scanned={result.get('scanned')}")
+        except Exception as exc:
+            try:
+                app.logger.warning(f"[whatsapp-bot] scan error: {exc}")
+            except Exception:
+                pass
+        time.sleep(1800)  # every 30 minutes
+
+
 def _normalize_ascii_digits(value: str | None) -> str:
     val = str(value or '')
     table = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
@@ -5311,6 +5445,17 @@ class MonitorMessageLog(db.Model):
     channel = db.Column(db.String(16), nullable=False)  # 'sms' or 'whatsapp'
     sent_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     sent_by = db.Column(db.Integer)  # admin id
+
+
+class WhatsappBotLog(db.Model):
+    """Dedup log for the OpenWA near-depletion bot — one row per send so a
+    cooldown window can be enforced per (email, server_id, event)."""
+    __tablename__ = 'whatsapp_bot_log'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    server_id = db.Column(db.Integer, nullable=False)
+    event = db.Column(db.String(32), nullable=False, default='depletion')
+    sent_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 def _add_health_log(level, category, message, action_taken=None, details=None, resolved=False):
@@ -22161,6 +22306,15 @@ def ensure_background_threads_started():
             print(f"Failed to start usage snapshot thread: {e}")
     else:
         print("[Singleton] snapshot_worker already owned by another worker, skipping.")
+
+    # Singleton: only one worker runs the WhatsApp near-depletion bot scanner
+    if _claim_singleton('whatsapp_bot_worker'):
+        try:
+            threading.Thread(target=whatsapp_bot_worker, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to start whatsapp bot thread: {e}")
+    else:
+        print("[Singleton] whatsapp_bot_worker already owned by another worker, skipping.")
 
 if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
     # Start threads on module import (works under gunicorn as well)
