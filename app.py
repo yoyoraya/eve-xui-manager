@@ -4729,6 +4729,33 @@ def _whatsapp_effective_daily_cap(runtime_cfg: dict) -> int:
     return max(1, min(daily_limit, int(round(cap))))
 
 
+def _whatsapp_render_bot_template(event_name: str, vars_dict: dict, runtime_cfg: dict | None = None) -> str:
+    """Render the dedicated WhatsApp 'bot' template for a scenario.
+
+    Returns '' when no bot template is configured for the event, so callers can
+    fall back to the generic copy text. Events map to the four scenarios:
+    created / renew / ended / info.
+    """
+    cfg = runtime_cfg or _get_whatsapp_runtime_settings()
+    mapping = {
+        'created': cfg.get('bot_tpl_created'),
+        'client_created': cfg.get('bot_tpl_created'),
+        'renew': cfg.get('bot_tpl_renew'),
+        'renew_success': cfg.get('bot_tpl_renew'),
+        'ended': cfg.get('bot_tpl_ended'),
+        'expired': cfg.get('bot_tpl_ended'),
+        'depletion': cfg.get('bot_tpl_ended'),
+        'info': cfg.get('bot_tpl_info'),
+    }
+    tpl = (mapping.get(event_name) or '').strip()
+    if not tpl:
+        return ''
+    try:
+        return _render_text_template(tpl, vars_dict or {})
+    except Exception:
+        return ''
+
+
 def _normalize_ascii_digits(value: str | None) -> str:
     val = str(value or '')
     table = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
@@ -12715,7 +12742,10 @@ def renew_client(server_id, inbound_id, email):
 
                 whatsapp_runtime = _get_whatsapp_runtime_settings()
                 _client_comment = (target_client.get('comment') or '') if target_client else ''
-                whatsapp_delivery = _send_whatsapp_message('renew_success', email, copy_text, recipient_comment=_client_comment)
+                # WhatsApp bot uses its own renew template (falls back to the
+                # generic renew copy when no bot template is configured).
+                _wa_text = _whatsapp_render_bot_template('renew_success', _renew_tpl_vars, whatsapp_runtime) or copy_text
+                whatsapp_delivery = _send_whatsapp_message('renew_success', email, _wa_text, recipient_comment=_client_comment)
                 whatsapp_meta = {
                     'enabled': whatsapp_runtime.get('enabled', False),
                     'deployment_region': whatsapp_runtime.get('deployment_region', 'outside'),
