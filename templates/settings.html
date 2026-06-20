@@ -557,21 +557,29 @@
 
                 <div class="form-group">
                     <label>Provider</label>
-                    <select id="wa-provider" class="form-select">
+                    <select id="wa-provider" class="form-select" onchange="onWaProviderChange()">
                         <option value="baileys" {% if whatsapp_provider == 'baileys' %}selected{% endif %}>Baileys</option>
                         <option value="cloud" {% if whatsapp_provider == 'cloud' %}selected{% endif %}>WhatsApp Cloud API</option>
+                        <option value="openwa" {% if whatsapp_provider == 'openwa' %}selected{% endif %}>OpenWA (self-hosted)</option>
                     </select>
                 </div>
 
                 <div class="form-group">
                     <label>Gateway URL</label>
                     <input type="text" id="wa-gateway-url" class="form-control" value="{{ whatsapp_gateway_url }}" placeholder="https://wa-gateway.example.com">
-                    <small class="text-secondary">If you do not know this value, click <strong>Auto Setup</strong>. Manual value is optional.</small>
+                    <small class="text-secondary">If you do not know this value, click <strong>Auto Setup</strong>. Manual value is optional. <span class="wa-openwa-hint" style="display:none;">For OpenWA use the API base, e.g. <code>http://localhost:2785</code> (no trailing path).</span></small>
+                </div>
+
+                <div class="form-group wa-openwa-only" style="display:none;">
+                    <label>OpenWA Session Name</label>
+                    <input type="text" id="wa-session-id" class="form-control" value="{{ whatsapp_session_id }}" placeholder="e.g. navid">
+                    <small class="text-secondary">The name of the connected session in your OpenWA dashboard. Messages are sent from that WhatsApp account.</small>
                 </div>
 
                 <div class="form-group">
-                    <label>Gateway API Key (optional)</label>
+                    <label>Gateway API Key <span class="wa-apikey-note">(optional)</span></label>
                     <input type="text" id="wa-gateway-api-key" class="form-control" value="{{ whatsapp_gateway_api_key }}" placeholder="Bearer token">
+                    <small class="text-secondary wa-openwa-hint" style="display:none;">For OpenWA paste the <code>owa_k1_...</code> API key (sent as <code>X-API-Key</code>).</small>
                 </div>
 
                 <div class="form-group">
@@ -2165,11 +2173,20 @@
 
     function loadWhatsAppSettings() {
         applyWhatsAppRegionStateSettings();
+        onWaProviderChange();
         const region = (document.getElementById('wa-deployment-region') || {}).value || 'outside';
         const gateway = ((document.getElementById('wa-gateway-url') || {}).value || '').trim();
         if (region !== 'iran' && !gateway) {
             autoConfigureWhatsAppGatewaySettings({ silent: true }).catch(() => {});
         }
+    }
+
+    function onWaProviderChange() {
+        const provider = ((document.getElementById('wa-provider') || {}).value || 'baileys');
+        const isOpenWa = provider === 'openwa';
+        document.querySelectorAll('.wa-openwa-only').forEach(el => { el.style.display = isOpenWa ? '' : 'none'; });
+        document.querySelectorAll('.wa-openwa-hint').forEach(el => { el.style.display = isOpenWa ? '' : 'none'; });
+        document.querySelectorAll('.wa-apikey-note').forEach(el => { el.textContent = isOpenWa ? '(required)' : '(optional)'; });
     }
 
     function applyWhatsAppRegionStateSettings() {
@@ -2184,6 +2201,7 @@
             'wa-provider',
             'wa-gateway-url',
             'wa-gateway-api-key',
+            'wa-session-id',
             'wa-gateway-timeout',
             'wa-enabled',
             'wa-trigger-renew',
@@ -2234,6 +2252,7 @@
             whatsapp_provider: (document.getElementById('wa-provider') || {}).value || 'baileys',
             whatsapp_gateway_url: (document.getElementById('wa-gateway-url') || {}).value || '',
             whatsapp_gateway_api_key: (document.getElementById('wa-gateway-api-key') || {}).value || '',
+            whatsapp_session_id: (document.getElementById('wa-session-id') || {}).value || '',
             whatsapp_gateway_timeout_seconds: Number((document.getElementById('wa-gateway-timeout') || {}).value || 10),
             whatsapp_enabled: isIran ? false : !!(document.getElementById('wa-enabled') || {}).checked,
             whatsapp_trigger_renew_success: !!(document.getElementById('wa-trigger-renew') || {}).checked,

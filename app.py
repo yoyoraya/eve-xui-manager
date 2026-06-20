@@ -3973,6 +3973,9 @@ WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY = 'whatsapp_template_pre_expiry'
 WHATSAPP_GATEWAY_URL_KEY = 'whatsapp_gateway_url'
 WHATSAPP_GATEWAY_API_KEY = 'whatsapp_gateway_api_key'
 WHATSAPP_GATEWAY_TIMEOUT_KEY = 'whatsapp_gateway_timeout_seconds'
+# OpenWA (self-hosted gateway) session name, e.g. "navid". Used only when
+# provider == 'openwa' to address POST /api/sessions/{session}/messages/send-text.
+WHATSAPP_SESSION_KEY = 'whatsapp_session_id'
 
 DEFAULT_WHATSAPP_TEMPLATE_RENEW = "سلام {user}، تمدید شما با موفقیت انجام شد."
 DEFAULT_WHATSAPP_TEMPLATE_WELCOME = "سلام {user}، اشتراک شما فعال شد."
@@ -4051,6 +4054,7 @@ WHATSAPP_CONFIG_KEYS = {
     WHATSAPP_GATEWAY_URL_KEY,
     WHATSAPP_GATEWAY_API_KEY,
     WHATSAPP_GATEWAY_TIMEOUT_KEY,
+    WHATSAPP_SESSION_KEY,
 }
 DEFAULT_MONITOR_SETTINGS = {
     "filters": {
@@ -4332,7 +4336,25 @@ def _normalize_whatsapp_provider(value: str | None) -> str:
     raw = (value or '').strip().lower()
     if raw in ('cloud', 'meta', 'official'):
         return 'cloud'
+    if raw in ('openwa', 'open-wa', 'open_wa', 'owa'):
+        return 'openwa'
     return 'baileys'
+
+
+def _normalize_whatsapp_session(value: str | None) -> str:
+    """OpenWA session name: letters, digits, hyphens, underscores only."""
+    raw = (value or '').strip()
+    if not raw:
+        return ''
+    return re.sub(r'[^A-Za-z0-9_-]', '', raw)[:64]
+
+
+def _whatsapp_chat_id(recipient: str) -> str:
+    """Convert a +98XXXXXXXXXX recipient to OpenWA chatId '98XXXXXXXXXX@c.us'."""
+    digits = re.sub(r'[^\d]', '', recipient or '')
+    if not digits:
+        return ''
+    return f"{digits}@c.us"
 
 
 def _normalize_whatsapp_gateway_url(value: str | None) -> str:
@@ -4344,19 +4366,26 @@ def _normalize_whatsapp_gateway_url(value: str | None) -> str:
     return raw.rstrip('/')
 
 
-def _probe_whatsapp_gateway(gateway_url: str, timeout_seconds: int, api_key: str | None = None) -> tuple[bool, int | None, str | None]:
+def _probe_whatsapp_gateway(gateway_url: str, timeout_seconds: int, api_key: str | None = None, provider: str | None = None) -> tuple[bool, int | None, str | None]:
     normalized = _normalize_whatsapp_gateway_url(gateway_url)
     if not normalized:
         return False, None, 'empty_gateway_url'
 
     headers = {}
     token = (api_key or '').strip()
-    if token:
-        headers['Authorization'] = f"Bearer {token}"
+    if provider == 'openwa':
+        # OpenWA exposes GET /api/health and authenticates via X-API-Key.
+        health_path = f"{normalized}/api/health"
+        if token:
+            headers['X-API-Key'] = token
+    else:
+        health_path = f"{normalized}/health"
+        if token:
+            headers['Authorization'] = f"Bearer {token}"
 
     try:
         response = requests.get(
-            f"{normalized}/health",
+            health_path,
             headers=headers,
             timeout=max(3, int(timeout_seconds or 10)),
             verify=False,
@@ -4367,6 +4396,48 @@ def _probe_whatsapp_gateway(gateway_url: str, timeout_seconds: int, api_key: str
         return False, status_code, 'non_success_status'
     except Exception as exc:
         return False, None, str(exc)
+
+
+def _openwa_session_status(gateway_url: str, api_key: str, session_name: str, timeout_seconds: int) -> dict:
+    """Look up an OpenWA session by name in GET /api/sessions and return its row.
+
+    Returns {'found': bool, 'connected': bool, 'status': str, 'phone': str, 'error': str|None}.
+    """
+    normalized = _normalize_whatsapp_gateway_url(gateway_url)
+    result = {'found': False, 'connected': False, 'status': '', 'phone': '', 'error': None}
+    if not normalized or not session_name:
+        result['error'] = 'missing_gateway_or_session'
+        return result
+    headers = {}
+    if (api_key or '').strip():
+        headers['X-API-Key'] = api_key.strip()
+    try:
+        resp = requests.get(
+            f"{normalized}/api/sessions",
+            headers=headers,
+            timeout=max(3, int(timeout_seconds or 10)),
+            verify=False,
+        )
+        if resp.status_code != 200:
+            result['error'] = f"sessions_http_{resp.status_code}"
+            return result
+        rows = resp.json() or []
+        target = session_name.strip().lower()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get('name') or '').strip().lower() == target or str(row.get('id') or '').strip().lower() == target:
+                status = str(row.get('status') or '').strip().lower()
+                result['found'] = True
+                result['status'] = status
+                result['phone'] = str(row.get('phone') or '')
+                result['connected'] = status in ('connected', 'ready', 'authenticated', 'active')
+                return result
+        result['error'] = 'session_not_found'
+        return result
+    except Exception as exc:
+        result['error'] = str(exc)
+        return result
 
 
 def _build_whatsapp_gateway_candidates(host_hint: str | None = None, configured_url: str | None = None) -> list[str]:
@@ -4392,6 +4463,7 @@ def _build_whatsapp_gateway_candidates(host_hint: str | None = None, configured_
         local_hosts.append(host)
 
     for h in local_hosts:
+        add(f"http://{h}:2785")  # OpenWA default API port
         add(f"http://{h}:3000")
         add(f"http://{h}:3001")
         add(f"http://{h}:8080")
@@ -4437,6 +4509,7 @@ def _get_whatsapp_runtime_settings() -> dict:
         WHATSAPP_RETRY_COUNT_KEY, WHATSAPP_BACKOFF_SECONDS_KEY, WHATSAPP_CIRCUIT_BREAKER_KEY,
         WHATSAPP_TEMPLATE_RENEW_KEY, WHATSAPP_TEMPLATE_WELCOME_KEY, WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY,
         WHATSAPP_GATEWAY_URL_KEY, WHATSAPP_GATEWAY_API_KEY, WHATSAPP_GATEWAY_TIMEOUT_KEY,
+        WHATSAPP_SESSION_KEY,
     ]
     _c = _get_system_configs_batch(_wa_keys)
 
@@ -4475,6 +4548,7 @@ def _get_whatsapp_runtime_settings() -> dict:
         'gateway_url': _normalize_whatsapp_gateway_url(_txt(WHATSAPP_GATEWAY_URL_KEY, '')),
         'gateway_api_key': _txt(WHATSAPP_GATEWAY_API_KEY, '').strip(),
         'gateway_timeout_seconds': _int(WHATSAPP_GATEWAY_TIMEOUT_KEY, 10, min_value=3, max_value=60),
+        'session_id': _normalize_whatsapp_session(_txt(WHATSAPP_SESSION_KEY, '')),
     }
 
     if region == 'iran':
@@ -4602,8 +4676,52 @@ def _send_whatsapp_message(event_name: str, recipient_source: str, message_text:
         result['recipient'] = recipient
         return result
 
-    headers = {'Content-Type': 'application/json'}
+    provider = (runtime_cfg.get('provider') or 'baileys').strip().lower()
     api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+    timeout = int(runtime_cfg.get('gateway_timeout_seconds') or 10)
+    result['attempted'] = True
+    result['recipient'] = recipient
+
+    if provider == 'openwa':
+        # OpenWA self-hosted gateway: session-scoped send-text endpoint.
+        session_name = (runtime_cfg.get('session_id') or '').strip()
+        if not session_name:
+            result['attempted'] = False
+            result['reason'] = 'openwa_session_not_configured'
+            return result
+        chat_id = _whatsapp_chat_id(recipient)
+        if not chat_id:
+            result['reason'] = 'invalid_recipient'
+            return result
+        headers = {'Content-Type': 'application/json'}
+        if api_key:
+            headers['X-API-Key'] = api_key
+        payload = {'chatId': chat_id, 'text': (message_text or '').strip()}
+        try:
+            response = requests.post(
+                f"{gateway_url}/api/sessions/{session_name}/messages/send-text",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+                verify=False,
+            )
+            result['status_code'] = int(response.status_code)
+            if 200 <= response.status_code < 300:
+                result['sent'] = True
+                return result
+            # Surface the gateway's own message (e.g. "session not active") to help debugging.
+            try:
+                body_msg = (response.json() or {}).get('message')
+            except Exception:
+                body_msg = None
+            result['reason'] = f"gateway_http_{response.status_code}" + (f": {body_msg}" if body_msg else '')
+            return result
+        except Exception as exc:
+            result['reason'] = f"gateway_error: {exc}"
+            return result
+
+    # Baileys-style simple gateway: POST /send
+    headers = {'Content-Type': 'application/json'}
     if api_key:
         headers['Authorization'] = f"Bearer {api_key}"
 
@@ -4612,15 +4730,13 @@ def _send_whatsapp_message(event_name: str, recipient_source: str, message_text:
         'message': (message_text or '').strip(),
         'event': event_name,
     }
-    result['attempted'] = True
-    result['recipient'] = recipient
 
     try:
         response = requests.post(
             f"{gateway_url}/send",
             json=payload,
             headers=headers,
-            timeout=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
+            timeout=timeout,
             verify=False,
         )
         result['status_code'] = int(response.status_code)
@@ -10318,6 +10434,7 @@ def settings_page():
                          whatsapp_gateway_url=whatsapp_cfg.get('gateway_url', ''),
                          whatsapp_gateway_api_key=whatsapp_cfg.get('gateway_api_key', ''),
                          whatsapp_gateway_timeout_seconds=whatsapp_cfg.get('gateway_timeout_seconds', 10),
+                         whatsapp_session_id=whatsapp_cfg.get('session_id', ''),
                          whatsapp_template_renew=whatsapp_cfg.get('template_renew', DEFAULT_WHATSAPP_TEMPLATE_RENEW),
                          whatsapp_template_welcome=whatsapp_cfg.get('template_welcome', DEFAULT_WHATSAPP_TEMPLATE_WELCOME),
                          whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY))
@@ -16723,6 +16840,7 @@ def sub_manager_page():
                          whatsapp_gateway_url=whatsapp_cfg.get('gateway_url', ''),
                          whatsapp_gateway_api_key=whatsapp_cfg.get('gateway_api_key', ''),
                          whatsapp_gateway_timeout_seconds=whatsapp_cfg.get('gateway_timeout_seconds', 10),
+                         whatsapp_session_id=whatsapp_cfg.get('session_id', ''),
                          whatsapp_template_renew=whatsapp_cfg.get('template_renew', DEFAULT_WHATSAPP_TEMPLATE_RENEW),
                          whatsapp_template_welcome=whatsapp_cfg.get('template_welcome', DEFAULT_WHATSAPP_TEMPLATE_WELCOME),
                          whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY))
@@ -17818,6 +17936,8 @@ def update_system_config():
                 sanitized_value = _normalize_whatsapp_gateway_url(value)
             elif key == WHATSAPP_GATEWAY_API_KEY:
                 sanitized_value = sanitize_html(str(value))[:512]
+            elif key == WHATSAPP_SESSION_KEY:
+                sanitized_value = _normalize_whatsapp_session(value)
             elif key == WHATSAPP_GATEWAY_TIMEOUT_KEY:
                 sanitized_value = str(_parse_int(value, 10, min_value=3, max_value=60))
             elif key in {WHATSAPP_TEMPLATE_RENEW_KEY, WHATSAPP_TEMPLATE_WELCOME_KEY, WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY}:
@@ -17866,11 +17986,45 @@ def test_whatsapp_connection():
     if not gateway_url:
         return jsonify({'success': False, 'error': 'WhatsApp gateway URL is not configured.'}), 400
 
+    provider = (runtime_cfg.get('provider') or 'baileys').strip().lower()
+    timeout_seconds = int(runtime_cfg.get('gateway_timeout_seconds') or 10)
+    api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+
     ok, status_code, error_reason = _probe_whatsapp_gateway(
         gateway_url,
-        timeout_seconds=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
-        api_key=(runtime_cfg.get('gateway_api_key') or '').strip(),
+        timeout_seconds=timeout_seconds,
+        api_key=api_key,
+        provider=provider,
     )
+
+    if ok and provider == 'openwa':
+        # Health is up — also verify the configured session is actually connected,
+        # otherwise sends will silently fail with "session not active".
+        session_name = (runtime_cfg.get('session_id') or '').strip()
+        if not session_name:
+            return jsonify({
+                'success': False,
+                'status_code': status_code,
+                'message': 'Gateway reachable, but no OpenWA session is configured. Set the session name.'
+            }), 400
+        sess = _openwa_session_status(gateway_url, api_key, session_name, timeout_seconds)
+        if not sess.get('found'):
+            return jsonify({
+                'success': False,
+                'status_code': status_code,
+                'message': f"Gateway reachable, but session '{session_name}' was not found in OpenWA."
+            }), 400
+        if not sess.get('connected'):
+            return jsonify({
+                'success': False,
+                'status_code': status_code,
+                'message': f"Session '{session_name}' is {sess.get('status') or 'disconnected'}. Reconnect it in the OpenWA dashboard (scan QR)."
+            }), 400
+        return jsonify({
+            'success': True,
+            'status_code': status_code,
+            'message': f"Connected — session '{session_name}' ({sess.get('phone') or 'no number'}) is {sess.get('status')}."
+        })
 
     if ok:
         return jsonify({
@@ -17902,6 +18056,7 @@ def auto_configure_whatsapp_gateway():
 
     timeout_seconds = int(runtime_cfg.get('gateway_timeout_seconds') or 10)
     api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+    provider = (runtime_cfg.get('provider') or 'baileys').strip().lower()
     configured_url = (runtime_cfg.get('gateway_url') or '').strip()
     host_hint = request.host
 
@@ -17910,7 +18065,7 @@ def auto_configure_whatsapp_gateway():
     first_error = None
 
     for candidate in candidates:
-        ok, status_code, error_reason = _probe_whatsapp_gateway(candidate, timeout_seconds=timeout_seconds, api_key=api_key)
+        ok, status_code, error_reason = _probe_whatsapp_gateway(candidate, timeout_seconds=timeout_seconds, api_key=api_key, provider=provider)
         checked.append({
             'url': candidate,
             'ok': bool(ok),
