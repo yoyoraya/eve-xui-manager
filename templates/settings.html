@@ -683,6 +683,105 @@
                     <textarea id="wa-template-pre-expiry" class="form-input" rows="2">{{ whatsapp_template_pre_expiry }}</textarea>
                 </div>
 
+                <!-- ===== OpenWA anti-ban controls ===== -->
+                <div class="wa-openwa-only" style="display:none; margin-top: 22px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);">
+                    <h3 style="margin:0 0 4px; font-size:0.98rem;">Warm-up</h3>
+                    <p class="text-secondary" style="margin:0 0 12px; font-size:0.82rem;">Ramp the daily send cap up gradually on a fresh number to avoid a sudden-volume flag. The cap grows linearly from the start value to the Daily Limit over the ramp window.</p>
+                    <div class="form-group">
+                        <label>Enable warm-up</label>
+                        <div class="refresh-toggle" style="gap: 10px;">
+                            <label class="toggle-switch" style="margin: 0;">
+                                <input type="checkbox" id="wa-warmup-enabled" {% if whatsapp_warmup_enabled %}checked{% endif %}>
+                                <span class="slider"></span>
+                            </label>
+                            <span class="toggle-label">Enabled</span>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+                        <div class="form-group">
+                            <label>Start date</label>
+                            <input type="date" id="wa-warmup-start-date" class="form-control" value="{{ whatsapp_warmup_start_date }}">
+                        </div>
+                        <div class="form-group">
+                            <label>Start cap (msgs/day)</label>
+                            <input type="number" id="wa-warmup-start-per-day" class="form-control" min="1" max="50000" value="{{ whatsapp_warmup_start_per_day }}">
+                        </div>
+                        <div class="form-group">
+                            <label>Ramp days</label>
+                            <input type="number" id="wa-warmup-ramp-days" class="form-control" min="1" max="120" value="{{ whatsapp_warmup_ramp_days }}">
+                        </div>
+                    </div>
+
+                    <h3 style="margin:18px 0 4px; font-size:0.98rem;">Near-depletion bot</h3>
+                    <p class="text-secondary" style="margin:0 0 12px; font-size:0.82rem;">Automatically message accounts whose time or volume is about to run out (once per cooldown). Uses the <strong>Ended</strong> bot template below. Background scan runs every 30 min.</p>
+                    <div class="form-group">
+                        <label>Enable near-depletion bot</label>
+                        <div class="refresh-toggle" style="gap: 10px;">
+                            <label class="toggle-switch" style="margin: 0;">
+                                <input type="checkbox" id="wa-depletion-enabled" {% if whatsapp_depletion_enabled %}checked{% endif %}>
+                                <span class="slider"></span>
+                            </label>
+                            <span class="toggle-label">Enabled</span>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+                        <div class="form-group">
+                            <label>Notify when ≤ days left</label>
+                            <input type="number" id="wa-depletion-expiry-days" class="form-control" min="0" max="60" value="{{ whatsapp_depletion_expiry_days }}">
+                        </div>
+                        <div class="form-group">
+                            <label>Notify when ≤ GB left</label>
+                            <input type="number" step="0.1" id="wa-depletion-volume-gb" class="form-control" min="0" max="1000" value="{{ whatsapp_depletion_volume_gb }}">
+                        </div>
+                        <div class="form-group">
+                            <label>Cooldown (days)</label>
+                            <input type="number" id="wa-depletion-cooldown-days" class="form-control" min="1" max="120" value="{{ whatsapp_depletion_cooldown_days }}">
+                        </div>
+                    </div>
+
+                    <h3 style="margin:18px 0 4px; font-size:0.98rem;">Pace gate <span class="text-secondary" style="font-weight:400; font-size:0.8rem;">(for automated bulk — off by default)</span></h3>
+                    <p class="text-secondary" style="margin:0 0 12px; font-size:0.82rem;">Enforces a minimum gap + random jitter between any two sends so a batch never becomes a burst. Leave OFF unless you run automated bulk sending.</p>
+                    <div class="form-group">
+                        <label>Enable pace gate</label>
+                        <div class="refresh-toggle" style="gap: 10px;">
+                            <label class="toggle-switch" style="margin: 0;">
+                                <input type="checkbox" id="wa-pace-enabled" {% if whatsapp_pace_enabled %}checked{% endif %}>
+                                <span class="slider"></span>
+                            </label>
+                            <span class="toggle-label">Enabled</span>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+                        <div class="form-group">
+                            <label>Min gap (seconds)</label>
+                            <input type="number" id="wa-pace-min-gap" class="form-control" min="0" max="600" value="{{ whatsapp_pace_min_gap_seconds }}">
+                        </div>
+                        <div class="form-group">
+                            <label>Jitter (seconds)</label>
+                            <input type="number" id="wa-pace-jitter" class="form-control" min="0" max="600" value="{{ whatsapp_pace_jitter_seconds }}">
+                        </div>
+                    </div>
+
+                    <h3 style="margin:18px 0 4px; font-size:0.98rem;">Bot templates</h3>
+                    <p class="text-secondary" style="margin:0 0 12px; font-size:0.82rem;">Dedicated WhatsApp-bot messages per scenario. Placeholders: <code>{email}</code> <code>{remaining_time}</code> <code>{remaining_volume}</code> <code>{dashboard_link}</code> <code>{volume}</code> <code>{days}</code> <code>{date}</code>.</p>
+                    <div class="form-group">
+                        <label>Created</label>
+                        <textarea id="wa-bot-tpl-created" class="form-input" rows="3">{{ whatsapp_bot_tpl_created }}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Renew</label>
+                        <textarea id="wa-bot-tpl-renew" class="form-input" rows="3">{{ whatsapp_bot_tpl_renew }}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Ended (near-depletion)</label>
+                        <textarea id="wa-bot-tpl-ended" class="form-input" rows="4">{{ whatsapp_bot_tpl_ended }}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Info</label>
+                        <textarea id="wa-bot-tpl-info" class="form-input" rows="3">{{ whatsapp_bot_tpl_info }}</textarea>
+                    </div>
+                </div>
+
                 <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
                     <button class="btn btn-primary" onclick="saveWhatsAppSettings()">Save WhatsApp Settings</button>
                 </div>
@@ -2284,6 +2383,21 @@
             whatsapp_template_renew: (document.getElementById('wa-template-renew') || {}).value || '',
             whatsapp_template_welcome: (document.getElementById('wa-template-welcome') || {}).value || '',
             whatsapp_template_pre_expiry: (document.getElementById('wa-template-pre-expiry') || {}).value || '',
+            whatsapp_warmup_enabled: !!(document.getElementById('wa-warmup-enabled') || {}).checked,
+            whatsapp_warmup_start_date: (document.getElementById('wa-warmup-start-date') || {}).value || '',
+            whatsapp_warmup_start_per_day: Number((document.getElementById('wa-warmup-start-per-day') || {}).value || 20),
+            whatsapp_warmup_ramp_days: Number((document.getElementById('wa-warmup-ramp-days') || {}).value || 14),
+            whatsapp_pace_enabled: !!(document.getElementById('wa-pace-enabled') || {}).checked,
+            whatsapp_pace_min_gap_seconds: Number((document.getElementById('wa-pace-min-gap') || {}).value || 8),
+            whatsapp_pace_jitter_seconds: Number((document.getElementById('wa-pace-jitter') || {}).value || 5),
+            whatsapp_depletion_enabled: !!(document.getElementById('wa-depletion-enabled') || {}).checked,
+            whatsapp_depletion_expiry_days: Number((document.getElementById('wa-depletion-expiry-days') || {}).value || 3),
+            whatsapp_depletion_volume_gb: Number((document.getElementById('wa-depletion-volume-gb') || {}).value || 2),
+            whatsapp_depletion_cooldown_days: Number((document.getElementById('wa-depletion-cooldown-days') || {}).value || 7),
+            whatsapp_bot_tpl_created: (document.getElementById('wa-bot-tpl-created') || {}).value || '',
+            whatsapp_bot_tpl_renew: (document.getElementById('wa-bot-tpl-renew') || {}).value || '',
+            whatsapp_bot_tpl_ended: (document.getElementById('wa-bot-tpl-ended') || {}).value || '',
+            whatsapp_bot_tpl_info: (document.getElementById('wa-bot-tpl-info') || {}).value || '',
         };
 
         try {
