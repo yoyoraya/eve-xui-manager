@@ -10142,6 +10142,7 @@ def admins_page():
     return render_template('admins.html',
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
+                         panel_lang=_get_panel_ui_lang(),
                          role=session.get('role', 'admin'))
 
 def fetch_worker(server_dict):

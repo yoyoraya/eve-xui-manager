@@ -535,13 +535,13 @@
                         <input type="checkbox" id="admin-allow-negative" onchange="toggleNegativeLimitField()">
                         <span class="slider"></span>
                     </div>
-                    <span>مجاز به اعتبار منفی (Allow Negative Credit)</span>
+                    <span>{{ 'مجاز به اعتبار منفی' if panel_lang == 'fa' else 'Allow Negative Credit' }}</span>
                 </label>
 
                 <div class="form-group" id="negative-limit-field" style="display:none;">
-                    <label>حداکثر بدهی مجاز — Max Debt Allowed (Toman)</label>
+                    <label>{{ 'حداکثر بدهی مجاز (تومان)' if panel_lang == 'fa' else 'Max Debt Allowed (Toman)' }}</label>
                     <input type="text" id="admin-negative-limit" placeholder="e.g. 500,000" value="0" oninput="formatNumberInput(this)">
-                    <small style="color: var(--text-secondary);">عملیات تا زمانی که موجودی بالاتر از این مقدار منفی باشد مجاز است</small>
+                    <small style="color: var(--text-secondary);">{{ 'عملیات تا زمانی که موجودی بالاتر از این مقدار منفی باشد مجاز است' if panel_lang == 'fa' else 'Operations are allowed as long as the balance stays above this negative amount' }}</small>
                 </div>
 
                 <label class="form-group form-toggle-item" style="cursor: pointer; margin-bottom: 4px;">
@@ -549,9 +549,9 @@
                         <input type="checkbox" id="admin-allow-free">
                         <span class="slider"></span>
                     </div>
-                    <span>مجاز به ساخت/تمدید رایگان (Allow Free Creation)</span>
+                    <span>{{ 'مجاز به ساخت/تمدید رایگان' if panel_lang == 'fa' else 'Allow Free Creation' }}</span>
                 </label>
-                <small style="color: var(--text-secondary); display:block; margin: -2px 0 10px;">در صورت فعال بودن، این کاربر گزینه Free را هنگام ساخت، تمدید و ریست مشاهده می‌کند</small>
+                <small style="color: var(--text-secondary); display:block; margin: -2px 0 10px;">{{ 'در صورت فعال بودن، این کاربر گزینه Free را هنگام ساخت، تمدید و ریست مشاهده می‌کند' if panel_lang == 'fa' else 'When enabled, this user can see the Free option for creation, renewal, and reset' }}</small>
 
                 <div class="form-group">
                     <label>Support Links (Subscription Page)</label>
