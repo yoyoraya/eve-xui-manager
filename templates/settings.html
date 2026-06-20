@@ -564,6 +564,23 @@
                     </select>
                 </div>
 
+                <div class="wa-openwa-only" style="display:none; margin: 4px 0 18px; padding: 14px 16px; border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); border-radius: 10px;">
+                    <div style="display:flex; gap:10px; align-items:flex-start;">
+                        <span style="font-size:1.25rem; line-height:1.2;">⚠️</span>
+                        <div style="font-size:0.85rem; line-height:1.65;">
+                            <strong style="color:#f59e0b;">OpenWA is an UNOFFICIAL gateway and breaks WhatsApp's Terms of Service. The connected number can be banned.</strong>
+                            <ul style="margin:8px 0 0; padding-inline-start:18px;">
+                                <li><strong>Use a dedicated number</strong> — never your personal number or your main business line. If it gets banned, you don't lose your real account.</li>
+                                <li><strong>Warm up a new number</strong> gradually over 1–2 weeks; keep early volume very low and use it like a normal person first.</li>
+                                <li><strong>Stay reactive/transactional</strong> — renewals, account info, replies to people who already wrote you. Avoid cold or bulk outreach.</li>
+                                <li><strong>Vary the content</strong> — don't send identical text to many recipients back-to-back.</li>
+                                <li>Keep a slow pace: the rate limits below (≥45s gap, daily cap, circuit breaker) are your safety net — keep them conservative on a fresh number (well under ~100–200/day).</li>
+                                <li>For mission-critical messaging, migrate to the official <strong>WhatsApp Business Platform</strong>; OpenWA does not make ban/legal risk zero.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="form-group">
                     <label>Gateway URL</label>
                     <input type="text" id="wa-gateway-url" class="form-control" value="{{ whatsapp_gateway_url }}" placeholder="https://wa-gateway.example.com">
