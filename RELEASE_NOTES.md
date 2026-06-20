@@ -1,4 +1,16 @@
-# Eve - Xui Manager v2.3.0
+# Eve - Xui Manager v2.3.1
+
+## [2.3.1] - 2026-06-20
+
+English:
+- Feature: **Reseller "Free" permission** — the Free toggle for new purchases, renewals, and traffic resets is now hidden from resellers unless explicitly granted. Enable the new "Allow Free Creation" switch in the reseller's user settings to show it
+- Security: server-side enforcement on all three free-action endpoints — resellers without the permission are rejected with HTTP 403 even if the client is tampered with
+- Admins and superadmins are unaffected (they don't consume credit)
+
+فارسی:
+- قابلیت: **پرمیشن «رایگان» برای رسلر** — تاگل Free هنگام ساخت، تمدید و ریست ترافیک تا وقتی در تنظیمات یوزر رسلر فعال نشده باشد نمایش داده نمی‌شود. با روشن کردن سوییچ «مجاز به ساخت/تمدید رایگان» در تنظیمات کاربر، این گزینه برایش لود می‌شود
+- امنیت: اعمال محدودیت سمت سرور روی هر سه اندپوینت — رسلر بدون این پرمیشن حتی با دستکاری سمت کلاینت با خطای ۴۰۳ رد می‌شود
+- ادمین و سوپرادمین تحت تأثیر نیستند (اعتبار خرج نمی‌کنند)
 
 ## [2.3.0] - 2026-06-20
 

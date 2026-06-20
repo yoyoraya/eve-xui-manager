@@ -4,6 +4,13 @@ All notable changes to Eve - Xui Manager are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-06-20
+
+### 🔒 Reseller Permissions
+- **Free creation/renew gating**: The "Free" toggle (new purchase, renewal, and traffic reset) is now hidden from resellers unless explicitly enabled per-user. A new "Allow Free Creation" switch in the reseller's user settings controls it
+- **Server-side enforcement**: All three free-action endpoints reject `is_free` requests with HTTP 403 for resellers without the permission — the toggle cannot be bypassed client-side
+- Admins/superadmins are unaffected (they never consume credit)
+
 ## [2.3.0] - 2026-06-20
 
 ### 🤖 WhatsApp Bot (OpenWA)
