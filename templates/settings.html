@@ -2596,20 +2596,38 @@
         const saved = await saveSmsSettings(true);
         if (!saved) { showToast('Could not save SMS settings before testing', 'error'); return; }
         if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+        const fail = (msg) => {
+            showToast(msg, 'error');
+            if (resultEl) { resultEl.style.color = '#f87171'; resultEl.textContent = '⚠️ ' + msg; }
+        };
         try {
-            const res = await fetch('/api/sms/test-send', { method: 'POST' });
-            const data = await res.json();
-            if (data && data.success) {
+            let res;
+            try {
+                res = await fetch('/api/sms/test-send', { method: 'POST', headers: { 'Accept': 'application/json' } });
+            } catch (netErr) {
+                fail('Cannot reach the Eve server (network/connection error).');
+                return;
+            }
+            const raw = await res.text();
+            let data = null;
+            try { data = raw ? JSON.parse(raw) : null; } catch (_) { data = null; }
+
+            if (!data) {
+                // Non-JSON response → almost always a 404/500 HTML page.
+                if (res.status === 404) {
+                    fail('Endpoint not found (HTTP 404). The server is running an older build — run "git pull" and restart the service, then hard-refresh (Ctrl+F5).');
+                } else {
+                    fail(`Unexpected server response (HTTP ${res.status}).`);
+                }
+                return;
+            }
+
+            if (data.success) {
                 showToast(data.message || 'Test SMS sent', 'success');
                 if (resultEl) { resultEl.style.color = 'var(--success, #10b981)'; resultEl.textContent = '✅ ' + (data.message || 'Test SMS sent.'); }
             } else {
-                const msg = (data && data.error) ? data.error : 'Test SMS failed';
-                showToast(msg, 'error');
-                if (resultEl) { resultEl.style.color = '#f87171'; resultEl.textContent = '⚠️ ' + msg; }
+                fail((data.error || 'Test SMS failed') + (data.status_code ? ` (gateway HTTP ${data.status_code})` : ''));
             }
-        } catch (e) {
-            showToast('Network error', 'error');
-            if (resultEl) { resultEl.style.color = '#f87171'; resultEl.textContent = '⚠️ Network error'; }
         } finally {
             if (btn) { btn.disabled = false; btn.textContent = 'Send Test SMS'; }
         }
