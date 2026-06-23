@@ -34,6 +34,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.38 7.55L3 21l1.98-5.44A8.5 8.5 0 1 1 21 11.5z"></path></svg>
             WhatsApp
         </button>
+        <button class="settings-tab" onclick="switchTab('sms')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H5.17L4 17.17V4z"></path><path d="M8 9h8"></path><path d="M8 12h5"></path></svg>
+            SMS Automation
+        </button>
         <button class="settings-tab" onclick="switchTab('account_message')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path><path d="M8 9h8"></path><path d="M8 13h5"></path></svg>
             Account Message
@@ -784,6 +788,110 @@
 
                 <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
                     <button class="btn btn-primary" onclick="saveWhatsAppSettings()">Save WhatsApp Settings</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-sms" class="tab-pane">
+            <div class="panel-card">
+                <div class="panel-card-header">
+                    <div class="header-content">
+                        <h2>SMS Automation</h2>
+                        <p class="text-secondary">Auto-send SMS on create / renew / near-expiry through your GMweb gateway, using the existing SMS templates.</p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button id="sms-test-connection" class="btn btn-secondary" onclick="testSmsConnectionSettings()">Test Connection</button>
+                    </div>
+                </div>
+
+                <div class="form-group" style="background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.3); border-radius: 10px; padding: 12px;">
+                    <strong>Only system accounts are messaged.</strong>
+                    <div style="margin-top: 4px; font-size: 0.85rem;">SMS is sent <strong>only for accounts that have no reseller owner</strong> (system / admin / superadmin). Reseller-owned accounts are never messaged. The message text comes from your SMS templates in the <em>Templates</em> tab (Client Created SMS, Renew SMS, Account Info SMS).</div>
+                </div>
+
+                <div class="form-group">
+                    <label>GMweb Base URL</label>
+                    <input type="text" id="sms-base-url" class="form-control" value="{{ sms_gmweb_base_url }}" placeholder="https://your-gmweb-host">
+                    <small class="text-secondary">The GMweb-API server, e.g. <code>https://your-host</code> (locally <code>http://127.0.0.1:3030</code>). No trailing slash.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>GMweb Project API Key</label>
+                    <input type="text" id="sms-api-key" class="form-control" value="{{ sms_gmweb_api_key }}" placeholder="gmw_...">
+                    <small class="text-secondary">A project key (<code>gmw_...</code>), not the master token. Create it in the GMweb dashboard.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Gateway Timeout (seconds)</label>
+                    <input type="number" id="sms-timeout" class="form-control" min="3" max="90" value="{{ sms_gmweb_timeout }}">
+                </div>
+
+                <div class="form-group">
+                    <label>Enable SMS Automation</label>
+                    <div class="refresh-toggle" style="gap: 10px;">
+                        <label class="toggle-switch" style="margin: 0;">
+                            <input type="checkbox" id="sms-enabled" {% if sms_automation_enabled %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">Enabled</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Triggers</label>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="sms-trigger-created" {% if sms_trigger_created %}checked{% endif %}>
+                            <span class="checkmark"></span>
+                            <span>On account creation (Client Created SMS)</span>
+                        </label>
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="sms-trigger-renew" {% if sms_trigger_renew %}checked{% endif %}>
+                            <span class="checkmark"></span>
+                            <span>On renewal (Renew SMS)</span>
+                        </label>
+                        <label class="checkbox-label" onclick="event.stopPropagation()">
+                            <input type="checkbox" id="sms-trigger-depletion" {% if sms_trigger_depletion %}checked{% endif %}>
+                            <span class="checkmark"></span>
+                            <span>Near-expiry / low-volume reminder (background scan, Account Info SMS)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Near-expiry reminder thresholds</label>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                        <div>
+                            <small class="text-secondary">Days before expiry</small>
+                            <input type="number" id="sms-depletion-expiry-days" class="form-control" min="0" max="60" value="{{ sms_depletion_expiry_days }}">
+                        </div>
+                        <div>
+                            <small class="text-secondary">Remaining volume (GB) ≤</small>
+                            <input type="number" id="sms-depletion-volume-gb" class="form-control" min="0" max="1000" step="0.1" value="{{ sms_depletion_volume_gb }}">
+                        </div>
+                        <div>
+                            <small class="text-secondary">Cooldown (days)</small>
+                            <input type="number" id="sms-depletion-cooldown-days" class="form-control" min="1" max="120" value="{{ sms_depletion_cooldown_days }}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Rate limits</label>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                        <div>
+                            <small class="text-secondary">Min seconds between SMS to same number</small>
+                            <input type="number" id="sms-min-interval" class="form-control" min="0" max="3600" value="{{ sms_min_interval_seconds }}">
+                        </div>
+                        <div>
+                            <small class="text-secondary">Max SMS per day</small>
+                            <input type="number" id="sms-daily-limit" class="form-control" min="1" max="100000" value="{{ sms_daily_limit }}">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                    <button class="btn btn-primary" onclick="saveSmsSettings()">Save SMS Settings</button>
                 </div>
             </div>
         </div>
@@ -2413,6 +2521,60 @@
                 applyWhatsAppRegionStateSettings();
             } else {
                 showToast((data && data.error) ? data.error : 'Error saving settings', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+    }
+
+    function _smsSettingsPayload() {
+        return {
+            sms_automation_enabled: !!(document.getElementById('sms-enabled') || {}).checked,
+            sms_gmweb_base_url: ((document.getElementById('sms-base-url') || {}).value || '').trim(),
+            sms_gmweb_api_key: ((document.getElementById('sms-api-key') || {}).value || '').trim(),
+            sms_gmweb_timeout: Number((document.getElementById('sms-timeout') || {}).value || 15),
+            sms_trigger_created: !!(document.getElementById('sms-trigger-created') || {}).checked,
+            sms_trigger_renew: !!(document.getElementById('sms-trigger-renew') || {}).checked,
+            sms_trigger_depletion: !!(document.getElementById('sms-trigger-depletion') || {}).checked,
+            sms_depletion_expiry_days: Number((document.getElementById('sms-depletion-expiry-days') || {}).value || 3),
+            sms_depletion_volume_gb: Number((document.getElementById('sms-depletion-volume-gb') || {}).value || 2),
+            sms_depletion_cooldown_days: Number((document.getElementById('sms-depletion-cooldown-days') || {}).value || 7),
+            sms_min_interval_seconds: Number((document.getElementById('sms-min-interval') || {}).value || 30),
+            sms_daily_limit: Number((document.getElementById('sms-daily-limit') || {}).value || 200),
+        };
+    }
+
+    async function saveSmsSettings(silent) {
+        try {
+            const res = await fetch('/api/system-config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(_smsSettingsPayload())
+            });
+            const data = await res.json();
+            if (data && data.success) {
+                if (!silent) showToast('SMS settings saved');
+                return true;
+            }
+            if (!silent) showToast((data && data.error) ? data.error : 'Error saving settings', 'error');
+            return false;
+        } catch (e) {
+            if (!silent) showToast('Network error', 'error');
+            return false;
+        }
+    }
+
+    async function testSmsConnectionSettings() {
+        // Persist current form values first so the test uses what's on screen.
+        const saved = await saveSmsSettings(true);
+        if (!saved) { showToast('Could not save SMS settings before testing', 'error'); return; }
+        try {
+            const res = await fetch('/api/sms/test-connection', { method: 'POST' });
+            const data = await res.json();
+            if (data && data.success) {
+                showToast(data.message || 'GMweb gateway is reachable', data.ready === false ? 'warning' : 'success');
+            } else {
+                showToast((data && (data.error || data.message)) ? (data.error || data.message) : 'Gateway test failed', 'error');
             }
         } catch (e) {
             showToast('Network error', 'error');

@@ -89,7 +89,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.7"
+APP_VERSION = "2.3.8"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -4940,6 +4940,321 @@ def whatsapp_bot_worker():
         except Exception as exc:
             try:
                 app.logger.warning(f"[whatsapp-bot] scan error: {exc}")
+            except Exception:
+                pass
+        time.sleep(1800)  # every 30 minutes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMS Automation (via the GMweb-API gateway)
+# Auto-sends SMS on create / renew / near-depletion using the existing SMS
+# templates — but ONLY for accounts NOT owned by a reseller (i.e. system /
+# admin / superadmin accounts). Reseller-owned accounts are never messaged.
+# ─────────────────────────────────────────────────────────────────────────────
+SMS_AUTOMATION_ENABLED_KEY      = 'sms_automation_enabled'
+SMS_GMWEB_BASE_URL_KEY          = 'sms_gmweb_base_url'
+SMS_GMWEB_API_KEY_KEY           = 'sms_gmweb_api_key'
+SMS_GMWEB_TIMEOUT_KEY           = 'sms_gmweb_timeout'
+SMS_TRIGGER_CREATED_KEY         = 'sms_trigger_created'
+SMS_TRIGGER_RENEW_KEY           = 'sms_trigger_renew'
+SMS_TRIGGER_DEPLETION_KEY       = 'sms_trigger_depletion'
+SMS_DEPLETION_EXPIRY_DAYS_KEY   = 'sms_depletion_expiry_days'
+SMS_DEPLETION_VOLUME_GB_KEY     = 'sms_depletion_volume_gb'
+SMS_DEPLETION_COOLDOWN_DAYS_KEY = 'sms_depletion_cooldown_days'
+SMS_MIN_INTERVAL_SECONDS_KEY    = 'sms_min_interval_seconds'
+SMS_DAILY_LIMIT_KEY             = 'sms_daily_limit'
+
+SMS_SEND_TRACKER = {'daily': {}, 'per_recipient': {}}
+SMS_SEND_TRACKER_LOCK = threading.Lock()
+
+
+def _get_sms_runtime_settings() -> dict:
+    keys = [
+        SMS_AUTOMATION_ENABLED_KEY, SMS_GMWEB_BASE_URL_KEY, SMS_GMWEB_API_KEY_KEY,
+        SMS_GMWEB_TIMEOUT_KEY, SMS_TRIGGER_CREATED_KEY, SMS_TRIGGER_RENEW_KEY,
+        SMS_TRIGGER_DEPLETION_KEY, SMS_DEPLETION_EXPIRY_DAYS_KEY,
+        SMS_DEPLETION_VOLUME_GB_KEY, SMS_DEPLETION_COOLDOWN_DAYS_KEY,
+        SMS_MIN_INTERVAL_SECONDS_KEY, SMS_DAILY_LIMIT_KEY,
+    ]
+    c = _get_system_configs_batch(keys)
+
+    def _txt(k, d=''):
+        v = c.get(k)
+        return str(v) if v is not None else d
+
+    def _bool(k, d=False):
+        return _parse_bool(_txt(k, 'true' if d else 'false'))
+
+    def _int(k, d, lo=None, hi=None):
+        return _parse_int(_txt(k, str(d)), d, min_value=lo, max_value=hi)
+
+    def _float(k, d, lo=None, hi=None):
+        try:
+            v = float(_txt(k, str(d)))
+        except (TypeError, ValueError):
+            v = float(d)
+        if lo is not None:
+            v = max(v, lo)
+        if hi is not None:
+            v = min(v, hi)
+        return v
+
+    return {
+        'enabled': _bool(SMS_AUTOMATION_ENABLED_KEY, False),
+        'base_url': _txt(SMS_GMWEB_BASE_URL_KEY, '').strip().rstrip('/'),
+        'api_key': _txt(SMS_GMWEB_API_KEY_KEY, '').strip(),
+        'timeout_seconds': _int(SMS_GMWEB_TIMEOUT_KEY, 15, lo=3, hi=90),
+        'trigger_created': _bool(SMS_TRIGGER_CREATED_KEY, True),
+        'trigger_renew': _bool(SMS_TRIGGER_RENEW_KEY, True),
+        'trigger_depletion': _bool(SMS_TRIGGER_DEPLETION_KEY, False),
+        'depletion_expiry_days': _int(SMS_DEPLETION_EXPIRY_DAYS_KEY, 3, lo=0, hi=60),
+        'depletion_volume_gb': _float(SMS_DEPLETION_VOLUME_GB_KEY, 2.0, lo=0.0, hi=1000.0),
+        'depletion_cooldown_days': _int(SMS_DEPLETION_COOLDOWN_DAYS_KEY, 7, lo=1, hi=120),
+        'min_interval_seconds': _int(SMS_MIN_INTERVAL_SECONDS_KEY, 30, lo=0, hi=3600),
+        'daily_limit': _int(SMS_DAILY_LIMIT_KEY, 200, lo=1, hi=100000),
+    }
+
+
+def _account_has_reseller_owner(server_id, email) -> bool:
+    """True when the account is owned by a reseller — SMS automation must then
+    skip it. No ClientOwnership row ⇒ system/admin/superadmin account ⇒ eligible."""
+    try:
+        email_l = (email or '').strip().lower()
+        if not email_l:
+            return False
+        try:
+            sid = int(server_id)
+        except (TypeError, ValueError):
+            sid = server_id
+        row = ClientOwnership.query.filter(
+            ClientOwnership.server_id == sid,
+            db.func.lower(ClientOwnership.client_email) == email_l,
+        ).first()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _sms_take_send_slot(recipient: str, cfg: dict) -> tuple[bool, str | None]:
+    now_ts = time.time()
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    min_interval = int(cfg.get('min_interval_seconds') or 0)
+    daily_limit = int(cfg.get('daily_limit') or 200)
+    with SMS_SEND_TRACKER_LOCK:
+        daily = SMS_SEND_TRACKER.get('daily') or {}
+        if daily.get('date') != today:
+            SMS_SEND_TRACKER['daily'] = {'date': today, 'count': 0}
+        count = int((SMS_SEND_TRACKER.get('daily') or {}).get('count') or 0)
+        if count >= daily_limit:
+            return False, 'daily_limit_reached'
+        per = SMS_SEND_TRACKER.get('per_recipient') or {}
+        last = float(per.get(recipient) or 0.0)
+        if min_interval > 0 and last > 0 and (now_ts - last) < min_interval:
+            return False, 'recipient_rate_limited'
+        per[recipient] = now_ts
+        SMS_SEND_TRACKER['per_recipient'] = per
+        SMS_SEND_TRACKER['daily'] = {'date': today, 'count': count + 1}
+    return True, None
+
+
+def _send_sms_via_gmweb(to: str, text: str, cfg: dict | None = None) -> dict:
+    """POST a single SMS to the GMweb-API gateway. The gateway queues it and
+    returns 202 {jobId}; we treat 200/202 as accepted and don't track delivery."""
+    cfg = cfg or _get_sms_runtime_settings()
+    out = {'sent': False, 'reason': None, 'status_code': None}
+    base = (cfg.get('base_url') or '').strip().rstrip('/')
+    api_key = (cfg.get('api_key') or '').strip()
+    if not base or not api_key:
+        out['reason'] = 'gateway_not_configured'
+        return out
+    try:
+        resp = requests.post(
+            f"{base}/send",
+            json={'to': to, 'text': text},
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            timeout=int(cfg.get('timeout_seconds') or 15),
+        )
+        out['status_code'] = resp.status_code
+        if resp.status_code in (200, 202):
+            out['sent'] = True
+        else:
+            out['reason'] = f'http_{resp.status_code}'
+    except Exception as e:
+        out['reason'] = str(e)
+    return out
+
+
+def _sms_should_send(event_name: str, server_id, email: str, cfg: dict | None = None) -> tuple[bool, str | None]:
+    cfg = cfg or _get_sms_runtime_settings()
+    if not cfg.get('enabled'):
+        return False, 'feature_disabled'
+    if cfg.get(f'trigger_{event_name}') is False:
+        return False, 'trigger_disabled'
+    if not (cfg.get('base_url') and cfg.get('api_key')):
+        return False, 'gateway_not_configured'
+    # The core rule: never SMS a reseller-owned account from the system number.
+    if _account_has_reseller_owner(server_id, email):
+        return False, 'reseller_owned'
+    return True, None
+
+
+def _get_sms_template_content(template_type: str, default_text: str) -> str:
+    try:
+        t = NotificationTemplate.query.filter_by(type=template_type, is_active=True).first()
+        if t and (t.content or '').strip():
+            return t.content
+    except Exception:
+        pass
+    return default_text
+
+
+def _fire_automation_sms(event_name: str, server_id, email: str, template_type: str,
+                         default_template: str, tpl_vars: dict, recipient_comment: str = '') -> None:
+    """Render the SMS template and send it via GMweb in a background thread, so
+    the create/renew request is never blocked. Gated to non-reseller accounts."""
+    def _worker():
+        with app.app_context():
+            try:
+                cfg = _get_sms_runtime_settings()
+                ok, _r = _sms_should_send(event_name, server_id, email, cfg)
+                if not ok:
+                    return
+                recipient = _extract_iran_mobile_from_text(email, recipient_comment or None)
+                if not recipient:
+                    return
+                slot_ok, _sr = _sms_take_send_slot(recipient, cfg)
+                if not slot_ok:
+                    return
+                content = _get_sms_template_content(template_type, default_template)
+                text = _render_text_template(content, tpl_vars)
+                if not (text or '').strip():
+                    return
+                _send_sms_via_gmweb(recipient, text, cfg)
+            except Exception:
+                app.logger.exception('[sms-automation] send failed')
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _run_sms_depletion_scan() -> dict:
+    """Near-depletion SMS scan: message accounts (non-reseller-owned only) whose
+    time or volume is about to run out, once per cooldown window."""
+    cfg = _get_sms_runtime_settings()
+    if not cfg.get('enabled') or not cfg.get('trigger_depletion'):
+        return {'scanned': 0, 'sent': 0, 'reason': 'disabled'}
+    if not (cfg.get('base_url') and cfg.get('api_key')):
+        return {'scanned': 0, 'sent': 0, 'reason': 'gateway_not_configured'}
+
+    expiry_days = int(cfg.get('depletion_expiry_days') or 3)
+    volume_gb_thr = float(cfg.get('depletion_volume_gb') or 2.0)
+    cooldown_days = int(cfg.get('depletion_cooldown_days') or 7)
+    base_url = _public_base_url()
+    cooldown_cut = datetime.utcnow() - timedelta(days=cooldown_days)
+    tpl_content = _get_sms_template_content(ACCOUNT_INFO_SMS_TEMPLATE_TYPE, DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE)
+
+    inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    scanned = 0
+    sent = 0
+    seen = set()
+
+    for inbound in inbounds:
+        sid = inbound.get('server_id')
+        try:
+            sid_norm = int(sid)
+        except (TypeError, ValueError):
+            sid_norm = None
+        for client in (inbound.get('clients') or []):
+            email = (client.get('email') or '').strip()
+            email_l = email.lower()
+            if not email_l:
+                continue
+            key = (sid_norm, email_l)
+            if key in seen:
+                continue
+            seen.add(key)
+            # Owner gate: skip reseller-owned accounts entirely.
+            if _account_has_reseller_owner(sid_norm, email):
+                continue
+            recipient = _extract_iran_mobile_from_text(email, client.get('comment') or '')
+            if not recipient:
+                continue
+            scanned += 1
+
+            total_bytes = int(client.get('totalGB') or 0)
+            try:
+                used = int(client.get('up') or 0) + int(client.get('down') or 0)
+            except Exception:
+                used = 0
+            rem_bytes = client.get('remaining_bytes')
+            if rem_bytes is None or rem_bytes == -1:
+                rem_bytes = max(total_bytes - used, 0) if total_bytes > 0 else None
+            rem_gb = (float(rem_bytes) / (1024 ** 3)) if rem_bytes is not None else None
+
+            expiry_ts = int(client.get('expiryTimestamp') or 0)
+            exp = format_remaining_days(expiry_ts)
+            days_left = int(exp.get('days') or 0)
+            near_time = bool(expiry_ts and exp.get('type') in ('today', 'soon') and days_left <= expiry_days)
+            near_vol = bool(rem_gb is not None and 0 < rem_gb <= volume_gb_thr)
+            if not (near_time or near_vol):
+                continue
+
+            try:
+                recent = WhatsappBotLog.query.filter(
+                    WhatsappBotLog.email == email_l,
+                    WhatsappBotLog.server_id == (sid_norm or 0),
+                    WhatsappBotLog.event == 'sms_depletion',
+                    WhatsappBotLog.sent_at >= cooldown_cut,
+                ).first()
+            except Exception:
+                recent = None
+            if recent:
+                continue
+
+            final_id = client.get('subId') or client.get('id') or ''
+            dash = (client.get('dash_sub_url') or '').strip()
+            if dash and not dash.startswith('http') and base_url:
+                dash = base_url + (dash if dash.startswith('/') else f"/{dash}")
+            elif not dash and base_url and final_id and sid_norm is not None:
+                dash = f"{base_url}/s/{sid_norm}/{final_id}"
+
+            tpl_vars = {
+                'email': email, 'account_name': email, 'service_name': email, 'user': email,
+                'remaining_time': exp.get('text') or '-',
+                'remaining_volume': client.get('remaining_formatted') or '-',
+                'dashboard_link': dash, 'sub_link': dash,
+                'server_name': inbound.get('server_name') or '',
+            }
+            text_msg = _render_text_template(tpl_content, tpl_vars)
+            if not (text_msg or '').strip():
+                continue
+
+            slot_ok, slot_reason = _sms_take_send_slot(recipient, cfg)
+            if not slot_ok:
+                if slot_reason == 'daily_limit_reached':
+                    return {'scanned': scanned, 'sent': sent, 'stopped': slot_reason}
+                continue
+            res = _send_sms_via_gmweb(recipient, text_msg, cfg)
+            if res.get('sent'):
+                try:
+                    db.session.add(WhatsappBotLog(email=email_l, server_id=(sid_norm or 0), event='sms_depletion'))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                sent += 1
+
+    return {'scanned': scanned, 'sent': sent}
+
+
+def sms_bot_worker():
+    """Background loop running the SMS near-depletion scan periodically."""
+    while True:
+        try:
+            with app.app_context():
+                result = _run_sms_depletion_scan()
+                if result.get('sent'):
+                    app.logger.info(f"[sms-bot] depletion scan sent={result.get('sent')} scanned={result.get('scanned')}")
+        except Exception as exc:
+            try:
+                app.logger.warning(f"[sms-bot] scan error: {exc}")
             except Exception:
                 pass
         time.sleep(1800)  # every 30 minutes
@@ -10934,12 +11249,25 @@ def settings_page():
     if not user.is_superadmin:
         return redirect(url_for('dashboard'))
     whatsapp_cfg = _get_whatsapp_runtime_settings()
-    return render_template('settings.html', 
-                         current_user=user, 
-                         is_superadmin=user.is_superadmin, 
+    sms_cfg = _get_sms_runtime_settings()
+    return render_template('settings.html',
+                         current_user=user,
+                         is_superadmin=user.is_superadmin,
                          app_version=APP_VERSION,
                          admin_username=user.username,
                          role=user.role,
+                         sms_automation_enabled=sms_cfg.get('enabled', False),
+                         sms_gmweb_base_url=sms_cfg.get('base_url', ''),
+                         sms_gmweb_api_key=sms_cfg.get('api_key', ''),
+                         sms_gmweb_timeout=sms_cfg.get('timeout_seconds', 15),
+                         sms_trigger_created=sms_cfg.get('trigger_created', True),
+                         sms_trigger_renew=sms_cfg.get('trigger_renew', True),
+                         sms_trigger_depletion=sms_cfg.get('trigger_depletion', False),
+                         sms_depletion_expiry_days=sms_cfg.get('depletion_expiry_days', 3),
+                         sms_depletion_volume_gb=sms_cfg.get('depletion_volume_gb', 2.0),
+                         sms_depletion_cooldown_days=sms_cfg.get('depletion_cooldown_days', 7),
+                         sms_min_interval_seconds=sms_cfg.get('min_interval_seconds', 30),
+                         sms_daily_limit=sms_cfg.get('daily_limit', 200),
                          whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
                          whatsapp_enabled=whatsapp_cfg.get('enabled_requested', False),
                          whatsapp_provider=whatsapp_cfg.get('provider', 'baileys'),
@@ -13063,6 +13391,11 @@ def renew_client(server_id, inbound_id, email):
                     whatsapp_delivery = _send_whatsapp_message('renew_success', email, _wa_text, recipient_comment=_client_comment)
                 else:
                     whatsapp_delivery = {'sent': False, 'reason': 'reseller_automation_disabled'}
+
+                # SMS automation (GMweb) — non-reseller-owned accounts only; runs
+                # in a background thread so it never delays the renew response.
+                _fire_automation_sms('renew', server.id, email, RENEW_SMS_TEMPLATE_TYPE,
+                                     DEFAULT_RENEW_SMS_TEMPLATE, _renew_tpl_vars, _client_comment)
                 whatsapp_meta = {
                     'enabled': whatsapp_runtime.get('enabled', False),
                     'deployment_region': whatsapp_runtime.get('deployment_region', 'outside'),
@@ -14061,6 +14394,16 @@ def add_client(server_id, inbound_id):
             except Exception:
                 copy_text = ''
 
+            # SMS automation (GMweb) on create — non-reseller-owned accounts only.
+            _fire_automation_sms('created', server.id, email, CLIENT_CREATED_SMS_TEMPLATE_TYPE,
+                                 DEFAULT_CLIENT_CREATED_SMS_TEMPLATE, {
+                                     'service_name': email, 'email': email, 'protocol': proto_label,
+                                     'volume': ('♾️' if volume_gb == 0 else f'{volume_gb} GB'),
+                                     'days': ('♾️' if days == 0 else f'{days}'), 'sub_link': sub_url,
+                                     'dashboard_link': dash_sub_url, 'server_name': getattr(server, 'name', '') or '',
+                                     'comment': data.get('comment', '') or '',
+                                 }, data.get('comment', '') or '')
+
             return jsonify({
                 "success": True,
                 "copy_text": copy_text,
@@ -14295,6 +14638,10 @@ def add_client(server_id, inbound_id):
                     copy_text = _render_text_template(active_tpl.content, _cc_tpl_vars)
             except Exception:
                 copy_text = ''
+
+            # SMS automation (GMweb) on create — non-reseller-owned accounts only.
+            _fire_automation_sms('created', server.id, email, CLIENT_CREATED_SMS_TEMPLATE_TYPE,
+                                 DEFAULT_CLIENT_CREATED_SMS_TEMPLATE, _cc_tpl_vars, data.get('comment', '') or '')
 
             return jsonify({
                 "success": True,
@@ -18554,6 +18901,32 @@ def update_system_config():
                 WHATSAPP_BOT_TPL_ENDED_KEY, WHATSAPP_BOT_TPL_INFO_KEY,
             }:
                 sanitized_value = sanitize_html(str(value))[:2000]
+            # ── SMS Automation (GMweb) ──
+            elif key in {
+                SMS_AUTOMATION_ENABLED_KEY, SMS_TRIGGER_CREATED_KEY,
+                SMS_TRIGGER_RENEW_KEY, SMS_TRIGGER_DEPLETION_KEY,
+            }:
+                sanitized_value = 'true' if _parse_bool(value) else 'false'
+            elif key == SMS_GMWEB_BASE_URL_KEY:
+                sanitized_value = str(value or '').strip().rstrip('/')[:512]
+            elif key == SMS_GMWEB_API_KEY_KEY:
+                sanitized_value = str(value or '').strip()[:512]
+            elif key == SMS_GMWEB_TIMEOUT_KEY:
+                sanitized_value = str(_parse_int(value, 15, min_value=3, max_value=90))
+            elif key == SMS_DEPLETION_EXPIRY_DAYS_KEY:
+                sanitized_value = str(_parse_int(value, 3, min_value=0, max_value=60))
+            elif key == SMS_DEPLETION_VOLUME_GB_KEY:
+                try:
+                    _v = max(0.0, min(1000.0, float(value)))
+                except (TypeError, ValueError):
+                    _v = 2.0
+                sanitized_value = str(_v)
+            elif key == SMS_DEPLETION_COOLDOWN_DAYS_KEY:
+                sanitized_value = str(_parse_int(value, 7, min_value=1, max_value=120))
+            elif key == SMS_MIN_INTERVAL_SECONDS_KEY:
+                sanitized_value = str(_parse_int(value, 30, min_value=0, max_value=3600))
+            elif key == SMS_DAILY_LIMIT_KEY:
+                sanitized_value = str(_parse_int(value, 200, min_value=1, max_value=100000))
             else:
                 sanitized_value = sanitize_html(str(value))
 
@@ -18581,6 +18954,39 @@ def update_system_config():
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/sms/test-connection', methods=['POST'])
+@superadmin_required
+def test_sms_connection():
+    """Verify the GMweb gateway: /health (public) then /ready (with the token)."""
+    cfg = _get_sms_runtime_settings()
+    base = (cfg.get('base_url') or '').strip().rstrip('/')
+    api_key = (cfg.get('api_key') or '').strip()
+    if not base:
+        return jsonify({'success': False, 'error': 'GMweb Base URL is not configured.'}), 400
+    if not api_key:
+        return jsonify({'success': False, 'error': 'GMweb API key is not configured.'}), 400
+    timeout = int(cfg.get('timeout_seconds') or 15)
+    try:
+        h = requests.get(f"{base}/health", timeout=timeout)
+        if h.status_code != 200:
+            return jsonify({'success': False, 'error': f'Gateway /health returned HTTP {h.status_code}.'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Cannot reach gateway: {e}'}), 400
+    # /ready also validates the token (401 → bad key, 503 → not paired yet).
+    try:
+        r = requests.get(f"{base}/ready", headers={'Authorization': f'Bearer {api_key}'}, timeout=timeout)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Gateway reachable but /ready failed: {e}'}), 400
+    if r.status_code == 401:
+        return jsonify({'success': False, 'error': 'Invalid API key (gateway returned 401).'}), 400
+    if r.status_code == 503:
+        return jsonify({'success': True, 'ready': False,
+                        'message': 'Gateway reachable and key valid, but Google Messages is not paired yet (503).'})
+    if r.status_code == 200:
+        return jsonify({'success': True, 'ready': True, 'message': 'Gateway reachable, key valid, and ready to send.'})
+    return jsonify({'success': False, 'error': f'Gateway /ready returned HTTP {r.status_code}.'}), 400
 
 
 @app.route('/api/whatsapp/test-connection', methods=['POST'])
@@ -22512,6 +22918,15 @@ def ensure_background_threads_started():
             print(f"Failed to start whatsapp bot thread: {e}")
     else:
         print("[Singleton] whatsapp_bot_worker already owned by another worker, skipping.")
+
+    # Singleton: only one worker runs the SMS near-depletion bot scanner
+    if _claim_singleton('sms_bot_worker'):
+        try:
+            threading.Thread(target=sms_bot_worker, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to start sms bot thread: {e}")
+    else:
+        print("[Singleton] sms_bot_worker already owned by another worker, skipping.")
 
 if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
     # Start threads on module import (works under gunicorn as well)
