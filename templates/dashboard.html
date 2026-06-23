@@ -578,7 +578,7 @@
             </div>
 
             <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; align-items: stretch; margin-bottom: 5px;">
-                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                <label class="form-group form-toggle-item free-toggle-wrap" style="cursor: pointer; margin: 0;">
                     <div class="toggle-switch">
                         <input type="checkbox" id="renew-free-toggle" onchange="refreshRenewPriceDisplay()">
                         <span class="slider"></span>
@@ -735,7 +735,7 @@
                     </div>
 
                     <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; align-items: stretch; margin-bottom: 15px;">
-                        <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                        <label class="form-group form-toggle-item free-toggle-wrap" style="cursor: pointer; margin: 0;">
                             <div class="toggle-switch">
                                 <input type="checkbox" id="reset-free-toggle" onchange="updateResetCost()">
                                 <span class="slider"></span>
@@ -906,7 +906,7 @@
             </div>
 
             <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; align-items: stretch; margin-bottom: 5px;">
-                <label class="form-group form-toggle-item" style="cursor: pointer; margin: 0;">
+                <label class="form-group form-toggle-item free-toggle-wrap" style="cursor: pointer; margin: 0;">
                     <div class="toggle-switch">
                         <input type="checkbox" id="add-client-free-toggle" onchange="updateAddPriceDisplay()">
                         <span class="slider"></span>
@@ -1506,6 +1506,9 @@
     const serverRefreshControllers = new Map(); // serverId -> AbortController
     let activeRefreshJobId = null;
     let refreshJobPollTimer = null;
+    // True while a full refresh job is in flight — used to keep the skeleton up
+    // (instead of flashing "No servers") and to pull partial data progressively.
+    let _dashboardRefreshing = false;
     const refreshJobContext = new Map(); // jobId -> { serverId?: number|null }
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
     const lastUserCacheByServer = new Map(); // serverId -> { inboundId: email|null }
@@ -1528,6 +1531,18 @@
 
     const IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
     const USER_ROLE = "{{ role }}";
+    const ALLOW_FREE = {{ 'true' if allow_free else 'false' }};
+
+    // Resellers without the "Free creation" permission must not see any Free toggle.
+    function applyFreePermissionUI() {
+        if (ALLOW_FREE) return;
+        document.querySelectorAll('.free-toggle-wrap').forEach(el => {
+            el.style.display = 'none';
+            const cb = el.querySelector('input[type="checkbox"]');
+            if (cb) cb.checked = false;
+        });
+    }
+    document.addEventListener('DOMContentLoaded', applyFreePermissionUI);
         function escapeHtml(value) {
             const s = String(value ?? '');
             return s
@@ -2859,6 +2874,7 @@
 
     function stopRefreshJobPolling() {
         activeRefreshJobId = null;
+        _dashboardRefreshing = false;
         if (refreshJobPollTimer) {
             clearTimeout(refreshJobPollTimer);
             refreshJobPollTimer = null;
@@ -2869,6 +2885,7 @@
         if (!jobId) return;
         if (activeRefreshJobId === jobId) return;
         activeRefreshJobId = jobId;
+        _dashboardRefreshing = true;
 
         if (refreshJobPollTimer) {
             clearTimeout(refreshJobPollTimer);
@@ -2877,6 +2894,10 @@
 
         const pollStart = Date.now();
         const MAX_POLL_MS = 120000;
+        // Cold load = grid had no data when this refresh started. While the
+        // server fetches panels (and commits the cache server-by-server), pull
+        // the partial snapshot each tick so the grid fills in progressively.
+        const startedCold = !(Array.isArray(allInboundsData) && allInboundsData.length > 0) && serverId === null;
 
         const pollOnce = async () => {
             if (!activeRefreshJobId) return;
@@ -2917,6 +2938,13 @@
                     refreshJobContext.delete(jobId);
                     handleRefreshError();
                     return;
+                }
+
+                // Still running: on a cold load, render whatever the server has
+                // committed so far so the grid fills server-by-server instead of
+                // sitting on the skeleton until the whole fan-out finishes.
+                if (startedCold) {
+                    await refreshData(true, { mode: 'cache', poll: false });
                 }
             } catch (e) {
                 // Keep polling; network hiccups shouldn't break the UI.
@@ -2972,6 +3000,9 @@
                 const isAsyncJobPending = Boolean(jobId && (jobState === 'queued' || jobState === 'running'));
                 const hasSnapshotOnScreen = Array.isArray(allInboundsData) && allInboundsData.length > 0;
                 const shouldApplySnapshotNow = !isAsyncJobPending || !poll || !hasSnapshotOnScreen;
+                // Mark "refreshing" before the first render so an empty cold-start
+                // payload keeps the skeleton instead of flashing "No servers".
+                if (isAsyncJobPending && poll) _dashboardRefreshing = true;
 
                 if (shouldApplySnapshotNow) {
                     allInboundsData = data.inbounds;
@@ -3397,6 +3428,9 @@
         let html = '';
 
         if (inbounds.length === 0 && (!pendingServers || pendingServers.length === 0)) {
+            // A refresh is still fetching panels — keep the skeleton up instead of
+            // briefly flashing "No servers added" before the data lands.
+            if (_dashboardRefreshing) { showDashboardSkeleton(); return; }
             container.innerHTML = `
                 <div class="empty-state">
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -5223,37 +5257,16 @@
     // ── Edit modal: change which inbounds a v3 client is assigned to ──────────
     let _editClientInboundState = { serverId: null, email: '', clientUuid: '', originalIds: new Set(), isV3: false };
 
-    function _populateEditInboundMulti(serverId, email) {
+    function _renderEditInboundMulti(serverId, items, assignedIds) {
         const group = document.getElementById('edit-client-inbound-group');
         const list = document.getElementById('edit-client-inbound-multi-list');
-        _editClientInboundState = { serverId, email, clientUuid: '', originalIds: new Set(), isV3: false };
         if (!group || !list) return;
-
-        if (!_serverIsV3(serverId)) {
-            group.style.display = 'none';
-            list.innerHTML = '';
-            return;
-        }
-        _editClientInboundState.isV3 = true;
-
-        // Role-filtered cache → resellers only ever see inbounds they can access.
-        const inbounds = getCachedInboundsForServer(serverId);
-        const emailL = String(email || '').toLowerCase();
-        const assigned = new Set();
-        inbounds.forEach(ib => {
-            const c = (ib.clients || []).find(x => (x.email || '').toLowerCase() === emailL);
-            if (c) {
-                assigned.add(parseInt(ib.id));
-                if (!_editClientInboundState.clientUuid && c.id) _editClientInboundState.clientUuid = c.id;
-            }
-        });
+        if (!items.length) { group.style.display = 'none'; list.innerHTML = ''; return; }
+        const assigned = new Set((assignedIds || []).map(v => parseInt(v)).filter(Number.isFinite));
         _editClientInboundState.originalIds = assigned;
-
-        if (!inbounds.length) { group.style.display = 'none'; list.innerHTML = ''; return; }
-
         group.style.display = '';
         document.getElementById('edit-inbound-multi-dropdown').classList.add('hidden');
-        list.innerHTML = inbounds.map(ib => `
+        list.innerHTML = items.map(ib => `
             <div class="filter-item">
                 <label class="checkbox-label">
                     <input type="checkbox" class="edit-inbound-cb" value="${ib.id}" ${assigned.has(parseInt(ib.id)) ? 'checked' : ''} onchange="_updateEditInboundMultiLabel()">
@@ -5262,6 +5275,52 @@
                 </label>
             </div>`).join('');
         _updateEditInboundMultiLabel();
+    }
+
+    async function _populateEditInboundMulti(serverId, email) {
+        const group = document.getElementById('edit-client-inbound-group');
+        const list = document.getElementById('edit-client-inbound-multi-list');
+        _editClientInboundState = { serverId, email, clientUuid: '', originalIds: new Set(), isV3: false };
+        if (!group || !list) return;
+
+        // Hide while we resolve; the authoritative answer comes from the backend.
+        group.style.display = 'none';
+        list.innerHTML = '';
+
+        // Seed clientUuid from the local cache (needed by the save path).
+        const emailL = String(email || '').toLowerCase();
+        getCachedInboundsForServer(serverId).forEach(ib => {
+            const c = (ib.clients || []).find(x => (x.email || '').toLowerCase() === emailL);
+            if (c && !_editClientInboundState.clientUuid && c.id) _editClientInboundState.clientUuid = c.id;
+        });
+
+        // Ask the server: it computes v3-ness from the DB token and reads the
+        // authoritative inbound list + this client's memberships. This is robust
+        // even when the dashboard's in-memory cache for this server is empty or
+        // allServers hasn't loaded has_api_token yet.
+        try {
+            const resp = await fetch(`/api/client/inbound-assignments/${serverId}?email=${encodeURIComponent(email || '')}`, { cache: 'no-store' });
+            const data = await resp.json();
+            if (data && data.success) {
+                if (!data.is_v3) { group.style.display = 'none'; list.innerHTML = ''; return; }
+                _editClientInboundState.isV3 = true;
+                _renderEditInboundMulti(serverId, data.inbounds || [], data.assigned_ids || []);
+                return;
+            }
+        } catch (e) {
+            // fall through to the local-cache best effort below
+        }
+
+        // Fallback: local cache (older behavior) if the request failed entirely.
+        if (!_serverIsV3(serverId)) { group.style.display = 'none'; list.innerHTML = ''; return; }
+        _editClientInboundState.isV3 = true;
+        const inbounds = getCachedInboundsForServer(serverId);
+        const assigned = [];
+        inbounds.forEach(ib => {
+            const c = (ib.clients || []).find(x => (x.email || '').toLowerCase() === emailL);
+            if (c) assigned.push(parseInt(ib.id));
+        });
+        _renderEditInboundMulti(serverId, inbounds, assigned);
     }
 
     function toggleEditInboundDropdown(e) {

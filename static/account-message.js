@@ -111,6 +111,10 @@
             server_name: client.server_name || '',
             telegram_channel: telegramCh,
             whatsapp_channel: whatsappCh,
+            // Gift: {gift_volume} holds the amount, {gift_given} drives the
+            // {if_gift}...{/if_gift} conditional block (dropped when no gift).
+            gift_volume: (client.gift_volume !== undefined && client.gift_volume !== null) ? String(client.gift_volume) : '',
+            gift_given: !!client.gift_given || !!(client.gift_volume && Number(client.gift_volume) > 0),
         };
         return applyConditionals(tpl, values).replace(/\{([a-zA-Z0-9_]+)\}/g, (m, k) =>
             Object.prototype.hasOwnProperty.call(values, k) ? values[k] : m);

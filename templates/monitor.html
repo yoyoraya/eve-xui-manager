@@ -101,6 +101,10 @@
                         <summary>Disabled (manual)</summary>
                         <textarea id="tpl-disabled" rows="4"></textarea>
                     </details>
+                    <details open>
+                        <summary>No Usage (Royalty)</summary>
+                        <textarea id="tpl-zero-usage" rows="4" placeholder="Template for users who never connected. Vars: {user}, {rem}, {time}, {date}, {server}"></textarea>
+                    </details>
                 </div>
             </div>
         </aside>
@@ -128,8 +132,8 @@
 
             <div class="monitor-filter-row">
                 <div class="monitor-status-filters">
-                    <button class="chip active" data-status="ended" data-label="Ended" onclick="toggleStatusFilter(this)">Ended (0)</button>
-                    <button class="chip active" data-status="expired" data-label="Expired" onclick="toggleStatusFilter(this)">Expired (0)</button>
+                    <button class="chip" data-status="ended" data-label="Ended" onclick="toggleStatusFilter(this)">Ended (0)</button>
+                    <button class="chip" data-status="expired" data-label="Expired" onclick="toggleStatusFilter(this)">Expired (0)</button>
                     <button class="chip active" data-status="low" data-label="Low" onclick="toggleStatusFilter(this)">Low (0)</button>
                     <button class="chip active" data-status="soon" data-label="Soon" onclick="toggleStatusFilter(this)">Soon (0)</button>
                     <button class="chip" data-status="disabled" data-label="Disabled" onclick="toggleStatusFilter(this)">Disabled (0)</button>
@@ -137,7 +141,7 @@
                 </div>
                 {% if role != 'reseller' %}
                 <label class="filter-toggle" title="Include reseller-owned users">
-                    <input type="checkbox" id="monitor-reseller-users-toggle" checked>
+                    <input type="checkbox" id="monitor-reseller-users-toggle">
                     <span class="toggle-track"></span>
                     <span class="toggle-text">Reseller users</span>
                 </label>
@@ -169,18 +173,69 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+    .tag-zero-usage {
+        background: rgba(139, 92, 246, 0.15);
+        color: #8b5cf6;
+        border: 1px solid rgba(139, 92, 246, 0.35);
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 999px;
+        white-space: nowrap;
+    }
+    .msg-sent-badge {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.68rem;
+        font-weight: 700;
+        padding: 0 5px;
+        border-radius: 999px;
+        background: rgba(234, 179, 8, 0.2);
+        color: #b45309;
+        border: 1px solid rgba(234, 179, 8, 0.4);
+        margin-inline-start: 4px;
+    }
+    .btn-msg-sent {
+        opacity: 0.75;
+        border-color: rgba(234, 179, 8, 0.5) !important;
+    }
+    .btn-royalty {
+        background: rgba(139, 92, 246, 0.12);
+        color: #8b5cf6;
+        border: 1px solid rgba(139, 92, 246, 0.35);
+        font-size: 0.78rem;
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        transition: background 0.15s;
+    }
+    .btn-royalty:hover {
+        background: rgba(139, 92, 246, 0.25);
+    }
+    .btn-royalty .icon svg {
+        width: 13px;
+        height: 13px;
+        stroke: #8b5cf6;
+    }
+</style>
 <script nonce="{{ csp_nonce }}">
     const MONITOR_ROLE = '{{ role|e }}';
     let monitorSettings = null;
     let monitorTimezone = 'Asia/Tehran';
     let allAlerts = [];
-    let includeResellerUsers = true;
+    let includeResellerUsers = false;
     const MONITOR_STATUS_KEYS = ['ended', 'expired', 'low', 'soon'];
-    const activeStatusFilters = new Set(['ended', 'expired', 'low', 'soon']);
+    const activeStatusFilters = new Set(['low', 'soon']);
+    let royaltyTemplates = { sms: '', whatsapp: '' };
 
     document.addEventListener('DOMContentLoaded', async () => {
         await loadMonitorSettings();
         await refreshAlerts();
+        loadRoyaltyTemplates();
         updateStatusChips();
         document.getElementById('monitor-search').addEventListener('input', handleMonitorSearch);
         document.getElementById('monitor-server-filter').addEventListener('change', renderAlerts);
@@ -194,6 +249,25 @@
             });
         }
     });
+
+    async function loadRoyaltyTemplates() {
+        try {
+            const [smsResp, waResp] = await Promise.all([
+                fetch('/api/templates/active?type=royalty_info_sms'),
+                fetch('/api/templates/active?type=royalty_info_whatsapp'),
+            ]);
+            const smsData = await smsResp.json();
+            const waData = await waResp.json();
+            royaltyTemplates.sms = smsData.content || '';
+            royaltyTemplates.whatsapp = waData.content || '';
+
+            // Auto-fill the zero_usage textarea if it's still empty
+            const zeroTpl = document.getElementById('tpl-zero-usage');
+            if (zeroTpl && !zeroTpl.value.trim() && royaltyTemplates.sms) {
+                zeroTpl.value = royaltyTemplates.sms;
+            }
+        } catch (_) {}
+    }
 
     async function loadMonitorSettings() {
         try {
@@ -229,6 +303,7 @@
         document.getElementById('tpl-low').value = templates.low || '';
         document.getElementById('tpl-soon').value = templates.soon || '';
         document.getElementById('tpl-disabled').value = templates.disabled || '';
+        document.getElementById('tpl-zero-usage').value = templates.zero_usage || '';
     }
 
     function applyTimezoneOptions(selectId, options) {
@@ -269,7 +344,8 @@
                 expired: document.getElementById('tpl-expired').value || '',
                 low: document.getElementById('tpl-low').value || '',
                 soon: document.getElementById('tpl-soon').value || '',
-                disabled: document.getElementById('tpl-disabled').value || ''
+                disabled: document.getElementById('tpl-disabled').value || '',
+                zero_usage: document.getElementById('tpl-zero-usage').value || ''
             }
         };
 
@@ -486,6 +562,23 @@
         const timeCls = st === 'soon' ? ' detail-highlight' : '';
         const expCls = (st === 'expired' || st === 'ended') ? ' detail-highlight' : '';
 
+        const smsCount = parseInt(alert.sms_count || 0, 10);
+        const waCount = parseInt(alert.wa_count || 0, 10);
+        const smsBtnLabel = smsCount > 0 ? `SMS <span class="msg-sent-badge">${smsCount}×</span>` : 'SMS';
+        const waBtnLabel = waCount > 0 ? `WhatsApp <span class="msg-sent-badge">${waCount}×</span>` : 'WhatsApp';
+        const smsBtnClass = smsCount > 0 ? ' btn-msg-sent' : '';
+        const waBtnClass = waCount > 0 ? ' btn-msg-sent' : '';
+
+        const zeroUsageChip = alert.zero_usage
+            ? '<span class="monitor-tag tag-zero-usage" title="No traffic consumed — never connected">No Usage</span>'
+            : '';
+        const royaltyBtn = alert.zero_usage
+            ? `<button class="btn btn-royalty" onclick="openRoyaltyModal(${alert.server_id}, ${alert.inbound_id}, '${escapeHtml(alert.email)}')" title="Add days for zero-usage client">
+                <span class="icon">${getRoyaltyIcon()}</span>
+                Add Days
+               </button>`
+            : '';
+
         row.innerHTML = `
             <div class="monitor-cell monitor-user">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -494,21 +587,22 @@
             </div>
             <div class="monitor-cell monitor-phone"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>${phoneHtml}</div>
             <div class="monitor-cell"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cell-icon"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>${escapeHtml(alert.server_name || '-')}</div>
-            <div class="monitor-cell"><span class="monitor-tag tag-${st}">${escapeHtml(alert.status_label || alert.status)}</span></div>
+            <div class="monitor-cell" style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;"><span class="monitor-tag tag-${st}">${escapeHtml(alert.status_label || alert.status)}</span>${zeroUsageChip}</div>
             <div class="monitor-cell monitor-detail-stack">
                 <span class="detail-remaining${remCls}">${escapeHtml(alert.remaining || '-')}</span>
                 <span class="detail-time${timeCls}">${escapeHtml(alert.time_left || '-')}</span>
                 <span class="detail-expiry${expCls}">${escapeHtml(alert.expiry_date || '-')}</span>
             </div>
             <div class="monitor-cell monitor-actions">
-                <button class="btn btn-sms" type="button" data-monitor-alert="${encodedAlert}" onclick="sendMonitorMessage(this, 'sms')" ${phones.length ? '' : 'disabled'}>
+                <button class="btn btn-sms${smsBtnClass}" type="button" data-monitor-alert="${encodedAlert}" onclick="sendMonitorMessage(this, 'sms')" ${phones.length ? '' : 'disabled'}>
                     <span class="icon">${getSmsIcon()}</span>
-                    SMS
+                    ${smsBtnLabel}
                 </button>
-                <button class="btn btn-whatsapp" type="button" data-monitor-alert="${encodedAlert}" onclick="sendMonitorMessage(this, 'whatsapp')" ${phones.length ? '' : 'disabled'}>
+                <button class="btn btn-whatsapp${waBtnClass}" type="button" data-monitor-alert="${encodedAlert}" onclick="sendMonitorMessage(this, 'whatsapp')" ${phones.length ? '' : 'disabled'}>
                     <span class="icon">${getWhatsAppIcon()}</span>
-                    WhatsApp
+                    ${waBtnLabel}
                 </button>
+                ${royaltyBtn}
                 <button class="btn ${alert.enabled ? 'btn-danger' : 'btn-success'}" onclick="toggleClientFromMonitor(${alert.server_id}, ${alert.inbound_id}, '${escapeHtml(alert.email)}', ${!alert.enabled})" title="${alert.enabled ? 'Disable' : 'Enable'}">
                     <span class="icon">${alert.enabled ? getDisableIcon() : getEnableIcon()}</span>
                     ${alert.enabled ? 'Disable' : 'Enable'}
@@ -518,9 +612,39 @@
         return row;
     }
 
-    function buildMessage(alert) {
+    function buildMessage(alert, channel) {
         const templates = (monitorSettings || {}).templates || {};
-        const template = templates[alert.status] || '';
+        let template = '';
+
+        if (alert.zero_usage) {
+            // Priority: 1) monitor zero_usage textarea  2) royalty notification template  3) status fallback
+            template = templates['zero_usage'] || '';
+            if (!template) {
+                template = (channel === 'whatsapp' ? royaltyTemplates.whatsapp : royaltyTemplates.sms) || '';
+            }
+            if (template) {
+                // Support both monitor vars ({user}) and royalty vars ({email})
+                return template
+                    .replace(/\{email\}/g, alert.email || '-')
+                    .replace(/\{account_name\}/g, alert.email || '-')
+                    .replace(/\{user\}/g, alert.email || '-')
+                    .replace(/\{server_name\}/g, alert.server_name || '-')
+                    .replace(/\{server\}/g, alert.server_name || '-')
+                    .replace(/\{remaining_time\}/g, alert.time_left || '-')
+                    .replace(/\{remaining_volume\}/g, alert.remaining || '-')
+                    .replace(/\{rem\}/g, alert.remaining || '-')
+                    .replace(/\{time\}/g, alert.time_left || '-')
+                    .replace(/\{date\}/g, alert.expiry_date || '-')
+                    .replace(/\{dashboard_link\}/g, alert.dash_sub_url || '')
+                    .replace(/\{sub_link\}/g, alert.sub_url || '')
+                    .replace(/\{telegram_channel\}/g, '')
+                    .replace(/\{whatsapp_channel\}/g, '')
+                    .replace(/\{gift_volume\}/g, '')
+                    .replace(/\{if_gift\}[\s\S]*?\{\/if_gift\}/g, '');
+            }
+        }
+
+        template = templates[alert.status] || '';
         const vars = {
             user: alert.email || '-',
             rem: alert.remaining || '-',
@@ -528,7 +652,7 @@
             date: alert.expiry_date || '-',
             server: alert.server_name || '-'
         };
-        return (template || '').replace(/\{(user|rem|time|date|server)\}/g, (match, key) => vars[key] || '-');
+        return template.replace(/\{(user|rem|time|date|server)\}/g, (match, key) => vars[key] || '-');
     }
 
     function toLatinDigits(value) {
@@ -609,12 +733,28 @@
             return;
         }
 
-        const message = buildMessage(alert);
+        const message = buildMessage(alert, channel);
         const openTarget = (phone) => {
             const href = channel === 'sms'
                 ? buildSmsLink(phone.display, message)
                 : buildWaLink(phone.number, message);
             window.open(href, '_blank', 'noopener');
+
+            // Log the send and update msg_count optimistically
+            fetch('/api/monitor/log_message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: alert.email, server_id: alert.server_id, channel }),
+            }).catch(() => {});
+
+            const existing = allAlerts.find(
+                (a) => a.server_id === alert.server_id && a.email === alert.email
+            );
+            if (existing) {
+                if (channel === 'sms') existing.sms_count = (existing.sms_count || 0) + 1;
+                else existing.wa_count = (existing.wa_count || 0) + 1;
+                renderAlerts();
+            }
         };
 
         openPhoneChoiceModal(
@@ -722,68 +862,140 @@
         return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>';
     }
 
+    function getRoyaltyIcon() {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
+    }
+
+    function openRoyaltyModal(serverId, inboundId, email) {
+        let overlay = document.getElementById('monitor-royalty-modal');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'monitor-royalty-modal';
+            overlay.className = 'modal-overlay hidden';
+            overlay.innerHTML = `
+                <div class="modal" style="max-width: 400px;">
+                    <div class="modal-header">
+                        <h2>Add Days — No Usage</h2>
+                        <button class="modal-close" type="button" data-royalty-close>&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="margin-bottom:12px; color: var(--text-secondary); font-size: 0.9rem;" id="royalty-modal-email-label"></p>
+                        <div class="form-group">
+                            <label>Days to add</label>
+                            <input type="number" id="royalty-days-input" min="1" max="365" value="30" style="width:100%">
+                        </div>
+                        <div style="display:flex; gap:8px; margin-top:16px;">
+                            <button class="btn btn-primary" style="flex:1" onclick="applyRoyaltyFromModal()">Apply</button>
+                            <button class="btn btn-secondary" type="button" data-royalty-close>Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (event) => {
+                if (event.target === overlay || event.target.closest('[data-royalty-close]')) {
+                    overlay.classList.add('hidden');
+                }
+            });
+        }
+
+        overlay._serverId = serverId;
+        overlay._inboundId = inboundId;
+        overlay._email = email;
+        overlay.querySelector('#royalty-modal-email-label').textContent = `User: ${email}`;
+        overlay.querySelector('#royalty-days-input').value = 30;
+        overlay.classList.remove('hidden');
+    }
+
+    async function applyRoyaltyFromModal() {
+        const overlay = document.getElementById('monitor-royalty-modal');
+        if (!overlay) return;
+
+        const serverId = overlay._serverId;
+        const inboundId = overlay._inboundId;
+        const email = overlay._email;
+        const days = parseInt(document.getElementById('royalty-days-input').value || '30', 10);
+
+        if (!days || days <= 0) {
+            showToast('Days must be greater than zero', 'error');
+            return;
+        }
+
+        overlay.classList.add('hidden');
+
+        try {
+            const resp = await fetch('/api/client/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'add_days',
+                    clients: [{ server_id: serverId, inbound_id: inboundId, email: email }],
+                    data: { days_delta: days },
+                }),
+            });
+            const result = await resp.json();
+            if (result.success || result.job_id) {
+                showToast(`${days} days added to ${email}`, 'success');
+                // Reset message send counter after renewal
+                fetch('/api/monitor/reset_msg_count', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, server_id: serverId }),
+                }).catch(() => {});
+                const existing = allAlerts.find(
+                    (a) => a.server_id === serverId && a.email === email
+                );
+                if (existing) {
+                    existing.zero_usage = false;
+                    existing.sms_count = 0;
+                    existing.wa_count = 0;
+                    renderAlerts();
+                }
+            } else {
+                showToast(result.error || 'Failed to add days', 'error');
+            }
+        } catch (err) {
+            showToast('Server error, please try again', 'error');
+        }
+    }
+
     async function toggleClientFromMonitor(serverId, inboundId, email, enable) {
         const action = enable ? 'enable' : 'disable';
-        
-        // Optimistic update
+
         const alert = allAlerts.find(a => a.server_id === serverId && a.inbound_id === inboundId && a.email === email);
+        const prevStatus = alert ? alert.status : null;
+
+        // Optimistic update: disabling moves to disabled ONLY when status is not already
+        // expired/ended — those reflect the actual reason (time/volume) and should stay.
         if (alert) {
             alert.enabled = enable;
-            alert.verified = false;
+            if (!enable && !['expired', 'ended'].includes(alert.status)) alert.status = 'disabled';
             renderAlerts();
         }
-        
+
         try {
             const response = await fetch(`/api/client/${serverId}/${inboundId}/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: email, enable: enable })
             });
-            
+
             const data = await response.json();
             if (data.success) {
                 showToast(`Client ${action}d successfully`, 'success');
-                
-                // Fetch real status from server immediately
-                try {
-                    const refreshResp = await fetch(`/api/server/${serverId}/refresh?force=true&wait=true`);
-                    const refreshData = await refreshResp.json();
-                    if (refreshData.success && refreshData.inbounds) {
-                        let realStatus = null;
-                        for (const ib of refreshData.inbounds) {
-                            if (ib.id === inboundId) {
-                                const client = (ib.clients || []).find(c => c.email === email);
-                                if (client) {
-                                    realStatus = client.enable;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        if (alert && realStatus !== null) {
-                            alert.enabled = realStatus;
-                            if (realStatus === enable) {
-                                alert.verified = true;
-                            }
-                            renderAlerts();
-                        }
-                    }
-                } catch (e) {
-                    console.error('Error verifying status:', e);
-                }
             } else {
                 showToast(data.error || `Error ${action}ing client`, 'error');
-                // Revert optimistic update
                 if (alert) {
                     alert.enabled = !enable;
+                    if (!enable) alert.status = prevStatus;
                     renderAlerts();
                 }
             }
         } catch (error) {
             showToast(`Error ${action}ing client`, 'error');
-            // Revert optimistic update
             if (alert) {
                 alert.enabled = !enable;
+                if (!enable) alert.status = prevStatus;
                 renderAlerts();
             }
         }

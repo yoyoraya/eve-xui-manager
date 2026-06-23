@@ -15,6 +15,7 @@ import logging
 import qrcode
 import uuid
 import secrets
+import random
 import string
 import shutil
 import glob
@@ -88,7 +89,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.10"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -406,7 +407,8 @@ XUI_SESSION_TTL = 600  # 10 minutes cache
 
 WHATSAPP_SEND_TRACKER = {
     'per_recipient': {},
-    'daily': {'date': '', 'count': 0}
+    'daily': {'date': '', 'count': 0},
+    'last_global_send': 0.0,  # ts of the most recent send of any recipient (pace gate)
 }
 WHATSAPP_SEND_TRACKER_LOCK = threading.Lock()
 
@@ -1387,6 +1389,14 @@ def _run_bulk_job(job_id: str):
                 elif action == 'add_days':
                     delta = data.get('days_delta')
                     ok, err, _status = _apply_client_limit_delta(user, server, inbound_id, email, days_delta=delta, volume_gb_delta=None)
+                    if ok:
+                        try:
+                            MonitorMessageLog.query.filter_by(
+                                email=(email or '').strip().lower(), server_id=server_id
+                            ).delete()
+                            db.session.commit()
+                        except Exception:
+                            pass
                 elif action == 'add_volume':
                     delta = data.get('volume_gb_delta')
                     ok, err, _status = _apply_client_limit_delta(user, server, inbound_id, email, days_delta=None, volume_gb_delta=delta)
@@ -3411,6 +3421,8 @@ class Admin(db.Model):
     credit = db.Column(db.Integer, default=0)
     allow_negative_credit = db.Column(db.Boolean, default=False)
     negative_credit_limit = db.Column(db.Integer, default=0)
+    allow_free_creation = db.Column(db.Boolean, default=False)
+    whatsapp_automation_enabled = db.Column(db.Boolean, default=False)
     allowed_servers = db.Column(db.Text, default='[]')
     enabled = db.Column(db.Boolean, default=True)
     discount_percent = db.Column(db.Integer, default=0)
@@ -3443,6 +3455,8 @@ class Admin(db.Model):
             'credit': self.credit,
             'allow_negative_credit': bool(self.allow_negative_credit),
             'negative_credit_limit': self.negative_credit_limit or 0,
+            'allow_free_creation': bool(self.allow_free_creation),
+            'whatsapp_automation_enabled': bool(self.whatsapp_automation_enabled),
             'allowed_servers': parse_allowed_servers(self.allowed_servers),
             'enabled': self.enabled,
             'discount_percent': self.discount_percent,
@@ -3965,6 +3979,66 @@ WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY = 'whatsapp_template_pre_expiry'
 WHATSAPP_GATEWAY_URL_KEY = 'whatsapp_gateway_url'
 WHATSAPP_GATEWAY_API_KEY = 'whatsapp_gateway_api_key'
 WHATSAPP_GATEWAY_TIMEOUT_KEY = 'whatsapp_gateway_timeout_seconds'
+# OpenWA (self-hosted gateway) session name, e.g. "navid". Used only when
+# provider == 'openwa' to address POST /api/sessions/{session}/messages/send-text.
+WHATSAPP_SESSION_KEY = 'whatsapp_session_id'
+
+# --- Anti-ban / warm-up / bot controls (mostly for the OpenWA provider) ---
+# Warm-up: linearly ramp the daily send cap from a low start value up to the
+# configured daily_limit over N days, starting from a chosen date. Lowers the
+# odds of a fresh number getting flagged for a sudden volume spike.
+WHATSAPP_WARMUP_ENABLED_KEY = 'whatsapp_warmup_enabled'
+WHATSAPP_WARMUP_START_DATE_KEY = 'whatsapp_warmup_start_date'      # YYYY-MM-DD
+WHATSAPP_WARMUP_START_PER_DAY_KEY = 'whatsapp_warmup_start_per_day'  # cap on day 0
+WHATSAPP_WARMUP_RAMP_DAYS_KEY = 'whatsapp_warmup_ramp_days'        # days to reach full cap
+
+# Global pace gate (item #4): enforce a minimum gap + random jitter between ANY
+# two outbound sends (not just same-recipient), so a batch never turns into a
+# burst. Built but OFF by default — turn on only when automated bulk sending.
+WHATSAPP_PACE_ENABLED_KEY = 'whatsapp_pace_enabled'
+WHATSAPP_PACE_MIN_GAP_KEY = 'whatsapp_pace_min_gap_seconds'
+WHATSAPP_PACE_JITTER_KEY = 'whatsapp_pace_jitter_seconds'
+
+# Near-depletion bot: a background scanner that proactively messages accounts
+# whose time/volume is about to run out, exactly once per cooldown window.
+WHATSAPP_DEPLETION_ENABLED_KEY = 'whatsapp_depletion_enabled'
+WHATSAPP_DEPLETION_EXPIRY_DAYS_KEY = 'whatsapp_depletion_expiry_days'  # <= days left
+WHATSAPP_DEPLETION_VOLUME_GB_KEY = 'whatsapp_depletion_volume_gb'      # <= GB left
+WHATSAPP_DEPLETION_COOLDOWN_DAYS_KEY = 'whatsapp_depletion_cooldown_days'
+
+# Dedicated "bot" templates for the OpenWA automation, per scenario. These are
+# distinct from the SMS/monitor templates so the WhatsApp voice can differ.
+WHATSAPP_BOT_TPL_CREATED_KEY = 'whatsapp_bot_tpl_created'
+WHATSAPP_BOT_TPL_RENEW_KEY = 'whatsapp_bot_tpl_renew'
+WHATSAPP_BOT_TPL_ENDED_KEY = 'whatsapp_bot_tpl_ended'
+WHATSAPP_BOT_TPL_INFO_KEY = 'whatsapp_bot_tpl_info'
+
+DEFAULT_WHATSAPP_BOT_TPL_CREATED = """اکانت شما ساخته شد ✅
+اسم اکانت: {email}
+حجم: {volume} | مدت: {days} روز
+لینک اتصال: {dashboard_link}
+
+لطفا از طریق لینک بالا به سرویس خود متصل شین."""
+
+DEFAULT_WHATSAPP_BOT_TPL_RENEW = """تمدید شد ✅
+اسم اکانت: {email}
+{days_label} | {volume_label}
+تاریخ انقضا: {date}
+لینک: {dashboard_link}"""
+
+DEFAULT_WHATSAPP_BOT_TPL_ENDED = """مشترک گرامی {email}،
+سرویس شما رو به پایانه ⏳
+زمان باقی‌مانده: {remaining_time}
+حجم باقی‌مانده: {remaining_volume}
+
+برای جلوگیری از قطعی، لطفا تمدید کنید 🙏
+لینک: {dashboard_link}"""
+
+DEFAULT_WHATSAPP_BOT_TPL_INFO = """اطلاعات اکانت شما
+اسم اکانت: {email}
+مدت باقی‌مانده: {remaining_time}
+حجم باقی‌مانده: {remaining_volume}
+لینک اتصال: {dashboard_link}"""
 
 DEFAULT_WHATSAPP_TEMPLATE_RENEW = "سلام {user}، تمدید شما با موفقیت انجام شد."
 DEFAULT_WHATSAPP_TEMPLATE_WELCOME = "سلام {user}، اشتراک شما فعال شد."
@@ -4043,6 +4117,22 @@ WHATSAPP_CONFIG_KEYS = {
     WHATSAPP_GATEWAY_URL_KEY,
     WHATSAPP_GATEWAY_API_KEY,
     WHATSAPP_GATEWAY_TIMEOUT_KEY,
+    WHATSAPP_SESSION_KEY,
+    WHATSAPP_WARMUP_ENABLED_KEY,
+    WHATSAPP_WARMUP_START_DATE_KEY,
+    WHATSAPP_WARMUP_START_PER_DAY_KEY,
+    WHATSAPP_WARMUP_RAMP_DAYS_KEY,
+    WHATSAPP_PACE_ENABLED_KEY,
+    WHATSAPP_PACE_MIN_GAP_KEY,
+    WHATSAPP_PACE_JITTER_KEY,
+    WHATSAPP_DEPLETION_ENABLED_KEY,
+    WHATSAPP_DEPLETION_EXPIRY_DAYS_KEY,
+    WHATSAPP_DEPLETION_VOLUME_GB_KEY,
+    WHATSAPP_DEPLETION_COOLDOWN_DAYS_KEY,
+    WHATSAPP_BOT_TPL_CREATED_KEY,
+    WHATSAPP_BOT_TPL_RENEW_KEY,
+    WHATSAPP_BOT_TPL_ENDED_KEY,
+    WHATSAPP_BOT_TPL_INFO_KEY,
 }
 DEFAULT_MONITOR_SETTINGS = {
     "filters": {
@@ -4056,7 +4146,8 @@ DEFAULT_MONITOR_SETTINGS = {
         "expired": "مشترک گرامی {user}، زمان سرویس شما به پایان رسیده است.\nلطفا جهت تمدید اقدام فرمایید.",
         "low": "مشترک گرامی {user}، تنها {rem} از حجم سرویس شما باقی مانده است.\nتمدید میفرمایید؟",
         "soon": "مشترک گرامی {user}، تنها {time} از زمان سرویس شما باقی مانده است.\nتمدید میفرمایید؟",
-        "disabled": "مشترک گرامی {user}، سرویس شما غیرفعال شده است.\nبرای پیگیری با پشتیبانی در تماس باشید."
+        "disabled": "مشترک گرامی {user}، سرویس شما غیرفعال شده است.\nبرای پیگیری با پشتیبانی در تماس باشید.",
+        "zero_usage": ""
     }
 }
 
@@ -4323,7 +4414,25 @@ def _normalize_whatsapp_provider(value: str | None) -> str:
     raw = (value or '').strip().lower()
     if raw in ('cloud', 'meta', 'official'):
         return 'cloud'
+    if raw in ('openwa', 'open-wa', 'open_wa', 'owa'):
+        return 'openwa'
     return 'baileys'
+
+
+def _normalize_whatsapp_session(value: str | None) -> str:
+    """OpenWA session name: letters, digits, hyphens, underscores only."""
+    raw = (value or '').strip()
+    if not raw:
+        return ''
+    return re.sub(r'[^A-Za-z0-9_-]', '', raw)[:64]
+
+
+def _whatsapp_chat_id(recipient: str) -> str:
+    """Convert a +98XXXXXXXXXX recipient to OpenWA chatId '98XXXXXXXXXX@c.us'."""
+    digits = re.sub(r'[^\d]', '', recipient or '')
+    if not digits:
+        return ''
+    return f"{digits}@c.us"
 
 
 def _normalize_whatsapp_gateway_url(value: str | None) -> str:
@@ -4335,19 +4444,26 @@ def _normalize_whatsapp_gateway_url(value: str | None) -> str:
     return raw.rstrip('/')
 
 
-def _probe_whatsapp_gateway(gateway_url: str, timeout_seconds: int, api_key: str | None = None) -> tuple[bool, int | None, str | None]:
+def _probe_whatsapp_gateway(gateway_url: str, timeout_seconds: int, api_key: str | None = None, provider: str | None = None) -> tuple[bool, int | None, str | None]:
     normalized = _normalize_whatsapp_gateway_url(gateway_url)
     if not normalized:
         return False, None, 'empty_gateway_url'
 
     headers = {}
     token = (api_key or '').strip()
-    if token:
-        headers['Authorization'] = f"Bearer {token}"
+    if provider == 'openwa':
+        # OpenWA exposes GET /api/health and authenticates via X-API-Key.
+        health_path = f"{normalized}/api/health"
+        if token:
+            headers['X-API-Key'] = token
+    else:
+        health_path = f"{normalized}/health"
+        if token:
+            headers['Authorization'] = f"Bearer {token}"
 
     try:
         response = requests.get(
-            f"{normalized}/health",
+            health_path,
             headers=headers,
             timeout=max(3, int(timeout_seconds or 10)),
             verify=False,
@@ -4358,6 +4474,84 @@ def _probe_whatsapp_gateway(gateway_url: str, timeout_seconds: int, api_key: str
         return False, status_code, 'non_success_status'
     except Exception as exc:
         return False, None, str(exc)
+
+
+def _openwa_session_status(gateway_url: str, api_key: str, session_name: str, timeout_seconds: int) -> dict:
+    """Look up an OpenWA session by name OR UUID in GET /api/sessions.
+
+    OpenWA's runtime engine is keyed by the session UUID, not its name —
+    messaging by name fails with "not active" even when the session is ready.
+    So we always resolve to the real UUID ('id') and return it for callers to
+    address the send-text endpoint with.
+
+    Returns {'found','connected','status','phone','id','error'}.
+    """
+    normalized = _normalize_whatsapp_gateway_url(gateway_url)
+    result = {'found': False, 'connected': False, 'status': '', 'phone': '', 'id': '', 'error': None}
+    if not normalized or not session_name:
+        result['error'] = 'missing_gateway_or_session'
+        return result
+    headers = {}
+    if (api_key or '').strip():
+        headers['X-API-Key'] = api_key.strip()
+    try:
+        resp = requests.get(
+            f"{normalized}/api/sessions",
+            headers=headers,
+            timeout=max(3, int(timeout_seconds or 10)),
+            verify=False,
+        )
+        if resp.status_code != 200:
+            result['error'] = f"sessions_http_{resp.status_code}"
+            return result
+        rows = resp.json() or []
+        target = session_name.strip().lower()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get('name') or '').strip().lower() == target or str(row.get('id') or '').strip().lower() == target:
+                status = str(row.get('status') or '').strip().lower()
+                result['found'] = True
+                result['status'] = status
+                result['phone'] = str(row.get('phone') or '')
+                result['id'] = str(row.get('id') or '')
+                result['connected'] = status in ('connected', 'ready', 'authenticated', 'active')
+                return result
+        result['error'] = 'session_not_found'
+        return result
+    except Exception as exc:
+        result['error'] = str(exc)
+        return result
+
+
+# Short-lived cache of {(gateway_url, session_value): (uuid, expires_ts)} so we
+# don't hit GET /api/sessions on every single message send.
+_OPENWA_SESSION_ID_CACHE = {}
+_OPENWA_SESSION_ID_TTL = 300  # seconds
+
+
+def _openwa_resolve_session_id(gateway_url: str, api_key: str, session_value: str, timeout_seconds: int) -> tuple[str, str | None]:
+    """Resolve a configured session name/UUID to the active UUID OpenWA needs.
+
+    Returns (uuid, error). On a cache hit returns immediately. On miss, queries
+    the gateway; only caches when the session is connected so a freshly
+    reconnected session is picked up promptly.
+    """
+    normalized = _normalize_whatsapp_gateway_url(gateway_url)
+    cache_key = (normalized, (session_value or '').strip().lower())
+    cached = _OPENWA_SESSION_ID_CACHE.get(cache_key)
+    if cached and cached[1] > time.time():
+        return cached[0], None
+
+    sess = _openwa_session_status(normalized, api_key, session_value, timeout_seconds)
+    if not sess.get('found'):
+        return '', (sess.get('error') or 'session_not_found')
+    if not sess.get('connected'):
+        return sess.get('id') or '', f"session_{sess.get('status') or 'disconnected'}"
+    uuid = sess.get('id') or ''
+    if uuid:
+        _OPENWA_SESSION_ID_CACHE[cache_key] = (uuid, time.time() + _OPENWA_SESSION_ID_TTL)
+    return uuid, None
 
 
 def _build_whatsapp_gateway_candidates(host_hint: str | None = None, configured_url: str | None = None) -> list[str]:
@@ -4383,6 +4577,7 @@ def _build_whatsapp_gateway_candidates(host_hint: str | None = None, configured_
         local_hosts.append(host)
 
     for h in local_hosts:
+        add(f"http://{h}:2785")  # OpenWA default API port
         add(f"http://{h}:3000")
         add(f"http://{h}:3001")
         add(f"http://{h}:8080")
@@ -4428,6 +4623,14 @@ def _get_whatsapp_runtime_settings() -> dict:
         WHATSAPP_RETRY_COUNT_KEY, WHATSAPP_BACKOFF_SECONDS_KEY, WHATSAPP_CIRCUIT_BREAKER_KEY,
         WHATSAPP_TEMPLATE_RENEW_KEY, WHATSAPP_TEMPLATE_WELCOME_KEY, WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY,
         WHATSAPP_GATEWAY_URL_KEY, WHATSAPP_GATEWAY_API_KEY, WHATSAPP_GATEWAY_TIMEOUT_KEY,
+        WHATSAPP_SESSION_KEY,
+        WHATSAPP_WARMUP_ENABLED_KEY, WHATSAPP_WARMUP_START_DATE_KEY,
+        WHATSAPP_WARMUP_START_PER_DAY_KEY, WHATSAPP_WARMUP_RAMP_DAYS_KEY,
+        WHATSAPP_PACE_ENABLED_KEY, WHATSAPP_PACE_MIN_GAP_KEY, WHATSAPP_PACE_JITTER_KEY,
+        WHATSAPP_DEPLETION_ENABLED_KEY, WHATSAPP_DEPLETION_EXPIRY_DAYS_KEY,
+        WHATSAPP_DEPLETION_VOLUME_GB_KEY, WHATSAPP_DEPLETION_COOLDOWN_DAYS_KEY,
+        WHATSAPP_BOT_TPL_CREATED_KEY, WHATSAPP_BOT_TPL_RENEW_KEY,
+        WHATSAPP_BOT_TPL_ENDED_KEY, WHATSAPP_BOT_TPL_INFO_KEY,
     ]
     _c = _get_system_configs_batch(_wa_keys)
 
@@ -4440,6 +4643,17 @@ def _get_whatsapp_runtime_settings() -> dict:
 
     def _int(key, default, min_value=None, max_value=None):
         return _parse_int(_txt(key, str(default)), default, min_value=min_value, max_value=max_value)
+
+    def _float(key, default, min_value=None, max_value=None):
+        try:
+            val = float(_txt(key, str(default)))
+        except (TypeError, ValueError):
+            val = float(default)
+        if min_value is not None:
+            val = max(val, min_value)
+        if max_value is not None:
+            val = min(val, max_value)
+        return val
 
     region = _normalize_whatsapp_region(_txt(WHATSAPP_DEPLOYMENT_REGION_KEY, 'outside'))
     provider = _normalize_whatsapp_provider(_txt(WHATSAPP_PROVIDER_KEY, 'baileys'))
@@ -4466,11 +4680,584 @@ def _get_whatsapp_runtime_settings() -> dict:
         'gateway_url': _normalize_whatsapp_gateway_url(_txt(WHATSAPP_GATEWAY_URL_KEY, '')),
         'gateway_api_key': _txt(WHATSAPP_GATEWAY_API_KEY, '').strip(),
         'gateway_timeout_seconds': _int(WHATSAPP_GATEWAY_TIMEOUT_KEY, 10, min_value=3, max_value=60),
+        'session_id': _normalize_whatsapp_session(_txt(WHATSAPP_SESSION_KEY, '')),
+        # Warm-up
+        'warmup_enabled': _bool(WHATSAPP_WARMUP_ENABLED_KEY, False),
+        'warmup_start_date': _txt(WHATSAPP_WARMUP_START_DATE_KEY, '').strip(),
+        'warmup_start_per_day': _int(WHATSAPP_WARMUP_START_PER_DAY_KEY, 20, min_value=1, max_value=50000),
+        'warmup_ramp_days': _int(WHATSAPP_WARMUP_RAMP_DAYS_KEY, 14, min_value=1, max_value=120),
+        # Global pace gate (#4)
+        'pace_enabled': _bool(WHATSAPP_PACE_ENABLED_KEY, False),
+        'pace_min_gap_seconds': _int(WHATSAPP_PACE_MIN_GAP_KEY, 8, min_value=0, max_value=600),
+        'pace_jitter_seconds': _int(WHATSAPP_PACE_JITTER_KEY, 5, min_value=0, max_value=600),
+        # Near-depletion scanner
+        'depletion_enabled': _bool(WHATSAPP_DEPLETION_ENABLED_KEY, False),
+        'depletion_expiry_days': _int(WHATSAPP_DEPLETION_EXPIRY_DAYS_KEY, 3, min_value=0, max_value=60),
+        'depletion_volume_gb': _float(WHATSAPP_DEPLETION_VOLUME_GB_KEY, 2.0, min_value=0.0, max_value=1000.0),
+        'depletion_cooldown_days': _int(WHATSAPP_DEPLETION_COOLDOWN_DAYS_KEY, 7, min_value=1, max_value=120),
+        # Bot templates (per scenario)
+        'bot_tpl_created': _txt(WHATSAPP_BOT_TPL_CREATED_KEY, DEFAULT_WHATSAPP_BOT_TPL_CREATED).strip() or DEFAULT_WHATSAPP_BOT_TPL_CREATED,
+        'bot_tpl_renew': _txt(WHATSAPP_BOT_TPL_RENEW_KEY, DEFAULT_WHATSAPP_BOT_TPL_RENEW).strip() or DEFAULT_WHATSAPP_BOT_TPL_RENEW,
+        'bot_tpl_ended': _txt(WHATSAPP_BOT_TPL_ENDED_KEY, DEFAULT_WHATSAPP_BOT_TPL_ENDED).strip() or DEFAULT_WHATSAPP_BOT_TPL_ENDED,
+        'bot_tpl_info': _txt(WHATSAPP_BOT_TPL_INFO_KEY, DEFAULT_WHATSAPP_BOT_TPL_INFO).strip() or DEFAULT_WHATSAPP_BOT_TPL_INFO,
     }
 
     if region == 'iran':
         config['blocked_reason'] = 'deployment_in_iran'
     return config
+
+
+def _whatsapp_effective_daily_cap(runtime_cfg: dict) -> int:
+    """Daily send cap after applying warm-up. Returns the full daily_limit when
+    warm-up is off or finished; otherwise a linearly interpolated cap based on
+    days elapsed since the warm-up start date."""
+    daily_limit = int(runtime_cfg.get('daily_limit') or 100)
+    if not runtime_cfg.get('warmup_enabled'):
+        return daily_limit
+    start_raw = (runtime_cfg.get('warmup_start_date') or '').strip()
+    start_per_day = int(runtime_cfg.get('warmup_start_per_day') or 20)
+    ramp_days = max(1, int(runtime_cfg.get('warmup_ramp_days') or 14))
+    # No/!invalid start date → treat today as day 0 (most conservative).
+    try:
+        start_date = datetime.strptime(start_raw, '%Y-%m-%d').date() if start_raw else datetime.utcnow().date()
+    except ValueError:
+        start_date = datetime.utcnow().date()
+    days_elapsed = (datetime.utcnow().date() - start_date).days
+    if days_elapsed >= ramp_days:
+        return daily_limit
+    if days_elapsed <= 0:
+        return max(1, min(start_per_day, daily_limit))
+    # Linear interpolation from start_per_day (day 0) to daily_limit (day ramp_days).
+    span = daily_limit - start_per_day
+    cap = start_per_day + (span * days_elapsed / ramp_days)
+    return max(1, min(daily_limit, int(round(cap))))
+
+
+def _whatsapp_render_bot_template(event_name: str, vars_dict: dict, runtime_cfg: dict | None = None) -> str:
+    """Render the dedicated WhatsApp 'bot' template for a scenario.
+
+    Returns '' when no bot template is configured for the event, so callers can
+    fall back to the generic copy text. Events map to the four scenarios:
+    created / renew / ended / info.
+    """
+    cfg = runtime_cfg or _get_whatsapp_runtime_settings()
+    mapping = {
+        'created': cfg.get('bot_tpl_created'),
+        'client_created': cfg.get('bot_tpl_created'),
+        'renew': cfg.get('bot_tpl_renew'),
+        'renew_success': cfg.get('bot_tpl_renew'),
+        'ended': cfg.get('bot_tpl_ended'),
+        'expired': cfg.get('bot_tpl_ended'),
+        'depletion': cfg.get('bot_tpl_ended'),
+        'info': cfg.get('bot_tpl_info'),
+    }
+    tpl = (mapping.get(event_name) or '').strip()
+    if not tpl:
+        return ''
+    try:
+        return _render_text_template(tpl, vars_dict or {})
+    except Exception:
+        return ''
+
+
+def _public_base_url() -> str:
+    """Absolute base URL of the panel, derived from the configured domain.
+    Used to build dashboard links from background workers (no request context)."""
+    domain = (_get_system_setting_value(PANEL_DOMAIN_SETTING_KEY, '') or '').strip().rstrip('/')
+    if not domain:
+        return ''
+    if domain.startswith('http://') or domain.startswith('https://'):
+        return domain
+    proto = 'http' if _is_ip_address(domain) else 'https'
+    return f"{proto}://{domain}"
+
+
+def _whatsapp_blocked_account_keys() -> set:
+    """Return the set of (server_id, email_lower) accounts that belong to a
+    reseller WITHOUT WhatsApp automation permission. These must never be
+    messaged from the system number by any automated send. Accounts not owned
+    by a reseller (owner/admin/superadmin) are never in this set."""
+    try:
+        disabled = {a.id for a in Admin.query.filter_by(role='reseller').all()
+                    if not a.whatsapp_automation_enabled}
+        if not disabled:
+            return set()
+        keys = set()
+        for own in ClientOwnership.query.filter(ClientOwnership.reseller_id.in_(disabled)).all():
+            email_l = (own.client_email or '').strip().lower()
+            if email_l:
+                keys.add((own.server_id, email_l))
+        return keys
+    except Exception:
+        return set()
+
+
+def _whatsapp_automation_allowed_for_account(server_id, email) -> bool:
+    """A reseller-owned account is eligible for automated WhatsApp sends only
+    when its owner reseller has whatsapp_automation_enabled. Accounts not owned
+    by any reseller are always eligible (owner/admin/superadmin)."""
+    try:
+        email_l = (email or '').strip().lower()
+        if not email_l:
+            return True
+        try:
+            sid_norm = int(server_id)
+        except (TypeError, ValueError):
+            sid_norm = server_id
+        own = ClientOwnership.query.filter(
+            ClientOwnership.server_id == sid_norm,
+            db.func.lower(ClientOwnership.client_email) == email_l,
+        ).first()
+        if not own:
+            return True
+        reseller = db.session.get(Admin, own.reseller_id)
+        if not reseller or reseller.role != 'reseller':
+            return True
+        return bool(reseller.whatsapp_automation_enabled)
+    except Exception:
+        return True
+
+
+def _run_whatsapp_depletion_scan() -> dict:
+    """Scan cached clients and proactively message accounts whose time or volume
+    is about to run out, once per cooldown window. Honors enable/region/warm-up/
+    rate-limit via _send_whatsapp_message; stops early when the daily cap or pace
+    gate is hit so it never bursts."""
+    cfg = _get_whatsapp_runtime_settings()
+    if cfg.get('deployment_region') == 'iran' or not cfg.get('enabled') or not cfg.get('depletion_enabled'):
+        return {'scanned': 0, 'sent': 0, 'reason': 'disabled'}
+
+    expiry_days = int(cfg.get('depletion_expiry_days') or 3)
+    volume_gb_thr = float(cfg.get('depletion_volume_gb') or 2.0)
+    cooldown_days = int(cfg.get('depletion_cooldown_days') or 7)
+    base_url = _public_base_url()
+    cooldown_cut = datetime.utcnow() - timedelta(days=cooldown_days)
+
+    inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    scanned = 0
+    sent = 0
+    seen = set()
+    # Reseller-owned accounts whose owner has not enabled WhatsApp automation
+    # must be skipped — we never message them from the system number.
+    blocked_keys = _whatsapp_blocked_account_keys()
+
+    for inbound in inbounds:
+        sid = inbound.get('server_id')
+        try:
+            sid_norm = int(sid)
+        except (TypeError, ValueError):
+            sid_norm = None
+        for client in (inbound.get('clients') or []):
+            email = (client.get('email') or '').strip()
+            email_l = email.lower()
+            if not email_l:
+                continue
+            dedupe = (sid_norm, email_l)
+            if dedupe in seen:
+                continue
+            seen.add(dedupe)
+            if (sid_norm, email_l) in blocked_keys:
+                continue
+            scanned += 1
+
+            recipient = _extract_iran_mobile_from_text(email, client.get('comment') or '')
+            if not recipient:
+                continue
+
+            total_bytes = int(client.get('totalGB') or 0)
+            try:
+                used = int(client.get('up') or 0) + int(client.get('down') or 0)
+            except Exception:
+                used = 0
+            rem_bytes = client.get('remaining_bytes')
+            if rem_bytes is None or rem_bytes == -1:
+                rem_bytes = max(total_bytes - used, 0) if total_bytes > 0 else None
+            rem_gb = (float(rem_bytes) / (1024 ** 3)) if rem_bytes is not None else None
+
+            expiry_ts = int(client.get('expiryTimestamp') or 0)
+            exp = format_remaining_days(expiry_ts)
+            days_left = int(exp.get('days') or 0)
+            near_time = bool(expiry_ts and exp.get('type') in ('today', 'soon') and days_left <= expiry_days)
+            near_vol = bool(rem_gb is not None and 0 < rem_gb <= volume_gb_thr)
+            if not (near_time or near_vol):
+                continue
+
+            try:
+                recent = WhatsappBotLog.query.filter(
+                    WhatsappBotLog.email == email_l,
+                    WhatsappBotLog.server_id == (sid_norm or 0),
+                    WhatsappBotLog.event == 'depletion',
+                    WhatsappBotLog.sent_at >= cooldown_cut,
+                ).first()
+            except Exception:
+                recent = None
+            if recent:
+                continue
+
+            final_id = client.get('subId') or client.get('id') or ''
+            dash = (client.get('dash_sub_url') or '').strip()
+            if dash and not dash.startswith('http') and base_url:
+                dash = base_url + (dash if dash.startswith('/') else f"/{dash}")
+            elif not dash and base_url and final_id and sid_norm is not None:
+                dash = f"{base_url}/s/{sid_norm}/{final_id}"
+
+            vars_dict = {
+                'email': email, 'account_name': email, 'user': email,
+                'remaining_time': exp.get('text') or '-',
+                'remaining_volume': client.get('remaining_formatted') or '-',
+                'dashboard_link': dash, 'sub_link': dash,
+                'server_name': inbound.get('server_name') or '',
+            }
+            text_msg = _whatsapp_render_bot_template('depletion', vars_dict, cfg)
+            if not text_msg:
+                continue
+
+            res = _send_whatsapp_message('depletion', email, text_msg, recipient_comment=client.get('comment') or '')
+            if res.get('sent'):
+                try:
+                    db.session.add(WhatsappBotLog(email=email_l, server_id=(sid_norm or 0), event='depletion'))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                sent += 1
+            else:
+                reason = res.get('reason') or ''
+                # Cap/pace hit → stop this cycle; the next scan will resume.
+                if reason in ('daily_limit_reached', 'pace_gated'):
+                    return {'scanned': scanned, 'sent': sent, 'stopped': reason}
+
+    return {'scanned': scanned, 'sent': sent}
+
+
+def whatsapp_bot_worker():
+    """Background loop running the near-depletion scan periodically."""
+    while True:
+        try:
+            with app.app_context():
+                result = _run_whatsapp_depletion_scan()
+                if result.get('sent'):
+                    app.logger.info(f"[whatsapp-bot] depletion scan sent={result.get('sent')} scanned={result.get('scanned')}")
+        except Exception as exc:
+            try:
+                app.logger.warning(f"[whatsapp-bot] scan error: {exc}")
+            except Exception:
+                pass
+        time.sleep(1800)  # every 30 minutes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMS Automation (via the GMweb-API gateway)
+# Auto-sends SMS on create / renew / near-depletion using the existing SMS
+# templates — but ONLY for accounts NOT owned by a reseller (i.e. system /
+# admin / superadmin accounts). Reseller-owned accounts are never messaged.
+# ─────────────────────────────────────────────────────────────────────────────
+SMS_AUTOMATION_ENABLED_KEY      = 'sms_automation_enabled'
+SMS_GMWEB_BASE_URL_KEY          = 'sms_gmweb_base_url'
+SMS_GMWEB_API_KEY_KEY           = 'sms_gmweb_api_key'
+SMS_GMWEB_TIMEOUT_KEY           = 'sms_gmweb_timeout'
+SMS_TRIGGER_CREATED_KEY         = 'sms_trigger_created'
+SMS_TRIGGER_RENEW_KEY           = 'sms_trigger_renew'
+SMS_TRIGGER_DEPLETION_KEY       = 'sms_trigger_depletion'
+SMS_DEPLETION_EXPIRY_DAYS_KEY   = 'sms_depletion_expiry_days'
+SMS_DEPLETION_VOLUME_GB_KEY     = 'sms_depletion_volume_gb'
+SMS_DEPLETION_COOLDOWN_DAYS_KEY = 'sms_depletion_cooldown_days'
+SMS_MIN_INTERVAL_SECONDS_KEY    = 'sms_min_interval_seconds'
+SMS_DAILY_LIMIT_KEY             = 'sms_daily_limit'
+
+SMS_SEND_TRACKER = {'daily': {}, 'per_recipient': {}}
+SMS_SEND_TRACKER_LOCK = threading.Lock()
+
+
+def _get_sms_runtime_settings() -> dict:
+    keys = [
+        SMS_AUTOMATION_ENABLED_KEY, SMS_GMWEB_BASE_URL_KEY, SMS_GMWEB_API_KEY_KEY,
+        SMS_GMWEB_TIMEOUT_KEY, SMS_TRIGGER_CREATED_KEY, SMS_TRIGGER_RENEW_KEY,
+        SMS_TRIGGER_DEPLETION_KEY, SMS_DEPLETION_EXPIRY_DAYS_KEY,
+        SMS_DEPLETION_VOLUME_GB_KEY, SMS_DEPLETION_COOLDOWN_DAYS_KEY,
+        SMS_MIN_INTERVAL_SECONDS_KEY, SMS_DAILY_LIMIT_KEY,
+    ]
+    c = _get_system_configs_batch(keys)
+
+    def _txt(k, d=''):
+        v = c.get(k)
+        return str(v) if v is not None else d
+
+    def _bool(k, d=False):
+        return _parse_bool(_txt(k, 'true' if d else 'false'))
+
+    def _int(k, d, lo=None, hi=None):
+        return _parse_int(_txt(k, str(d)), d, min_value=lo, max_value=hi)
+
+    def _float(k, d, lo=None, hi=None):
+        try:
+            v = float(_txt(k, str(d)))
+        except (TypeError, ValueError):
+            v = float(d)
+        if lo is not None:
+            v = max(v, lo)
+        if hi is not None:
+            v = min(v, hi)
+        return v
+
+    return {
+        'enabled': _bool(SMS_AUTOMATION_ENABLED_KEY, False),
+        'base_url': _txt(SMS_GMWEB_BASE_URL_KEY, '').strip().rstrip('/'),
+        'api_key': _txt(SMS_GMWEB_API_KEY_KEY, '').strip(),
+        'timeout_seconds': _int(SMS_GMWEB_TIMEOUT_KEY, 15, lo=3, hi=90),
+        'trigger_created': _bool(SMS_TRIGGER_CREATED_KEY, True),
+        'trigger_renew': _bool(SMS_TRIGGER_RENEW_KEY, True),
+        'trigger_depletion': _bool(SMS_TRIGGER_DEPLETION_KEY, False),
+        'depletion_expiry_days': _int(SMS_DEPLETION_EXPIRY_DAYS_KEY, 3, lo=0, hi=60),
+        'depletion_volume_gb': _float(SMS_DEPLETION_VOLUME_GB_KEY, 2.0, lo=0.0, hi=1000.0),
+        'depletion_cooldown_days': _int(SMS_DEPLETION_COOLDOWN_DAYS_KEY, 7, lo=1, hi=120),
+        'min_interval_seconds': _int(SMS_MIN_INTERVAL_SECONDS_KEY, 30, lo=0, hi=3600),
+        'daily_limit': _int(SMS_DAILY_LIMIT_KEY, 200, lo=1, hi=100000),
+    }
+
+
+def _account_has_reseller_owner(server_id, email) -> bool:
+    """True when the account is owned by a reseller — SMS automation must then
+    skip it. No ClientOwnership row ⇒ system/admin/superadmin account ⇒ eligible."""
+    try:
+        email_l = (email or '').strip().lower()
+        if not email_l:
+            return False
+        try:
+            sid = int(server_id)
+        except (TypeError, ValueError):
+            sid = server_id
+        row = ClientOwnership.query.filter(
+            ClientOwnership.server_id == sid,
+            db.func.lower(ClientOwnership.client_email) == email_l,
+        ).first()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _sms_take_send_slot(recipient: str, cfg: dict) -> tuple[bool, str | None]:
+    now_ts = time.time()
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    min_interval = int(cfg.get('min_interval_seconds') or 0)
+    daily_limit = int(cfg.get('daily_limit') or 200)
+    with SMS_SEND_TRACKER_LOCK:
+        daily = SMS_SEND_TRACKER.get('daily') or {}
+        if daily.get('date') != today:
+            SMS_SEND_TRACKER['daily'] = {'date': today, 'count': 0}
+        count = int((SMS_SEND_TRACKER.get('daily') or {}).get('count') or 0)
+        if count >= daily_limit:
+            return False, 'daily_limit_reached'
+        per = SMS_SEND_TRACKER.get('per_recipient') or {}
+        last = float(per.get(recipient) or 0.0)
+        if min_interval > 0 and last > 0 and (now_ts - last) < min_interval:
+            return False, 'recipient_rate_limited'
+        per[recipient] = now_ts
+        SMS_SEND_TRACKER['per_recipient'] = per
+        SMS_SEND_TRACKER['daily'] = {'date': today, 'count': count + 1}
+    return True, None
+
+
+def _send_sms_via_gmweb(to: str, text: str, cfg: dict | None = None) -> dict:
+    """POST a single SMS to the GMweb-API gateway. The gateway queues it and
+    returns 202 {jobId}; we treat 200/202 as accepted and don't track delivery."""
+    cfg = cfg or _get_sms_runtime_settings()
+    out = {'sent': False, 'reason': None, 'status_code': None}
+    base = (cfg.get('base_url') or '').strip().rstrip('/')
+    api_key = (cfg.get('api_key') or '').strip()
+    if not base or not api_key:
+        out['reason'] = 'gateway_not_configured'
+        return out
+    try:
+        resp = requests.post(
+            f"{base}/send",
+            json={'to': to, 'text': text},
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            timeout=int(cfg.get('timeout_seconds') or 15),
+        )
+        out['status_code'] = resp.status_code
+        if resp.status_code in (200, 202):
+            out['sent'] = True
+        else:
+            out['reason'] = f'http_{resp.status_code}'
+    except Exception as e:
+        out['reason'] = str(e)
+    return out
+
+
+def _sms_should_send(event_name: str, server_id, email: str, cfg: dict | None = None) -> tuple[bool, str | None]:
+    cfg = cfg or _get_sms_runtime_settings()
+    if not cfg.get('enabled'):
+        return False, 'feature_disabled'
+    if cfg.get(f'trigger_{event_name}') is False:
+        return False, 'trigger_disabled'
+    if not (cfg.get('base_url') and cfg.get('api_key')):
+        return False, 'gateway_not_configured'
+    # The core rule: never SMS a reseller-owned account from the system number.
+    if _account_has_reseller_owner(server_id, email):
+        return False, 'reseller_owned'
+    return True, None
+
+
+def _get_sms_template_content(template_type: str, default_text: str) -> str:
+    try:
+        t = NotificationTemplate.query.filter_by(type=template_type, is_active=True).first()
+        if t and (t.content or '').strip():
+            return t.content
+    except Exception:
+        pass
+    return default_text
+
+
+def _fire_automation_sms(event_name: str, server_id, email: str, template_type: str,
+                         default_template: str, tpl_vars: dict, recipient_comment: str = '') -> None:
+    """Render the SMS template and send it via GMweb in a background thread, so
+    the create/renew request is never blocked. Gated to non-reseller accounts."""
+    def _worker():
+        with app.app_context():
+            try:
+                cfg = _get_sms_runtime_settings()
+                ok, _r = _sms_should_send(event_name, server_id, email, cfg)
+                if not ok:
+                    return
+                recipient = _extract_iran_mobile_from_text(email, recipient_comment or None)
+                if not recipient:
+                    return
+                slot_ok, _sr = _sms_take_send_slot(recipient, cfg)
+                if not slot_ok:
+                    return
+                content = _get_sms_template_content(template_type, default_template)
+                text = _render_text_template(content, tpl_vars)
+                if not (text or '').strip():
+                    return
+                _send_sms_via_gmweb(recipient, text, cfg)
+            except Exception:
+                app.logger.exception('[sms-automation] send failed')
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _run_sms_depletion_scan() -> dict:
+    """Near-depletion SMS scan: message accounts (non-reseller-owned only) whose
+    time or volume is about to run out, once per cooldown window."""
+    cfg = _get_sms_runtime_settings()
+    if not cfg.get('enabled') or not cfg.get('trigger_depletion'):
+        return {'scanned': 0, 'sent': 0, 'reason': 'disabled'}
+    if not (cfg.get('base_url') and cfg.get('api_key')):
+        return {'scanned': 0, 'sent': 0, 'reason': 'gateway_not_configured'}
+
+    expiry_days = int(cfg.get('depletion_expiry_days') or 3)
+    volume_gb_thr = float(cfg.get('depletion_volume_gb') or 2.0)
+    cooldown_days = int(cfg.get('depletion_cooldown_days') or 7)
+    base_url = _public_base_url()
+    cooldown_cut = datetime.utcnow() - timedelta(days=cooldown_days)
+    tpl_content = _get_sms_template_content(ACCOUNT_INFO_SMS_TEMPLATE_TYPE, DEFAULT_ACCOUNT_INFO_SMS_TEMPLATE)
+
+    inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
+    scanned = 0
+    sent = 0
+    seen = set()
+
+    for inbound in inbounds:
+        sid = inbound.get('server_id')
+        try:
+            sid_norm = int(sid)
+        except (TypeError, ValueError):
+            sid_norm = None
+        for client in (inbound.get('clients') or []):
+            email = (client.get('email') or '').strip()
+            email_l = email.lower()
+            if not email_l:
+                continue
+            key = (sid_norm, email_l)
+            if key in seen:
+                continue
+            seen.add(key)
+            # Owner gate: skip reseller-owned accounts entirely.
+            if _account_has_reseller_owner(sid_norm, email):
+                continue
+            recipient = _extract_iran_mobile_from_text(email, client.get('comment') or '')
+            if not recipient:
+                continue
+            scanned += 1
+
+            total_bytes = int(client.get('totalGB') or 0)
+            try:
+                used = int(client.get('up') or 0) + int(client.get('down') or 0)
+            except Exception:
+                used = 0
+            rem_bytes = client.get('remaining_bytes')
+            if rem_bytes is None or rem_bytes == -1:
+                rem_bytes = max(total_bytes - used, 0) if total_bytes > 0 else None
+            rem_gb = (float(rem_bytes) / (1024 ** 3)) if rem_bytes is not None else None
+
+            expiry_ts = int(client.get('expiryTimestamp') or 0)
+            exp = format_remaining_days(expiry_ts)
+            days_left = int(exp.get('days') or 0)
+            near_time = bool(expiry_ts and exp.get('type') in ('today', 'soon') and days_left <= expiry_days)
+            near_vol = bool(rem_gb is not None and 0 < rem_gb <= volume_gb_thr)
+            if not (near_time or near_vol):
+                continue
+
+            try:
+                recent = WhatsappBotLog.query.filter(
+                    WhatsappBotLog.email == email_l,
+                    WhatsappBotLog.server_id == (sid_norm or 0),
+                    WhatsappBotLog.event == 'sms_depletion',
+                    WhatsappBotLog.sent_at >= cooldown_cut,
+                ).first()
+            except Exception:
+                recent = None
+            if recent:
+                continue
+
+            final_id = client.get('subId') or client.get('id') or ''
+            dash = (client.get('dash_sub_url') or '').strip()
+            if dash and not dash.startswith('http') and base_url:
+                dash = base_url + (dash if dash.startswith('/') else f"/{dash}")
+            elif not dash and base_url and final_id and sid_norm is not None:
+                dash = f"{base_url}/s/{sid_norm}/{final_id}"
+
+            tpl_vars = {
+                'email': email, 'account_name': email, 'service_name': email, 'user': email,
+                'remaining_time': exp.get('text') or '-',
+                'remaining_volume': client.get('remaining_formatted') or '-',
+                'dashboard_link': dash, 'sub_link': dash,
+                'server_name': inbound.get('server_name') or '',
+            }
+            text_msg = _render_text_template(tpl_content, tpl_vars)
+            if not (text_msg or '').strip():
+                continue
+
+            slot_ok, slot_reason = _sms_take_send_slot(recipient, cfg)
+            if not slot_ok:
+                if slot_reason == 'daily_limit_reached':
+                    return {'scanned': scanned, 'sent': sent, 'stopped': slot_reason}
+                continue
+            res = _send_sms_via_gmweb(recipient, text_msg, cfg)
+            if res.get('sent'):
+                try:
+                    db.session.add(WhatsappBotLog(email=email_l, server_id=(sid_norm or 0), event='sms_depletion'))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                sent += 1
+
+    return {'scanned': scanned, 'sent': sent}
+
+
+def sms_bot_worker():
+    """Background loop running the SMS near-depletion scan periodically."""
+    while True:
+        try:
+            with app.app_context():
+                result = _run_sms_depletion_scan()
+                if result.get('sent'):
+                    app.logger.info(f"[sms-bot] depletion scan sent={result.get('sent')} scanned={result.get('scanned')}")
+        except Exception as exc:
+            try:
+                app.logger.warning(f"[sms-bot] scan error: {exc}")
+            except Exception:
+                pass
+        time.sleep(1800)  # every 30 minutes
 
 
 def _normalize_ascii_digits(value: str | None) -> str:
@@ -4531,7 +5318,14 @@ def _take_whatsapp_send_slot(recipient: str, runtime_cfg: dict) -> tuple[bool, s
     now_ts = time.time()
     today = datetime.utcnow().strftime('%Y-%m-%d')
     min_interval = int(runtime_cfg.get('min_interval_seconds') or 45)
-    daily_limit = int(runtime_cfg.get('daily_limit') or 100)
+    # Warm-up shrinks the daily cap for fresh numbers; falls back to daily_limit.
+    daily_limit = _whatsapp_effective_daily_cap(runtime_cfg)
+
+    # Global pace gate (#4): minimum gap + jitter between ANY two sends. OFF by
+    # default; protects against a batch turning into a burst.
+    pace_enabled = bool(runtime_cfg.get('pace_enabled'))
+    pace_gap = int(runtime_cfg.get('pace_min_gap_seconds') or 0)
+    pace_jitter = int(runtime_cfg.get('pace_jitter_seconds') or 0)
 
     with WHATSAPP_SEND_TRACKER_LOCK:
         daily = WHATSAPP_SEND_TRACKER.get('daily') or {}
@@ -4542,6 +5336,12 @@ def _take_whatsapp_send_slot(recipient: str, runtime_cfg: dict) -> tuple[bool, s
         if current_count >= daily_limit:
             return False, 'daily_limit_reached'
 
+        if pace_enabled and pace_gap > 0:
+            last_global = float(WHATSAPP_SEND_TRACKER.get('last_global_send') or 0.0)
+            required = pace_gap + (random.uniform(0, pace_jitter) if pace_jitter > 0 else 0)
+            if last_global > 0 and (now_ts - last_global) < required:
+                return False, 'pace_gated'
+
         per_recipient = WHATSAPP_SEND_TRACKER.get('per_recipient') or {}
         last_sent = float(per_recipient.get(recipient) or 0.0)
         if last_sent > 0 and (now_ts - last_sent) < float(min_interval):
@@ -4550,6 +5350,7 @@ def _take_whatsapp_send_slot(recipient: str, runtime_cfg: dict) -> tuple[bool, s
         per_recipient[recipient] = now_ts
         WHATSAPP_SEND_TRACKER['per_recipient'] = per_recipient
         WHATSAPP_SEND_TRACKER['daily'] = {'date': today, 'count': current_count + 1}
+        WHATSAPP_SEND_TRACKER['last_global_send'] = now_ts
 
     return True, None
 
@@ -4593,8 +5394,60 @@ def _send_whatsapp_message(event_name: str, recipient_source: str, message_text:
         result['recipient'] = recipient
         return result
 
-    headers = {'Content-Type': 'application/json'}
+    provider = (runtime_cfg.get('provider') or 'baileys').strip().lower()
     api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+    timeout = int(runtime_cfg.get('gateway_timeout_seconds') or 10)
+    result['attempted'] = True
+    result['recipient'] = recipient
+
+    if provider == 'openwa':
+        # OpenWA self-hosted gateway: session-scoped send-text endpoint.
+        session_value = (runtime_cfg.get('session_id') or '').strip()
+        if not session_value:
+            result['attempted'] = False
+            result['reason'] = 'openwa_session_not_configured'
+            return result
+        chat_id = _whatsapp_chat_id(recipient)
+        if not chat_id:
+            result['reason'] = 'invalid_recipient'
+            return result
+        # OpenWA's engine is keyed by UUID; a name works for DB lookup but not
+        # for active messaging. Resolve to the real UUID before sending.
+        session_uuid, resolve_err = _openwa_resolve_session_id(gateway_url, api_key, session_value, timeout)
+        if not session_uuid:
+            result['reason'] = f"openwa_session_unavailable: {resolve_err}"
+            return result
+        headers = {'Content-Type': 'application/json'}
+        if api_key:
+            headers['X-API-Key'] = api_key
+        payload = {'chatId': chat_id, 'text': (message_text or '').strip()}
+        try:
+            response = requests.post(
+                f"{gateway_url}/api/sessions/{session_uuid}/messages/send-text",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+                verify=False,
+            )
+            result['status_code'] = int(response.status_code)
+            if 200 <= response.status_code < 300:
+                result['sent'] = True
+                return result
+            # Stale UUID (session restarted) — drop the cache so the next send re-resolves.
+            _OPENWA_SESSION_ID_CACHE.pop((_normalize_whatsapp_gateway_url(gateway_url), session_value.strip().lower()), None)
+            # Surface the gateway's own message (e.g. "session not active") to help debugging.
+            try:
+                body_msg = (response.json() or {}).get('message')
+            except Exception:
+                body_msg = None
+            result['reason'] = f"gateway_http_{response.status_code}" + (f": {body_msg}" if body_msg else '')
+            return result
+        except Exception as exc:
+            result['reason'] = f"gateway_error: {exc}"
+            return result
+
+    # Baileys-style simple gateway: POST /send
+    headers = {'Content-Type': 'application/json'}
     if api_key:
         headers['Authorization'] = f"Bearer {api_key}"
 
@@ -4603,15 +5456,13 @@ def _send_whatsapp_message(event_name: str, recipient_source: str, message_text:
         'message': (message_text or '').strip(),
         'event': event_name,
     }
-    result['attempted'] = True
-    result['recipient'] = recipient
 
     try:
         response = requests.post(
             f"{gateway_url}/send",
             json=payload,
             headers=headers,
-            timeout=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
+            timeout=timeout,
             verify=False,
         )
         result['status_code'] = int(response.status_code)
@@ -4956,6 +5807,27 @@ class HealthLog(db.Model):
         }
 
 
+class MonitorMessageLog(db.Model):
+    __tablename__ = 'monitor_message_log'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    server_id = db.Column(db.Integer, nullable=False)
+    channel = db.Column(db.String(16), nullable=False)  # 'sms' or 'whatsapp'
+    sent_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    sent_by = db.Column(db.Integer)  # admin id
+
+
+class WhatsappBotLog(db.Model):
+    """Dedup log for the OpenWA near-depletion bot — one row per send so a
+    cooldown window can be enforced per (email, server_id, event)."""
+    __tablename__ = 'whatsapp_bot_log'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    server_id = db.Column(db.Integer, nullable=False)
+    event = db.Column(db.String(32), nullable=False, default='depletion')
+    sent_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 def _add_health_log(level, category, message, action_taken=None, details=None, resolved=False):
     """Helper to insert a HealthLog row safely."""
     try:
@@ -5246,6 +6118,8 @@ with app.app_context():
             ('channel_whatsapp',      'TEXT'),
             ('allow_negative_credit', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
             ('negative_credit_limit', 'INTEGER DEFAULT 0'),
+            ('allow_free_creation', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
+            ('whatsapp_automation_enabled', 'BOOLEAN DEFAULT FALSE' if _is_pg else 'BOOLEAN DEFAULT 0'),
             ('sub_shown_package_ids', "TEXT DEFAULT '[]'"),
             ('support_sms', 'VARCHAR(64)'),
         ]
@@ -6905,6 +7779,99 @@ def _reconcile_client_inbounds(user, server, email, client_uuid, target_inbound_
     return True, ('; '.join(errors) or None), 200, {'added': added, 'removed': removed}
 
 
+def _autoupgrade_http_to_https(server):
+    """Self-heal an http:// host that is really an HTTPS-only panel.
+
+    3x-ui panels with SSL enabled (they send HSTS + Secure cookies) reject plaintext
+    on the TLS port — Python's requests raises ConnectionError('UnknownProtocol'),
+    which surfaces in the UI as a generic "Error testing connection". This commonly
+    bites after a panel upgrade where the admin also turned SSL on at the same time.
+
+    If the stored host is http://, probe the same host over https. Only when https
+    answers AND http does not do we rewrite server.host to https and persist it.
+    Panels that genuinely run plaintext are left untouched (the https probe fails, so
+    no change is made). Returns True when the host was upgraded.
+    """
+    try:
+        host = (getattr(server, 'host', '') or '').strip()
+    except Exception:
+        host = ''
+    if not host.lower().startswith('http://'):
+        return False
+    base, webpath = extract_base_and_webpath(host)
+    https_base = 'https://' + base[len('http://'):]
+    probe_path = f"{webpath}/" if webpath else '/'
+
+    def _reaches(b):
+        try:
+            r = requests.get(f"{b}{probe_path}", timeout=6, verify=False, allow_redirects=False)
+            return r.status_code < 500
+        except Exception:
+            return False
+
+    if not _reaches(https_base):
+        return False          # panel is not reachable over https — leave http as-is
+    if _reaches(base):
+        return False          # http works too; don't second-guess the operator
+    try:
+        server.host = https_base + webpath
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return False
+    try:
+        XUI_SESSION_CACHE.pop(server.id, None)  # drop any session built on the old scheme
+    except Exception:
+        pass
+    return True
+
+
+def _fetch_csrf_token(session_obj, base, webpath):
+    """Seed and pin a CSRF token for cookie-login panels (3x-ui v3.3.1+).
+
+    Starting with 3x-ui v3.3.1 the refactor (#5167) guards POST /login — and every
+    other state-changing browser route (logout, getTwoFactorEnable, and the
+    cookie-session /panel/api/* POSTs) — with a CSRF middleware. Requests without a
+    valid token are rejected with HTTP 403, which is exactly why EVE could no longer
+    log in to upgraded panels.
+
+    The token lives in the server-side session (cookie '3x-ui'). A public
+    GET {basePath}/csrf-token both seeds that session cookie and returns the token as
+    {"success": true, "obj": "<token>"}. The panel reads it back from the
+    'X-CSRF-Token' header (or a '_csrf' form field). Login does NOT rotate the
+    session in v3.3.1, so a token fetched here stays valid for the subsequent login
+    and for every later API POST made through the same requests.Session.
+
+    We pin it as a default header on the session so all later calls carry it
+    automatically. Backward compatible by construction:
+      • Older panels (<=3.3.0, v3, pre-v3) have no /csrf-token route — the GET 404s,
+        we skip the header, and those panels harmlessly ignore the unknown header.
+      • Bearer/API-token servers never reach this path (they short-circuit earlier and
+        CSRF is bypassed for api_authed requests).
+
+    Returns the token string, or None when unavailable. Failures are non-fatal —
+    login is still attempted without the header for maximum compatibility.
+    """
+    try:
+        url = f"{base}{webpath}/csrf-token"
+        resp = session_obj.get(url, timeout=8, headers={"Accept": "application/json"})
+        if resp.status_code != 200:
+            return None
+        j, err = _safe_response_json(resp)
+        if err or not isinstance(j, dict) or not j.get('success'):
+            return None
+        token = j.get('obj')
+        if isinstance(token, str) and token:
+            session_obj.headers.update({'X-CSRF-Token': token})
+            return token
+    except Exception:
+        pass
+    return None
+
+
 def get_xui_session(server):
     # Current auth identity: the token for v3, or '' for cookie-login panels.
     # Cached sessions are keyed to this so a server that just switched to v3
@@ -6946,6 +7913,12 @@ def get_xui_session(server):
         login_url = login_ep if login_ep.startswith('http') else f"{base}{webpath}{login_ep}"
         panel_password = get_server_password(server)
         credentials = {"username": server.username, "password": panel_password}
+
+        # 3x-ui v3.3.1+ guards POST /login with a CSRF middleware (403 without a
+        # token). Seed + pin the token now so the login POST below — and every later
+        # cookie-session API POST through this same session — carries X-CSRF-Token.
+        # No-op on older panels (the /csrf-token route 404s).
+        _fetch_csrf_token(session_obj, base, webpath)
 
         login_resp = None
         login_json = None
@@ -7154,6 +8127,10 @@ def get_xui_cookie_session(host, username, password, panel_type='auto', cache_ke
         s.proxies = {'http': None, 'https': None}
         s.verify = False
         creds = {"username": username, "password": password}
+        # v3.3.1+ CSRF guard: pin a token before the login POST so both /login and
+        # the later /panel/inbound/onlines POST (made through this same session)
+        # pass the middleware. No-op on older panels.
+        _fetch_csrf_token(s, base, webpath)
         for use_json in (True, False):
             try:
                 if use_json:
@@ -8169,6 +9146,7 @@ def dashboard():
                          admin_username=user.username,
                          is_superadmin=(user.role == 'superadmin' or user.is_superadmin),
                          role=user.role,
+                         allow_free=(user.role != 'reseller' or bool(getattr(user, 'allow_free_creation', False))),
                          credit=user.credit,
                          base_cost_day=user_cost_day,
                          base_cost_gb=user_cost_gb,
@@ -9338,6 +10316,20 @@ def get_monitor_alerts():
         'ok': 5
     }
 
+    # Pre-load message send counts per (server_id, email, channel) from the log table.
+    try:
+        msg_rows = db.session.execute(
+            text('SELECT server_id, email, channel, COUNT(*) as cnt FROM monitor_message_log GROUP BY server_id, email, channel')
+        ).fetchall()
+        msg_counts = {}
+        for r in msg_rows:
+            key = (int(r[0]), str(r[1]).lower())
+            if key not in msg_counts:
+                msg_counts[key] = {}
+            msg_counts[key][str(r[2])] = int(r[3])
+    except Exception:
+        msg_counts = {}
+
     alerts = []
     # A v3 client assigned to several inbounds appears once per inbound in the
     # snapshot. Those copies are the same account (same UUID), so collapse them to
@@ -9403,14 +10395,16 @@ def get_monitor_alerts():
             # the REAL reason below (ended / expired / manual-disable).
 
             total_bytes = int(client.get('totalGB') or 0)
+            try:
+                used_bytes = int(client.get('up') or 0) + int(client.get('down') or 0)
+            except Exception:
+                used_bytes = 0
+            zero_usage = used_bytes < (1 * 1024 * 1024)  # < 1 MB means never connected
+
             remaining_bytes = client.get('remaining_bytes')
             if remaining_bytes is None or remaining_bytes == -1:
                 if total_bytes > 0:
-                    try:
-                        used_bytes = int(client.get('up') or 0) + int(client.get('down') or 0)
-                        remaining_bytes = max(total_bytes - used_bytes, 0)
-                    except Exception:
-                        remaining_bytes = None
+                    remaining_bytes = max(total_bytes - used_bytes, 0)
                 else:
                     remaining_bytes = None
 
@@ -9431,25 +10425,27 @@ def get_monitor_alerts():
             if total_bytes > 0 and remaining_bytes is not None:
                 if remaining_bytes <= 0:
                     status = 'ended'
-                    status_rank = 4
+                    status_rank = 3
                 elif remaining_gb is not None and remaining_gb < warning_gb:
                     status = 'low'
                     status_rank = 2
 
-            # Time-based reason
+            # Time-based reason — time takes priority over volume.
+            # expired (rank 4) always beats ended (rank 3) and low (rank 2).
             if expiry_ts and expiry_info.get('type') == 'expired':
-                if status_rank < 3:
+                if status_rank < 4:
                     status = 'expired'
-                    status_rank = 3
+                    status_rank = 4
             elif expiry_ts and expiry_info.get('type') in ('today', 'soon'):
                 if int(expiry_info.get('days') or 0) <= warning_days and status_rank < 1:
                     status = 'soon'
                     status_rank = 1
 
-            # A disabled client whose time AND traffic are both still fine was
-            # switched off by an operator — its own "manual disable" category,
-            # kept separate from the auto-disabled (ended/expired) accounts.
-            # 'low'/'soon' are active-user warnings, so they don't apply once off.
+            # 'disabled' only applies when time AND volume are both still fine —
+            # meaning the operator explicitly shut the client off. Auto-disabled
+            # accounts (panel killed them because time or traffic ran out) are
+            # already captured as 'expired' or 'ended' above, and those labels
+            # must survive even when enable=False.
             if not enabled and status in (None, 'low', 'soon'):
                 status = 'disabled'
                 status_rank = 0
@@ -9490,6 +10486,11 @@ def get_monitor_alerts():
                 'expiry_date': expiry_date,
                 'enabled': enabled,
                 'is_reseller_owned': is_reseller_owned,
+                'zero_usage': zero_usage,
+                'sms_count': msg_counts.get((sid_norm or 0, email_l), {}).get('sms', 0),
+                'wa_count': msg_counts.get((sid_norm or 0, email_l), {}).get('whatsapp', 0),
+                'sub_url': client.get('sub_url') or '',
+                'dash_sub_url': client.get('dash_sub_url') or '',
             })
 
     alerts.sort(key=lambda row: (
@@ -9506,6 +10507,55 @@ def get_monitor_alerts():
         'generated_at_jalali': format_jalali(now_utc),
         'alerts': alerts
     })
+
+
+@app.route('/api/monitor/log_message', methods=['POST'])
+@login_required
+def monitor_log_message():
+    """Record that a monitor message was sent to a client."""
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email') or '').strip().lower()
+    try:
+        server_id = int(data.get('server_id'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'server_id required'}), 400
+    channel = str(data.get('channel') or 'sms').strip().lower()
+    if not email:
+        return jsonify({'success': False, 'error': 'email required'}), 400
+    try:
+        log = MonitorMessageLog(
+            email=email,
+            server_id=server_id,
+            channel=channel,
+            sent_by=session.get('admin_id'),
+        )
+        db.session.add(log)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/monitor/reset_msg_count', methods=['POST'])
+@login_required
+def monitor_reset_msg_count():
+    """Clear the message send log for a client (called after renewal)."""
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email') or '').strip().lower()
+    try:
+        server_id = int(data.get('server_id'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'server_id required'}), 400
+    if not email:
+        return jsonify({'success': False, 'error': 'email required'}), 400
+    try:
+        MonitorMessageLog.query.filter_by(email=email, server_id=server_id).delete()
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 
 @app.route('/api/monitor/refresh', methods=['POST'])
@@ -9534,6 +10584,7 @@ def admins_page():
     return render_template('admins.html',
                          admin_username=session.get('admin_username'),
                          is_superadmin=session.get('is_superadmin', False),
+                         panel_lang=_get_panel_ui_lang(),
                          role=session.get('role', 'admin'))
 
 def fetch_worker(server_dict):
@@ -9603,6 +10654,22 @@ def enrich_inbounds_with_ownership(inbounds):
     return inbounds
 
 
+def _ensure_snapshot_enriched():
+    """Enrich the shared GLOBAL_SERVER_DATA snapshot with ownership in place, but
+    only once per (snapshot, ownership) version. Enrichment is idempotent and
+    additive (it just sets/clears owner_* fields on client dicts), so the read
+    path can serve the shared lists directly — avoiding a full deepcopy of the
+    snapshot on every /api/refresh, which was the dominant cost at scale."""
+    try:
+        key = (GLOBAL_SERVER_DATA.get('last_update'), _OWNERSHIP_CACHE.get('updated_at'))
+        if GLOBAL_SERVER_DATA.get('_enriched_key') == key:
+            return
+        enrich_inbounds_with_ownership(GLOBAL_SERVER_DATA.get('inbounds') or [])
+        GLOBAL_SERVER_DATA['_enriched_key'] = key
+    except Exception:
+        app.logger.exception("Failed to ensure snapshot enrichment")
+
+
 @app.route('/api/refresh')
 @login_required
 def api_refresh():
@@ -9635,57 +10702,57 @@ def api_refresh():
     debug_timing = _parse_bool(request.args.get('debug_timing'))
     t0 = time.perf_counter() if debug_timing else None
 
-    data = copy.deepcopy(GLOBAL_SERVER_DATA)
-    t_after_copy = time.perf_counter() if debug_timing else None
-
-    never_fetched = not data.get('last_update')
+    never_fetched = not GLOBAL_SERVER_DATA.get('last_update')
 
     # Kick off a refresh job only when cache has never been populated (app start / first load)
-    if not data.get('inbounds') and never_fetched and not GLOBAL_SERVER_DATA.get('is_updating') and not job:
+    if not GLOBAL_SERVER_DATA.get('inbounds') and never_fetched and not GLOBAL_SERVER_DATA.get('is_updating') and not job:
         job = enqueue_refresh_job(mode='full', server_id=server_id, force=False)
 
     # Return early with skeleton response only when data was never fetched yet.
     # If last_update is set but inbounds is empty (server has 0 inbounds), fall through
     # so the full (empty) payload is returned and the UI can clear its skeleton.
-    if not data.get('inbounds') and never_fetched:
+    if not GLOBAL_SERVER_DATA.get('inbounds') and never_fetched:
         return jsonify({
             "success": True,
             "inbounds": [],
             "stats": {"total_inbounds": 0, "active_inbounds": 0, "total_clients": 0,
                       "online_clients": 0, "active_clients": 0, "inactive_clients": 0, "not_started_clients": 0, "unlimited_expiry_clients": 0, "unlimited_volume_clients": 0, "total_traffic": "0 B",
                       "total_upload": "0 B", "total_download": "0 B"},
-            "servers": (data.get('servers_status') or []),
-            "server_count": len(data.get('servers_status') or []),
+            "servers": (GLOBAL_SERVER_DATA.get('servers_status') or []),
+            "server_count": len(GLOBAL_SERVER_DATA.get('servers_status') or []),
             "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
             "refresh_job": _summarize_job(job)
         }), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
     user = db.session.get(Admin, session['admin_id'])
-    
+
     # === حالت سوپرادمین (یا ادمین معمولی غیر ریسلر) ===
     if user.role != 'reseller':
-        # Enrich with ownership using the in-memory cache (O(1) per client, no per-request DB query)
-        enrich_inbounds_with_ownership(data.get('inbounds') or [])
+        # Enrich the shared snapshot once per version, then serve the shared lists
+        # directly — no per-request deepcopy (that copy was the dominant latency at
+        # scale and made the skeleton linger). Read-only response, additive fields.
+        _ensure_snapshot_enriched()
 
-        # Admins/superadmins see all cached data
         resp = {
             "success": True,
-            "inbounds": data['inbounds'],
-            "stats": data['stats'],
-            "servers": data['servers_status'],
-            "server_count": len(data['servers_status']),
-            "last_update": data['last_update'],
+            "inbounds": GLOBAL_SERVER_DATA.get('inbounds') or [],
+            "stats": GLOBAL_SERVER_DATA.get('stats') or {},
+            "servers": GLOBAL_SERVER_DATA.get('servers_status') or [],
+            "server_count": len(GLOBAL_SERVER_DATA.get('servers_status') or []),
+            "last_update": GLOBAL_SERVER_DATA.get('last_update'),
             "is_updating": bool(GLOBAL_SERVER_DATA.get('is_updating')),
             "refresh_job": _summarize_job(job),
         }
-        if debug_timing and t0 is not None and t_after_copy is not None:
+        if debug_timing and t0 is not None:
             resp['timing_ms'] = {
-                'deepcopy': round((t_after_copy - t0) * 1000.0, 2),
                 'total': round((time.perf_counter() - t0) * 1000.0, 2),
             }
         return jsonify(resp), (202 if job and job.get('state') in ('queued', 'running') else 200)
 
     # === حالت ریسلر ===
+    # The reseller path filters/annotates per-user, so it works on a private copy.
+    data = copy.deepcopy(GLOBAL_SERVER_DATA)
+
     # 1. دریافت دسترسی‌های سرور و اینباند
     allowed_map, assignments = get_reseller_access_maps(user)
     
@@ -10169,6 +11236,85 @@ def api_add_client_inbounds(server_id):
     })
 
 
+@app.route('/api/client/inbound-assignments/<int:server_id>')
+@login_required
+def api_client_inbound_assignments(server_id):
+    """Authoritative source for the Edit-Client "Assigned inbounds" picker.
+
+    Computes v3-ness server-side (reads the DB API token directly, so it never
+    depends on a possibly-stale client cache) and returns the role-filtered
+    inbound list for the server plus the set of inbound ids the given client is
+    currently a member of. This makes the picker work even if the dashboard's
+    in-memory inbound cache for this server hasn't been populated yet.
+    """
+    user = db.session.get(Admin, session['admin_id'])
+    email = (request.args.get('email') or '').strip()
+    email_l = email.lower()
+
+    server = db.session.get(Server, server_id)
+    if not server:
+        return jsonify({'success': False, 'error': 'Server not found'}), 404
+
+    is_v3 = server_is_v3(server)
+
+    is_reseller = bool(user and user.role == 'reseller')
+    allowed_map, assignments = ('*', {})
+    owned_emails = None
+    if is_reseller:
+        allowed_map, assignments = get_reseller_access_maps(user)
+        owned_emails = {
+            (o.client_email or '').strip().lower()
+            for o in ClientOwnership.query.filter_by(reseller_id=user.id, server_id=server_id).all()
+            if o.client_email
+        }
+
+    items = []
+    assigned_ids = []
+    for inbound in (GLOBAL_SERVER_DATA.get('inbounds') or []):
+        try:
+            if int(inbound.get('server_id', -1)) != int(server_id):
+                continue
+        except Exception:
+            continue
+
+        inbound_id = inbound.get('id')
+        if inbound_id is None:
+            continue
+
+        if is_reseller:
+            try:
+                if not is_inbound_accessible(int(server_id), int(inbound_id), allowed_map, assignments):
+                    continue
+            except Exception:
+                continue
+
+        items.append({
+            'id': inbound_id,
+            'server_id': server_id,
+            'remark': inbound.get('remark') or f'Inbound {inbound_id}',
+            'port': inbound.get('port'),
+        })
+
+        if email_l:
+            for c in (inbound.get('clients') or []):
+                if not isinstance(c, dict):
+                    continue
+                if (c.get('email') or '').strip().lower() != email_l:
+                    continue
+                if owned_emails is not None and email_l not in owned_emails:
+                    continue
+                assigned_ids.append(inbound_id)
+                break
+
+    return jsonify({
+        'success': True,
+        'server_id': server_id,
+        'is_v3': bool(is_v3),
+        'inbounds': items,
+        'assigned_ids': assigned_ids,
+    })
+
+
 @app.route('/settings')
 @login_required
 def settings_page():
@@ -10176,12 +11322,25 @@ def settings_page():
     if not user.is_superadmin:
         return redirect(url_for('dashboard'))
     whatsapp_cfg = _get_whatsapp_runtime_settings()
-    return render_template('settings.html', 
-                         current_user=user, 
-                         is_superadmin=user.is_superadmin, 
+    sms_cfg = _get_sms_runtime_settings()
+    return render_template('settings.html',
+                         current_user=user,
+                         is_superadmin=user.is_superadmin,
                          app_version=APP_VERSION,
                          admin_username=user.username,
                          role=user.role,
+                         sms_automation_enabled=sms_cfg.get('enabled', False),
+                         sms_gmweb_base_url=sms_cfg.get('base_url', ''),
+                         sms_gmweb_api_key=sms_cfg.get('api_key', ''),
+                         sms_gmweb_timeout=sms_cfg.get('timeout_seconds', 15),
+                         sms_trigger_created=sms_cfg.get('trigger_created', True),
+                         sms_trigger_renew=sms_cfg.get('trigger_renew', True),
+                         sms_trigger_depletion=sms_cfg.get('trigger_depletion', False),
+                         sms_depletion_expiry_days=sms_cfg.get('depletion_expiry_days', 3),
+                         sms_depletion_volume_gb=sms_cfg.get('depletion_volume_gb', 2.0),
+                         sms_depletion_cooldown_days=sms_cfg.get('depletion_cooldown_days', 7),
+                         sms_min_interval_seconds=sms_cfg.get('min_interval_seconds', 30),
+                         sms_daily_limit=sms_cfg.get('daily_limit', 200),
                          whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
                          whatsapp_enabled=whatsapp_cfg.get('enabled_requested', False),
                          whatsapp_provider=whatsapp_cfg.get('provider', 'baileys'),
@@ -10197,9 +11356,25 @@ def settings_page():
                          whatsapp_gateway_url=whatsapp_cfg.get('gateway_url', ''),
                          whatsapp_gateway_api_key=whatsapp_cfg.get('gateway_api_key', ''),
                          whatsapp_gateway_timeout_seconds=whatsapp_cfg.get('gateway_timeout_seconds', 10),
+                         whatsapp_session_id=whatsapp_cfg.get('session_id', ''),
                          whatsapp_template_renew=whatsapp_cfg.get('template_renew', DEFAULT_WHATSAPP_TEMPLATE_RENEW),
                          whatsapp_template_welcome=whatsapp_cfg.get('template_welcome', DEFAULT_WHATSAPP_TEMPLATE_WELCOME),
-                         whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY))
+                         whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY),
+                         whatsapp_warmup_enabled=whatsapp_cfg.get('warmup_enabled', False),
+                         whatsapp_warmup_start_date=whatsapp_cfg.get('warmup_start_date', ''),
+                         whatsapp_warmup_start_per_day=whatsapp_cfg.get('warmup_start_per_day', 20),
+                         whatsapp_warmup_ramp_days=whatsapp_cfg.get('warmup_ramp_days', 14),
+                         whatsapp_pace_enabled=whatsapp_cfg.get('pace_enabled', False),
+                         whatsapp_pace_min_gap_seconds=whatsapp_cfg.get('pace_min_gap_seconds', 8),
+                         whatsapp_pace_jitter_seconds=whatsapp_cfg.get('pace_jitter_seconds', 5),
+                         whatsapp_depletion_enabled=whatsapp_cfg.get('depletion_enabled', False),
+                         whatsapp_depletion_expiry_days=whatsapp_cfg.get('depletion_expiry_days', 3),
+                         whatsapp_depletion_volume_gb=whatsapp_cfg.get('depletion_volume_gb', 2.0),
+                         whatsapp_depletion_cooldown_days=whatsapp_cfg.get('depletion_cooldown_days', 7),
+                         whatsapp_bot_tpl_created=whatsapp_cfg.get('bot_tpl_created', DEFAULT_WHATSAPP_BOT_TPL_CREATED),
+                         whatsapp_bot_tpl_renew=whatsapp_cfg.get('bot_tpl_renew', DEFAULT_WHATSAPP_BOT_TPL_RENEW),
+                         whatsapp_bot_tpl_ended=whatsapp_cfg.get('bot_tpl_ended', DEFAULT_WHATSAPP_BOT_TPL_ENDED),
+                         whatsapp_bot_tpl_info=whatsapp_cfg.get('bot_tpl_info', DEFAULT_WHATSAPP_BOT_TPL_INFO))
 
 
 @app.route('/api/settings/subscription-page', methods=['GET'])
@@ -10597,6 +11772,14 @@ def _get_cached_raw_client(server_id: int, inbound_id: int, email: str):
     return target_client
 
 
+def _reseller_can_create_free(user) -> bool:
+    """Free creation/renew is allowed for admins/superadmins, and only for
+    resellers explicitly granted the permission in their user settings."""
+    if getattr(user, 'role', None) != 'reseller':
+        return True
+    return bool(getattr(user, 'allow_free_creation', False))
+
+
 def _user_can_afford(user, price: int) -> tuple[bool, str | None]:
     """Check if user can afford price, respecting negative credit allowance.
     Returns (ok, error_message_or_None).
@@ -10767,6 +11950,8 @@ def reset_client_traffic(server_id, inbound_id):
     user_cost_gb = calculate_reseller_price(user, base_price=base_cost_gb, cost_type='gb')
     
     is_free = bool(data.get('is_free', False))
+    if is_free and not _reseller_can_create_free(user):
+        return jsonify({"success": False, "error": "Free creation is not permitted for your account"}), 403
     if is_free:
         charge_amount = 0
     else:
@@ -11649,6 +12834,8 @@ def renew_client(server_id, inbound_id, email):
     start_after_first_use = bool(data.get('start_after_first_use', False))
     reset_traffic = bool(data.get('reset_traffic', False))
     is_free = bool(data.get('free', False))
+    if is_free and not _reseller_can_create_free(user):
+        return _finish({"success": False, "error": "Free renewal is not permitted for your account"}, 403)
     mode = (data.get('mode') or 'custom').lower()
     if mode not in ('package', 'custom'):
         mode = 'custom'
@@ -12267,7 +13454,21 @@ def renew_client(server_id, inbound_id, email):
 
                 whatsapp_runtime = _get_whatsapp_runtime_settings()
                 _client_comment = (target_client.get('comment') or '') if target_client else ''
-                whatsapp_delivery = _send_whatsapp_message('renew_success', email, copy_text, recipient_comment=_client_comment)
+                # WhatsApp bot uses its own renew template (falls back to the
+                # generic renew copy when no bot template is configured).
+                _wa_text = _whatsapp_render_bot_template('renew_success', _renew_tpl_vars, whatsapp_runtime) or copy_text
+                # Skip the automated send for reseller-owned accounts whose owner
+                # has not enabled WhatsApp automation — don't message their
+                # clients from the system number.
+                if _whatsapp_automation_allowed_for_account(server.id, email):
+                    whatsapp_delivery = _send_whatsapp_message('renew_success', email, _wa_text, recipient_comment=_client_comment)
+                else:
+                    whatsapp_delivery = {'sent': False, 'reason': 'reseller_automation_disabled'}
+
+                # SMS automation (GMweb) — non-reseller-owned accounts only; runs
+                # in a background thread so it never delays the renew response.
+                _fire_automation_sms('renew', server.id, email, RENEW_SMS_TEMPLATE_TYPE,
+                                     DEFAULT_RENEW_SMS_TEMPLATE, _renew_tpl_vars, _client_comment)
                 whatsapp_meta = {
                     'enabled': whatsapp_runtime.get('enabled', False),
                     'deployment_region': whatsapp_runtime.get('deployment_region', 'outside'),
@@ -12287,6 +13488,15 @@ def renew_client(server_id, inbound_id, email):
                         enable=(True if _was_disabled else None),
                         up=(0 if reset_traffic else None),
                         down=(0 if reset_traffic else None))
+                except Exception:
+                    pass
+
+                # Clear monitor message log so the send counter resets after renewal
+                try:
+                    MonitorMessageLog.query.filter_by(
+                        email=email.strip().lower(), server_id=server_id
+                    ).delete()
+                    db.session.commit()
                 except Exception:
                     pass
 
@@ -12474,6 +13684,8 @@ def add_admin():
         credit=int(data.get('credit', 0)),
         allow_negative_credit=bool(data.get('allow_negative_credit', False)),
         negative_credit_limit=max(0, int(data.get('negative_credit_limit', 0) or 0)),
+        allow_free_creation=bool(data.get('allow_free_creation', False)),
+        whatsapp_automation_enabled=bool(data.get('whatsapp_automation_enabled', False)),
         allowed_servers=serialize_allowed_servers(data.get('allowed_servers', [])),
         enabled=data.get('enabled', True),
         discount_percent=int(data.get('discount_percent', 0)),
@@ -12558,6 +13770,8 @@ def update_admin(admin_id):
     if 'credit' in data: admin.credit = int(data['credit'])
     if 'allow_negative_credit' in data: admin.allow_negative_credit = bool(data['allow_negative_credit'])
     if 'negative_credit_limit' in data: admin.negative_credit_limit = max(0, int(data['negative_credit_limit'] or 0))
+    if 'allow_free_creation' in data: admin.allow_free_creation = bool(data['allow_free_creation'])
+    if 'whatsapp_automation_enabled' in data: admin.whatsapp_automation_enabled = bool(data['whatsapp_automation_enabled'])
     if 'allowed_servers' in data: admin.allowed_servers = serialize_allowed_servers(data['allowed_servers'])
     if 'enabled' in data: admin.enabled = data['enabled']
     if 'discount_percent' in data: admin.discount_percent = int(data['discount_percent'])
@@ -12763,6 +13977,9 @@ def delete_server(server_id):
 @login_required
 def test_server_connection(server_id):
     server = Server.query.get_or_404(server_id)
+    # Self-heal the common "http:// stored for an HTTPS-only panel" foot-gun, which
+    # otherwise fails with a bare ConnectionError ("Error testing connection").
+    _autoupgrade_http_to_https(server)
     session_obj, error = get_xui_session(server)
     if error:
         return jsonify({"success": False, "error": error}), 400
@@ -13095,7 +14312,9 @@ def add_client(server_id, inbound_id):
     mode = data.get('mode', 'custom')
     start_after_first_use = bool(data.get('start_after_first_use', False))
     is_free = bool(data.get('free', False))
-    
+    if is_free and not _reseller_can_create_free(user):
+        return jsonify({"success": False, "error": "Free creation is not permitted for your account"}), 403
+
     if not email: return jsonify({"success": False, "error": "Email is required"})
 
     price = 0
@@ -13247,6 +14466,16 @@ def add_client(server_id, inbound_id):
                     })
             except Exception:
                 copy_text = ''
+
+            # SMS automation (GMweb) on create — non-reseller-owned accounts only.
+            _fire_automation_sms('created', server.id, email, CLIENT_CREATED_SMS_TEMPLATE_TYPE,
+                                 DEFAULT_CLIENT_CREATED_SMS_TEMPLATE, {
+                                     'service_name': email, 'email': email, 'protocol': proto_label,
+                                     'volume': ('♾️' if volume_gb == 0 else f'{volume_gb} GB'),
+                                     'days': ('♾️' if days == 0 else f'{days}'), 'sub_link': sub_url,
+                                     'dashboard_link': dash_sub_url, 'server_name': getattr(server, 'name', '') or '',
+                                     'comment': data.get('comment', '') or '',
+                                 }, data.get('comment', '') or '')
 
             return jsonify({
                 "success": True,
@@ -13482,6 +14711,10 @@ def add_client(server_id, inbound_id):
                     copy_text = _render_text_template(active_tpl.content, _cc_tpl_vars)
             except Exception:
                 copy_text = ''
+
+            # SMS automation (GMweb) on create — non-reseller-owned accounts only.
+            _fire_automation_sms('created', server.id, email, CLIENT_CREATED_SMS_TEMPLATE_TYPE,
+                                 DEFAULT_CLIENT_CREATED_SMS_TEMPLATE, _cc_tpl_vars, data.get('comment', '') or '')
 
             return jsonify({
                 "success": True,
@@ -16589,9 +17822,25 @@ def sub_manager_page():
                          whatsapp_gateway_url=whatsapp_cfg.get('gateway_url', ''),
                          whatsapp_gateway_api_key=whatsapp_cfg.get('gateway_api_key', ''),
                          whatsapp_gateway_timeout_seconds=whatsapp_cfg.get('gateway_timeout_seconds', 10),
+                         whatsapp_session_id=whatsapp_cfg.get('session_id', ''),
                          whatsapp_template_renew=whatsapp_cfg.get('template_renew', DEFAULT_WHATSAPP_TEMPLATE_RENEW),
                          whatsapp_template_welcome=whatsapp_cfg.get('template_welcome', DEFAULT_WHATSAPP_TEMPLATE_WELCOME),
-                         whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY))
+                         whatsapp_template_pre_expiry=whatsapp_cfg.get('template_pre_expiry', DEFAULT_WHATSAPP_TEMPLATE_PRE_EXPIRY),
+                         whatsapp_warmup_enabled=whatsapp_cfg.get('warmup_enabled', False),
+                         whatsapp_warmup_start_date=whatsapp_cfg.get('warmup_start_date', ''),
+                         whatsapp_warmup_start_per_day=whatsapp_cfg.get('warmup_start_per_day', 20),
+                         whatsapp_warmup_ramp_days=whatsapp_cfg.get('warmup_ramp_days', 14),
+                         whatsapp_pace_enabled=whatsapp_cfg.get('pace_enabled', False),
+                         whatsapp_pace_min_gap_seconds=whatsapp_cfg.get('pace_min_gap_seconds', 8),
+                         whatsapp_pace_jitter_seconds=whatsapp_cfg.get('pace_jitter_seconds', 5),
+                         whatsapp_depletion_enabled=whatsapp_cfg.get('depletion_enabled', False),
+                         whatsapp_depletion_expiry_days=whatsapp_cfg.get('depletion_expiry_days', 3),
+                         whatsapp_depletion_volume_gb=whatsapp_cfg.get('depletion_volume_gb', 2.0),
+                         whatsapp_depletion_cooldown_days=whatsapp_cfg.get('depletion_cooldown_days', 7),
+                         whatsapp_bot_tpl_created=whatsapp_cfg.get('bot_tpl_created', DEFAULT_WHATSAPP_BOT_TPL_CREATED),
+                         whatsapp_bot_tpl_renew=whatsapp_cfg.get('bot_tpl_renew', DEFAULT_WHATSAPP_BOT_TPL_RENEW),
+                         whatsapp_bot_tpl_ended=whatsapp_cfg.get('bot_tpl_ended', DEFAULT_WHATSAPP_BOT_TPL_ENDED),
+                         whatsapp_bot_tpl_info=whatsapp_cfg.get('bot_tpl_info', DEFAULT_WHATSAPP_BOT_TPL_INFO))
 
 @app.route('/api/sub-apps', methods=['GET'])
 def get_sub_apps():
@@ -17684,10 +18933,72 @@ def update_system_config():
                 sanitized_value = _normalize_whatsapp_gateway_url(value)
             elif key == WHATSAPP_GATEWAY_API_KEY:
                 sanitized_value = sanitize_html(str(value))[:512]
+            elif key == WHATSAPP_SESSION_KEY:
+                sanitized_value = _normalize_whatsapp_session(value)
             elif key == WHATSAPP_GATEWAY_TIMEOUT_KEY:
                 sanitized_value = str(_parse_int(value, 10, min_value=3, max_value=60))
             elif key in {WHATSAPP_TEMPLATE_RENEW_KEY, WHATSAPP_TEMPLATE_WELCOME_KEY, WHATSAPP_TEMPLATE_PRE_EXPIRY_KEY}:
                 sanitized_value = sanitize_html(str(value))[:2000]
+            elif key in {
+                WHATSAPP_WARMUP_ENABLED_KEY, WHATSAPP_PACE_ENABLED_KEY, WHATSAPP_DEPLETION_ENABLED_KEY,
+            }:
+                sanitized_value = 'true' if _parse_bool(value) else 'false'
+            elif key == WHATSAPP_WARMUP_START_DATE_KEY:
+                # Accept YYYY-MM-DD only; anything else stored empty.
+                _raw = str(value or '').strip()
+                try:
+                    sanitized_value = datetime.strptime(_raw, '%Y-%m-%d').strftime('%Y-%m-%d') if _raw else ''
+                except ValueError:
+                    sanitized_value = ''
+            elif key == WHATSAPP_WARMUP_START_PER_DAY_KEY:
+                sanitized_value = str(_parse_int(value, 20, min_value=1, max_value=50000))
+            elif key == WHATSAPP_WARMUP_RAMP_DAYS_KEY:
+                sanitized_value = str(_parse_int(value, 14, min_value=1, max_value=120))
+            elif key == WHATSAPP_PACE_MIN_GAP_KEY:
+                sanitized_value = str(_parse_int(value, 8, min_value=0, max_value=600))
+            elif key == WHATSAPP_PACE_JITTER_KEY:
+                sanitized_value = str(_parse_int(value, 5, min_value=0, max_value=600))
+            elif key == WHATSAPP_DEPLETION_EXPIRY_DAYS_KEY:
+                sanitized_value = str(_parse_int(value, 3, min_value=0, max_value=60))
+            elif key == WHATSAPP_DEPLETION_VOLUME_GB_KEY:
+                try:
+                    _v = max(0.0, min(1000.0, float(value)))
+                except (TypeError, ValueError):
+                    _v = 2.0
+                sanitized_value = str(_v)
+            elif key == WHATSAPP_DEPLETION_COOLDOWN_DAYS_KEY:
+                sanitized_value = str(_parse_int(value, 7, min_value=1, max_value=120))
+            elif key in {
+                WHATSAPP_BOT_TPL_CREATED_KEY, WHATSAPP_BOT_TPL_RENEW_KEY,
+                WHATSAPP_BOT_TPL_ENDED_KEY, WHATSAPP_BOT_TPL_INFO_KEY,
+            }:
+                sanitized_value = sanitize_html(str(value))[:2000]
+            # ── SMS Automation (GMweb) ──
+            elif key in {
+                SMS_AUTOMATION_ENABLED_KEY, SMS_TRIGGER_CREATED_KEY,
+                SMS_TRIGGER_RENEW_KEY, SMS_TRIGGER_DEPLETION_KEY,
+            }:
+                sanitized_value = 'true' if _parse_bool(value) else 'false'
+            elif key == SMS_GMWEB_BASE_URL_KEY:
+                sanitized_value = str(value or '').strip().rstrip('/')[:512]
+            elif key == SMS_GMWEB_API_KEY_KEY:
+                sanitized_value = str(value or '').strip()[:512]
+            elif key == SMS_GMWEB_TIMEOUT_KEY:
+                sanitized_value = str(_parse_int(value, 15, min_value=3, max_value=90))
+            elif key == SMS_DEPLETION_EXPIRY_DAYS_KEY:
+                sanitized_value = str(_parse_int(value, 3, min_value=0, max_value=60))
+            elif key == SMS_DEPLETION_VOLUME_GB_KEY:
+                try:
+                    _v = max(0.0, min(1000.0, float(value)))
+                except (TypeError, ValueError):
+                    _v = 2.0
+                sanitized_value = str(_v)
+            elif key == SMS_DEPLETION_COOLDOWN_DAYS_KEY:
+                sanitized_value = str(_parse_int(value, 7, min_value=1, max_value=120))
+            elif key == SMS_MIN_INTERVAL_SECONDS_KEY:
+                sanitized_value = str(_parse_int(value, 30, min_value=0, max_value=3600))
+            elif key == SMS_DAILY_LIMIT_KEY:
+                sanitized_value = str(_parse_int(value, 200, min_value=1, max_value=100000))
             else:
                 sanitized_value = sanitize_html(str(value))
 
@@ -17717,6 +19028,91 @@ def update_system_config():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/sms/test-connection', methods=['POST'])
+@superadmin_required
+def test_sms_connection():
+    """Verify the GMweb gateway: /health (public) then /ready (with the token)."""
+    cfg = _get_sms_runtime_settings()
+    base = (cfg.get('base_url') or '').strip().rstrip('/')
+    api_key = (cfg.get('api_key') or '').strip()
+    if not base:
+        return jsonify({'success': False, 'error': 'GMweb Base URL is not configured.'}), 400
+    if not api_key:
+        return jsonify({'success': False, 'error': 'GMweb API key is not configured.'}), 400
+    timeout = int(cfg.get('timeout_seconds') or 15)
+    try:
+        h = requests.get(f"{base}/health", timeout=timeout)
+        if h.status_code != 200:
+            return jsonify({'success': False, 'error': f'Gateway /health returned HTTP {h.status_code}.'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Cannot reach gateway: {e}'}), 400
+    # /ready also validates the token (401 → bad key, 503 → not paired yet).
+    try:
+        r = requests.get(f"{base}/ready", headers={'Authorization': f'Bearer {api_key}'}, timeout=timeout)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Gateway reachable but /ready failed: {e}'}), 400
+    if r.status_code == 401:
+        return jsonify({'success': False, 'error': 'Invalid API key (gateway returned 401).'}), 400
+    if r.status_code == 503:
+        return jsonify({'success': True, 'ready': False,
+                        'message': 'Gateway reachable and key valid, but Google Messages is not paired yet (503).'})
+    if r.status_code == 200:
+        return jsonify({'success': True, 'ready': True, 'message': 'Gateway reachable, key valid, and ready to send.'})
+    return jsonify({'success': False, 'error': f'Gateway /ready returned HTTP {r.status_code}.'}), 400
+
+
+@app.route('/api/sms/test-send', methods=['POST'])
+@superadmin_required
+def sms_test_send():
+    """Send a real test SMS so the admin can confirm the gateway works end-to-end.
+
+    Recipient resolution (in order):
+      1) the logged-in superadmin's own Support SMS number (their profile), then
+      2) the panel-wide Support SMS number from the Contact section.
+    If neither is set, returns a helpful message telling them where to add one.
+    Bypasses the enabled/trigger/owner gates — it only needs the gateway set up.
+    """
+    cfg = _get_sms_runtime_settings()
+    if not (cfg.get('base_url') and cfg.get('api_key')):
+        return jsonify({'success': False,
+                        'error': 'GMweb gateway is not configured. Set the Base URL and API key (and Save) first.'}), 400
+
+    user = db.session.get(Admin, session['admin_id'])
+    own_raw = (getattr(user, 'support_sms', None) or '').strip()
+    contact_conf = db.session.get(SystemConfig, 'support_sms')
+    contact_raw = ((contact_conf.value if contact_conf else '') or '').strip()
+
+    source = None
+    recipient = ''
+    if own_raw:
+        recipient = _extract_iran_mobile_from_text(own_raw)
+        if recipient:
+            source = 'superadmin_profile'
+    if not recipient and contact_raw:
+        recipient = _extract_iran_mobile_from_text(contact_raw)
+        if recipient:
+            source = 'panel_contact'
+
+    if not recipient:
+        if own_raw or contact_raw:
+            bad = own_raw or contact_raw
+            return jsonify({'success': False,
+                            'error': f'The configured number ("{bad}") is not a valid Iranian mobile. Fix it in your profile (Support SMS) or in the Contact section.'}), 400
+        return jsonify({'success': False, 'needs_number': True,
+                        'error': 'No phone number set. Add your Support SMS number in your profile, or set the panel-wide Support SMS in the Contact section, then test again.'}), 400
+
+    text = ('EVE panel — test SMS ✅\n'
+            'پیام تستی پنل. اگر این پیام را دریافت کردید، اتوماسیون SMS درست کار می‌کند.')
+    res = _send_sms_via_gmweb(recipient, text, cfg)
+    if res.get('sent'):
+        src_label = 'your profile number' if source == 'superadmin_profile' else 'the panel contact number'
+        return jsonify({'success': True, 'recipient': recipient, 'source': source,
+                        'message': f'Test SMS sent to {recipient} ({src_label}).'})
+    return jsonify({'success': False, 'recipient': recipient,
+                    'error': f'Send failed ({res.get("reason") or "unknown"}).',
+                    'status_code': res.get('status_code')}), 400
+
+
 @app.route('/api/whatsapp/test-connection', methods=['POST'])
 @superadmin_required
 def test_whatsapp_connection():
@@ -17732,11 +19128,45 @@ def test_whatsapp_connection():
     if not gateway_url:
         return jsonify({'success': False, 'error': 'WhatsApp gateway URL is not configured.'}), 400
 
+    provider = (runtime_cfg.get('provider') or 'baileys').strip().lower()
+    timeout_seconds = int(runtime_cfg.get('gateway_timeout_seconds') or 10)
+    api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+
     ok, status_code, error_reason = _probe_whatsapp_gateway(
         gateway_url,
-        timeout_seconds=int(runtime_cfg.get('gateway_timeout_seconds') or 10),
-        api_key=(runtime_cfg.get('gateway_api_key') or '').strip(),
+        timeout_seconds=timeout_seconds,
+        api_key=api_key,
+        provider=provider,
     )
+
+    if ok and provider == 'openwa':
+        # Health is up — also verify the configured session is actually connected,
+        # otherwise sends will silently fail with "session not active".
+        session_name = (runtime_cfg.get('session_id') or '').strip()
+        if not session_name:
+            return jsonify({
+                'success': False,
+                'status_code': status_code,
+                'message': 'Gateway reachable, but no OpenWA session is configured. Set the session name.'
+            }), 400
+        sess = _openwa_session_status(gateway_url, api_key, session_name, timeout_seconds)
+        if not sess.get('found'):
+            return jsonify({
+                'success': False,
+                'status_code': status_code,
+                'message': f"Gateway reachable, but session '{session_name}' was not found in OpenWA."
+            }), 400
+        if not sess.get('connected'):
+            return jsonify({
+                'success': False,
+                'status_code': status_code,
+                'message': f"Session '{session_name}' is {sess.get('status') or 'disconnected'}. Reconnect it in the OpenWA dashboard (scan QR)."
+            }), 400
+        return jsonify({
+            'success': True,
+            'status_code': status_code,
+            'message': f"Connected — session '{session_name}' ({sess.get('phone') or 'no number'}) is {sess.get('status')}."
+        })
 
     if ok:
         return jsonify({
@@ -17768,6 +19198,7 @@ def auto_configure_whatsapp_gateway():
 
     timeout_seconds = int(runtime_cfg.get('gateway_timeout_seconds') or 10)
     api_key = (runtime_cfg.get('gateway_api_key') or '').strip()
+    provider = (runtime_cfg.get('provider') or 'baileys').strip().lower()
     configured_url = (runtime_cfg.get('gateway_url') or '').strip()
     host_hint = request.host
 
@@ -17776,7 +19207,7 @@ def auto_configure_whatsapp_gateway():
     first_error = None
 
     for candidate in candidates:
-        ok, status_code, error_reason = _probe_whatsapp_gateway(candidate, timeout_seconds=timeout_seconds, api_key=api_key)
+        ok, status_code, error_reason = _probe_whatsapp_gateway(candidate, timeout_seconds=timeout_seconds, api_key=api_key, provider=provider)
         checked.append({
             'url': candidate,
             'ok': bool(ok),
@@ -18220,6 +19651,7 @@ def _account_info_template_vars():
         '{email}', '{account_name}', '{remaining_time}', '{remaining_volume}',
         '{dashboard_link}', '{sub_link}', '{server_name}',
         '{telegram_channel}', '{whatsapp_channel}',
+        '{gift_volume}', '{if_gift}...{/if_gift}',
     ]
 
 
@@ -19835,44 +21267,74 @@ def ssl_sync():
         return jsonify({'success': False,
                         'error': 'Cannot find SSL cert paths. Is nginx configured with SSL?'}), 400
 
-    # Read cert — usually world-readable
-    try:
-        with open(cert_src, 'rb') as _f:
-            cert_data = _f.read()
-    except PermissionError:
-        r = subprocess.run(['sudo', 'cat', cert_src], capture_output=True, timeout=10)
+    # Helper: read a source file, falling back to `sudo cat` for mode-600 keys.
+    # Never lets an unexpected subprocess error (missing sudo / timeout) bubble
+    # up as a generic 500 — always returns a clean JSON error tuple instead.
+    def _read_src(path, label):
+        try:
+            with open(path, 'rb') as _f:
+                return _f.read(), None
+        except PermissionError:
+            pass
+        except Exception as _e:
+            return None, (jsonify({'success': False,
+                                   'error': f'Cannot read {label}: {_e}'}), 500)
+        try:
+            r = subprocess.run(['sudo', 'cat', path], capture_output=True, timeout=10)
+        except FileNotFoundError:
+            return None, (jsonify({'success': False,
+                                   'error': f'sudo not available — cannot read {label}.\n\nRun this on the server:\n\n{FIX_CMD}',
+                                   'fix_command': FIX_CMD}), 500)
+        except Exception as _e:
+            return None, (jsonify({'success': False,
+                                   'error': f'Cannot read {label} ({_e}).\n\nRun: {FIX_CMD}',
+                                   'fix_command': FIX_CMD}), 500)
         if r.returncode != 0:
-            return jsonify({'success': False,
-                            'error': f'Cannot read certificate: {r.stderr.decode().strip()}\n\nRun: {FIX_CMD}',
-                            'fix_command': FIX_CMD}), 500
-        cert_data = r.stdout
-
-    # Read private key — typically mode 600, needs sudo cat
-    try:
-        with open(key_src, 'rb') as _f:
-            key_data = _f.read()
-    except PermissionError:
-        r = subprocess.run(['sudo', 'cat', key_src], capture_output=True, timeout=10)
-        if r.returncode != 0:
-            err = r.stderr.decode().strip()
-            if 'password' in err or 'askpass' in err:
-                return jsonify({
+            err = r.stderr.decode(errors='ignore').strip()
+            if 'password' in err.lower() or 'askpass' in err.lower() or 'terminal' in err.lower():
+                return None, (jsonify({
                     'success': False,
                     'error': f'sudo not configured for this app user.\n\nRun this on the server:\n\n{FIX_CMD}',
-                    'fix_command': FIX_CMD,
-                }), 500
-            return jsonify({'success': False,
-                            'error': f'Cannot read private key: {err}'}), 500
-        key_data = r.stdout
+                    'fix_command': FIX_CMD}), 500)
+            return None, (jsonify({'success': False,
+                                   'error': f'Cannot read {label}: {err}\n\nRun: {FIX_CMD}',
+                                   'fix_command': FIX_CMD}), 500)
+        return r.stdout, None
 
-    # Write directly — evemgr owns the dir, no sudo needed
-    with open(cert_dest, 'wb') as _f:
-        _f.write(cert_data)
-    os.chmod(cert_dest, 0o644)
+    # Helper: overwrite a destination file even if a stale copy is owned by root.
+    # The dir is owned by evemgr (700), so we can unlink the old file and recreate
+    # it fresh — this avoids PermissionError on open('wb') of a root-owned file
+    # (the bug that produced a generic 500 on sync).
+    def _write_dest(path, data, mode):
+        try:
+            if os.path.lexists(path):
+                try:
+                    os.remove(path)
+                except PermissionError:
+                    # Dir not writable enough to unlink — try sudo rm, best effort
+                    subprocess.run(['sudo', 'rm', '-f', path], capture_output=True, timeout=10)
+            with open(path, 'wb') as _f:
+                _f.write(data)
+            os.chmod(path, mode)
+            return None
+        except Exception as _e:
+            return (jsonify({'success': False,
+                             'error': f'Cannot write {path}: {_e}\n\nRun: {FIX_CMD}',
+                             'fix_command': FIX_CMD}), 500)
 
-    with open(key_dest, 'wb') as _f:
-        _f.write(key_data)
-    os.chmod(key_dest, 0o600)
+    cert_data, _err = _read_src(cert_src, 'certificate')
+    if _err:
+        return _err
+    key_data, _err = _read_src(key_src, 'private key')
+    if _err:
+        return _err
+
+    _err = _write_dest(cert_dest, cert_data, 0o644)
+    if _err:
+        return _err
+    _err = _write_dest(key_dest, key_data, 0o600)
+    if _err:
+        return _err
 
     # Persist paths in DB
     for k, v in [('ssl_cert_path', cert_dest), ('ssl_key_path', key_dest)]:
@@ -20824,15 +22286,9 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
         except Exception:
             db.session.rollback()
 
-        results = []
-        if server_dicts:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
-                for future in concurrent.futures.as_completed(future_to_id):
-                    results.append(future.result())
-
-        results_by_id = {r[0]: r for r in results if isinstance(r, tuple) and len(r) >= 7}
-
+        # ── Seed working maps from the current cache so partial updates MERGE ──
+        # (a warm refresh keeps every server's data on screen and replaces it
+        #  server-by-server; a cold start fills in progressively from empty).
         existing_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
         existing_by_server = defaultdict(list)
         for inbound in existing_inbounds:
@@ -20858,23 +22314,25 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
 
         now_iso = _utc_iso_now()
         new_by_server = dict(existing_by_server)
+        servers_by_id = {int(s.id): s for s in servers}
+        server_order = [int(s.id) for s in servers]
 
-        for srv in servers:
-            sid = int(srv.id)
+        def _commit_snapshot():
+            """Publish the current (possibly partial) state to GLOBAL_SERVER_DATA
+            so the dashboard renders servers as they finish instead of blocking on
+            the slowest panel. Cheap relative to the network fetches it follows."""
+            flat = []
+            for _sid in server_order:
+                flat.extend(new_by_server.get(_sid, []))
+            statuses = [status_map.get(_sid) or {"server_id": _sid, "success": False, "error": "No data"}
+                        for _sid in server_order]
+            GLOBAL_SERVER_DATA['inbounds'] = flat
+            GLOBAL_SERVER_DATA['stats'] = _recompute_global_stats_from_server_statuses(statuses)
+            GLOBAL_SERVER_DATA['servers_status'] = statuses
+            GLOBAL_SERVER_DATA['last_update'] = _utc_iso_now()
 
-            if sid in skipped_ids:
-                info = _backoff_get(sid)
-                st = status_map.get(sid) or {"server_id": sid}
-                st['reachable'] = False
-                st['reachable_error'] = (info.get('last_error') or 'Backoff')
-                st['reachable_checked_at'] = now_iso
-                st['backoff_until'] = int(info.get('next_allowed_at', 0) or 0)
-                status_map[sid] = st
-                continue
-
-            res = results_by_id.get(sid) or (sid, None, None, None, None, "Timeout", 'auto')
+        def _apply_result(sid, res):
             _, inbounds, online_index, status_payload, status_error, error, detected_type = res
-
             if error:
                 _backoff_record_failure(sid, error)
                 st = status_map.get(sid) or {"server_id": sid}
@@ -20887,7 +22345,6 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 st['reachable'] = False
                 st['reachable_error'] = error
                 st['reachable_checked_at'] = now_iso
-                # Always expose the error in panel_status_error so the UI badge shows it.
                 st['panel_status_error'] = (status_error or error)
                 st['panel_status_checked_at'] = now_iso
                 if status_payload:
@@ -20897,14 +22354,12 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                     st['xray_core'] = status_payload.get('xray_core')
                     st['online_count'] = status_payload.get('online_count')
                 status_map[sid] = st
-                # keep existing inbounds block (if any)
-                continue
+                return  # keep existing inbounds block (if any)
 
             _backoff_record_success(sid)
-
-            if persist_detected_panel_type(srv, detected_type):
-                app.logger.info(f"Detected panel type for server {srv.id} as {detected_type}")
-
+            srv = servers_by_id.get(sid)
+            if srv is not None and persist_detected_panel_type(srv, detected_type):
+                app.logger.info(f"Detected panel type for server {sid} as {detected_type}")
             if not isinstance(inbounds, list):
                 inbounds = []
             processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {}, online_index=online_index)
@@ -20916,7 +22371,7 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 "server_id": sid,
                 "success": True,
                 "stats": stats,
-                "panel_type": srv.panel_type,
+                "panel_type": getattr(srv, 'panel_type', None),
                 "reachable": True,
                 "reachable_error": None,
                 "reachable_checked_at": now_iso,
@@ -20931,25 +22386,51 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
             })
             status_map[sid] = st
 
-        # Flatten inbounds in stable order (server order)
-        all_inbounds = []
-        for srv in servers:
-            all_inbounds.extend(new_by_server.get(int(srv.id), []))
+        # Backoff-skipped servers: mark unreachable up-front (keep their cached inbounds).
+        for sid in skipped_ids:
+            info = _backoff_get(sid)
+            st = status_map.get(sid) or {"server_id": sid}
+            st['reachable'] = False
+            st['reachable_error'] = (info.get('last_error') or 'Backoff')
+            st['reachable_checked_at'] = now_iso
+            st['backoff_until'] = int(info.get('next_allowed_at', 0) or 0)
+            status_map[sid] = st
 
-        server_statuses = []
-        for srv in servers:
-            sid = int(srv.id)
-            server_statuses.append(status_map.get(sid) or {"server_id": sid, "success": False, "error": "No data"})
+        # Publish the seed/skip state immediately so a cold load shows structure fast.
+        _commit_snapshot()
 
-        total_stats = _recompute_global_stats_from_server_statuses(server_statuses)
+        # Fetch concurrently and commit after EACH server completes → the grid
+        # fills in progressively instead of waiting for the whole fan-out.
+        pending_ids = {int(s['id']) for s in server_dicts}
+        last_publish = 0.0
+        if server_dicts:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_id = {executor.submit(fetch_worker, s): int(s['id']) for s in server_dicts}
+                for future in concurrent.futures.as_completed(future_to_id):
+                    sid = future_to_id[future]
+                    pending_ids.discard(sid)
+                    try:
+                        res = future.result()
+                        if not (isinstance(res, tuple) and len(res) >= 7):
+                            res = (sid, None, None, None, None, "Timeout", 'auto')
+                    except Exception as e:
+                        res = (sid, None, None, None, None, str(e) or "Timeout", 'auto')
+                    try:
+                        _apply_result(sid, res)
+                    except Exception:
+                        app.logger.exception(f"Failed to apply fetch result for server {sid}")
+                    _commit_snapshot()
+                    nowt = time.time()
+                    if nowt - last_publish >= 1.0:
+                        publish_snapshot_to_redis()
+                        last_publish = nowt
 
-        GLOBAL_SERVER_DATA['inbounds'] = all_inbounds
-        GLOBAL_SERVER_DATA['stats'] = total_stats
-        GLOBAL_SERVER_DATA['servers_status'] = server_statuses
-        GLOBAL_SERVER_DATA['last_update'] = now_iso
+        # Defensive: any server that never produced a result → timeout entry.
+        for sid in list(pending_ids):
+            _apply_result(sid, (sid, None, None, None, None, "Timeout", 'auto'))
 
-        # Share the freshly-computed snapshot with the other workers via Redis
-        # (no-op when Redis is not configured/available).
+        # Final authoritative commit + publish to the other workers (no-op w/o Redis).
+        _commit_snapshot()
         publish_snapshot_to_redis()
 
     except Exception as e:
@@ -21552,6 +23033,24 @@ def ensure_background_threads_started():
             print(f"Failed to start usage snapshot thread: {e}")
     else:
         print("[Singleton] snapshot_worker already owned by another worker, skipping.")
+
+    # Singleton: only one worker runs the WhatsApp near-depletion bot scanner
+    if _claim_singleton('whatsapp_bot_worker'):
+        try:
+            threading.Thread(target=whatsapp_bot_worker, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to start whatsapp bot thread: {e}")
+    else:
+        print("[Singleton] whatsapp_bot_worker already owned by another worker, skipping.")
+
+    # Singleton: only one worker runs the SMS near-depletion bot scanner
+    if _claim_singleton('sms_bot_worker'):
+        try:
+            threading.Thread(target=sms_bot_worker, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to start sms bot thread: {e}")
+    else:
+        print("[Singleton] sms_bot_worker already owned by another worker, skipping.")
 
 if not os.environ.get('DISABLE_BACKGROUND_THREADS'):
     # Start threads on module import (works under gunicorn as well)

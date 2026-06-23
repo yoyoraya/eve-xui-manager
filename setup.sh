@@ -162,6 +162,22 @@ reset_admin_defaults() {
     ADMIN_PASS="$(generate_secret 12 alnum)"
 }
 
+# Keep only the most recent N app-dir backups (${APP_DIR}.bak.<epoch>). Each
+# update copies the old install aside; without pruning these pile up (~0.9 GB
+# each) and fill the disk. Call right after a new backup is created.
+prune_app_backups() {
+    local keep="${1:-2}"
+    local i=0 d
+    while IFS= read -r d; do
+        [ -z "$d" ] && continue
+        i=$((i + 1))
+        [ "$i" -le "$keep" ] && continue
+        if rm -rf -- "$d" 2>/dev/null; then
+            print_warning "Pruned old backup: $d"
+        fi
+    done < <(ls -1dt "${APP_DIR}".bak.* 2>/dev/null)
+}
+
 # ----------------------- Prerequisites ----------------------
 require_root() {
     if [ "${EUID}" -ne 0 ]; then
@@ -613,6 +629,7 @@ clone_or_update_repo_from_local_bundle() {
     if [ -d "$APP_DIR" ] && [ "$(ls -A "$APP_DIR" 2>/dev/null)" ]; then
         print_warning "Backing up $APP_DIR ..."
         mv "$APP_DIR" "${APP_DIR}.bak.$(date +%s)"
+        prune_app_backups 2
     fi
 
     mkdir -p "$APP_DIR"
@@ -752,6 +769,7 @@ clone_or_update_repo_from_zip() {
     if [ -d "$APP_DIR" ] && [ "$(ls -A $APP_DIR)" ]; then
         print_warning "Directory $APP_DIR exists. Backing up..."
         mv "$APP_DIR" "${APP_DIR}.bak.$(date +%s)"
+        prune_app_backups 2
     fi
 
     mkdir -p "$APP_DIR"
@@ -807,6 +825,7 @@ clone_or_update_repo() {
     elif [ -d "$APP_DIR" ] && [ "$(ls -A $APP_DIR)" ]; then
         print_warning "Directory $APP_DIR exists but is not a git repo. Backing up..."
         mv "$APP_DIR" "${APP_DIR}.bak.$(date +%s)"
+        prune_app_backups 2
         mkdir -p "$APP_DIR"
         chown "$APP_USER:$APP_USER" "$APP_DIR"
         sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
@@ -1391,6 +1410,10 @@ cp -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"  "\$SSL_DIR/privkey.pem"
 chown ${APP_USER}:${APP_USER} "\$SSL_DIR/fullchain.pem" "\$SSL_DIR/privkey.pem"
 chmod 644 "\$SSL_DIR/fullchain.pem"
 chmod 600 "\$SSL_DIR/privkey.pem"
+# Reload nginx so it picks up the freshly-renewed cert (otherwise it keeps
+# serving the old one in memory until a manual reload — the "SSL keeps dropping"
+# symptom). Test first so a bad config never takes the site down.
+nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
 HOOK
     chmod +x "$HOOK_DIR/eve-manager.sh"
     print_success "Certbot deploy hook installed (auto-copy on renewal)"
@@ -1934,6 +1957,7 @@ do_online_update() {
         if rsync -a --exclude='.env' --exclude='instance/' --exclude='venv/' \
             "$APP_DIR/" "${APP_DIR}.bak.${_BAK_TS}/" 2>/dev/null; then
             print_success "Backup saved to ${APP_DIR}.bak.${_BAK_TS}"
+            prune_app_backups 2
         else
             print_warning "Backup failed (continuing anyway)"
         fi
@@ -2160,6 +2184,7 @@ offline_update() {
         --exclude='.env' --exclude='instance/' --exclude='venv/' \
         "$APP_DIR/" "${APP_DIR}.bak.${BAK_TS}/" 2>/dev/null; then
         print_success "Backup saved to ${APP_DIR}.bak.${BAK_TS}"
+        prune_app_backups 2
     else
         print_warning "Backup failed (continuing)"
     fi

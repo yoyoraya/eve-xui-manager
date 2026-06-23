@@ -1,3 +1,98 @@
+# Eve - Xui Manager v2.3.2
+
+## [2.3.2] - 2026-06-20
+
+English:
+- Feature: **Per-reseller WhatsApp automation permission** — new "WhatsApp Automation Enabled" switch in each reseller's user settings (default OFF). The system will not message a reseller's clients from the owner's WhatsApp number unless the reseller is explicitly opted in
+- Scope: both the background near-depletion scanner and the automatic post-renewal WhatsApp message now skip reseller-owned accounts whose owner hasn't enabled automation
+- Owner/admin/superadmin accounts are always eligible (unchanged)
+
+فارسی:
+- قابلیت: **پرمیشن اتوماسیون واتساپ به‌ازای هر رسلر** — سوییچ جدید «اتوماسیون واتساپ فعال» در تنظیمات هر رسلر (پیش‌فرض خاموش). تا وقتی این گزینه روشن نشده باشد، سیستم با شماره‌ی owner به کلاینت‌های آن رسلر پیام نمی‌دهد
+- دامنه: هم اسکن خودکار near-depletion و هم ارسال خودکار بعد از تمدید، اکانت‌های متعلق به رسلرِ بدون این مجوز را نادیده می‌گیرند
+- اکانت‌های owner/ادمین/سوپرادمین همیشه شامل اتوماسیون هستند (بدون تغییر)
+
+## [2.3.1] - 2026-06-20
+
+English:
+- Feature: **Reseller "Free" permission** — the Free toggle for new purchases, renewals, and traffic resets is now hidden from resellers unless explicitly granted. Enable the new "Allow Free Creation" switch in the reseller's user settings to show it
+- Security: server-side enforcement on all three free-action endpoints — resellers without the permission are rejected with HTTP 403 even if the client is tampered with
+- Admins and superadmins are unaffected (they don't consume credit)
+
+فارسی:
+- قابلیت: **پرمیشن «رایگان» برای رسلر** — تاگل Free هنگام ساخت، تمدید و ریست ترافیک تا وقتی در تنظیمات یوزر رسلر فعال نشده باشد نمایش داده نمی‌شود. با روشن کردن سوییچ «مجاز به ساخت/تمدید رایگان» در تنظیمات کاربر، این گزینه برایش لود می‌شود
+- امنیت: اعمال محدودیت سمت سرور روی هر سه اندپوینت — رسلر بدون این پرمیشن حتی با دستکاری سمت کلاینت با خطای ۴۰۳ رد می‌شود
+- ادمین و سوپرادمین تحت تأثیر نیستند (اعتبار خرج نمی‌کنند)
+
+## [2.3.0] - 2026-06-20
+
+English:
+- Feature: **WhatsApp Bot (OpenWA)** — integrate Eve with OpenWA self-hosted gateway as an alternative to Baileys; send WhatsApp messages through your own local server
+- Feature: **Warm-up mode** — linear ramp-up of the daily WhatsApp send cap over N configurable days to avoid ban risk on new sessions
+- Feature: **Near-depletion bot** — background scanner (every 30 min) automatically messages clients whose subscription volume or time is running low; configurable thresholds, cooldown period, and database deduplication
+- Feature: **WhatsApp Bot Templates** — dedicated templates for Created, Renew, Ended, and Info events, separate from SMS templates with their own placeholders
+- Feature: **Pace gate** — optional minimum gap + random jitter between WhatsApp sends to mimic human behavior (disabled by default)
+- Feature: **Ban-risk warning** — prominent warning banner when OpenWA provider is selected with safe-usage recommendations
+- Feature: **Monitor zero-usage badge** — idle clients shown with a distinct chip; Royalty Information template sent directly from the monitor table; per-client SMS/WA send counter visible in the row
+- Feature: **WhatsApp/SMS template variants** — dedicated Created and Renew message templates for WhatsApp and SMS with test-send buttons
+- Feature: **Conditional gift blocks** — `{if_gift}…{/if_gift}` and `{gift_volume}` placeholders available in all template editors
+- Feature: **Announcement media upload** — inline image/video upload directly in the announcement message editor; new popup modal announcement type with custom button label
+- Feature: **Backup Database button** — added to server management cards on the Servers page
+- Feature: **Reseller owner badges** — multi-select owner filter for admin on the Packages page
+- Feature: **Subscription history** — compact inline renewal line, paginated table (10/page), renewal days marked
+- Feature: **Persian/Arabic digit search** — search box converts Persian/Arabic digits to ASCII automatically
+- Feature: **"Why?" error modal** — server cards explain fetch errors in plain language
+- Feature: **v3 Last User** — shows recent clients only for checked inbounds, refreshed on toggle, deduplicated
+- Feature: **Volume stats button** — added to v3 server cards for quick traffic overview
+- Improvement: **Dashboard lazy rows** — incremental render in chunks so the dashboard is interactive before all data arrives
+- Improvement: **Write-through cache** — edits and renewals update the in-memory cache instantly across all panel types
+- Improvement: **Upload progress UI** — real-time progress bar during backup restore; 512 MB upload limit
+- Improvement: **X-Accel streaming** — large backup downloads stream through Nginx to avoid Gunicorn timeout
+- Fix: **3x-ui v3.3.1 CSRF** — Eve now fetches `X-CSRF-Token` before login; fully backward compatible with older panels
+- Fix: **http→https self-heal** — server saved with `http://` retried over `https://` when the panel is SSL-only
+- Fix: **`{dashboard_link}` & `{sub_link}`** — placeholders now correctly populated in monitor alert messages
+- Fix: **Spaced email handling** — emails with spaces renamed on panel before any v3 operation; search and dedup handle them correctly
+- Fix: **Emoji on iOS** — emoji in messages preserved correctly on iOS devices; SSL auto-applied after cert upload
+- Fix: **SSL nginx auto-reload** — renewal reloads Nginx automatically; fixed 500 error on root-owned cert destination
+- Fix: **Royalty dedup** — idle list deduped by email-per-server; synchronous scan replaces fragile background job
+- Fix: **Shadowsocks** — non-v3 update/delete operations restored; v3 last-user from client list fixed
+- Fix: **Pricing** — dynamic tier price no longer overwritten by package loader on re-open
+- Fix: **Ownership anchor** — client owner anchored to panel UUID so server/inbound edits don't lose ownership
+- Fix: **Server list stale** — server list refreshes correctly after editing a server
+
+Persian (فارسی):
+- ویژگی: **واتس‌اپ بات (OpenWA)** — اتصال Eve به گیت‌وی خود-میزبان OpenWA به‌عنوان جایگزین Baileys؛ ارسال پیام واتس‌اپ از طریق سرور لوکال خودتان
+- ویژگی: **حالت Warm-up** — افزایش تدریجی سقف ارسال روزانه واتس‌اپ طی N روز قابل تنظیم برای جلوگیری از بن شدن شماره جدید
+- ویژگی: **بات اعلان اتمام حجم/زمان** — اسکنر پس‌زمینه (هر ۳۰ دقیقه) که به‌صورت خودکار به کاربرانی که حجم یا زمان اشتراک‌شان رو به اتمام است پیام می‌دهد؛ آستانه، فاصله زمانی، و جلوگیری از ارسال تکراری قابل تنظیم است
+- ویژگی: **قالب‌های بات واتس‌اپ** — قالب‌های اختصاصی برای رویدادهای ساخت، تمدید، پایان، و اطلاع‌رسانی جداگانه از قالب‌های SMS
+- ویژگی: **Pace Gate** — حداقل فاصله اختیاری + تأخیر تصادفی بین ارسال‌های واتس‌اپ برای شبیه‌سازی رفتار انسانی (پیش‌فرض: غیرفعال)
+- ویژگی: **هشدار ریسک بن** — بنر هشدار برجسته هنگام انتخاب OpenWA با توصیه‌های استفاده ایمن
+- ویژگی: **نشان بدون مصرف در مانیتور** — کاربران بی‌فعالیت با چیپ مجزا نمایش داده می‌شوند؛ قالب Royalty مستقیم از جدول مانیتور ارسال می‌شود؛ شمارنده ارسال SMS/WA در هر ردیف
+- ویژگی: **قالب‌های مجزا واتس‌اپ/SMS** — قالب‌های اختصاصی ساخت و تمدید برای واتس‌اپ و SMS با دکمه تست ارسال
+- ویژگی: **بلوک‌های شرطی هدیه** — پلیس‌هولدرهای `{if_gift}…{/if_gift}` و `{gift_volume}` در همه ویرایشگرهای قالب
+- ویژگی: **آپلود رسانه در اعلان‌ها** — آپلود تصویر/ویدیو مستقیم در ویرایشگر پیام اعلان؛ نوع اعلان پاپ‌آپ مودال با برچسب دکمه سفارشی
+- ویژگی: **دکمه بکاپ دیتابیس** — اضافه شده به کارت‌های مدیریت سرور در صفحه Servers
+- ویژگی: **نشان مالک ریسلر** — فیلتر چندانتخابی مالک برای ادمین در صفحه Packages
+- ویژگی: **تاریخچه اشتراک** — خط تمدید فشرده، جدول صفحه‌بندی‌شده (۱۰ ردیف)، روزهای تمدید علامت‌گذاری شده
+- ویژگی: **جستجوی عدد فارسی/عربی** — باکس جستجو اعداد فارسی/عربی را خودکار به ASCII تبدیل می‌کند
+- ویژگی: **مودال "چرا؟"** — کارت سرورها خطاهای fetch را به زبان ساده توضیح می‌دهند
+- ویژگی: **آخرین کاربر v3** — فقط برای inbound های انتخاب‌شده نمایش داده می‌شود، با تغییر toggle به‌روزرسانی می‌شود
+- ویژگی: **دکمه آمار حجم** — اضافه شده به کارت‌های سرور v3
+- بهبود: **رندر تدریجی داشبورد** — ردیف‌ها به‌صورت دسته‌ای mount می‌شوند تا داشبورد قبل از لود کامل داده‌ها قابل استفاده باشد
+- بهبود: **کش نوشتاری** — ویرایش‌ها و تمدیدها فوراً کش حافظه را به‌روز می‌کنند برای همه انواع پنل
+- بهبود: **نوار پیشرفت آپلود** — پیشرفت واقعی هنگام آپلود بکاپ؛ سقف آپلود ۵۱۲ مگابایت
+- بهبود: **Streaming از طریق Nginx** — دانلود بکاپ‌های بزرگ بدون timeout از طریق X-Accel-Redirect
+- رفع: **CSRF در v3.3.1** — Eve قبل از لاگین `X-CSRF-Token` می‌گیرد؛ کاملاً backward compatible
+- رفع: **خود-درمانی http→https** — سرور ذخیره‌شده با `http://` روی `https://` retry می‌شود
+- رفع: **`{dashboard_link}` و `{sub_link}`** — این پلیس‌هولدرها اکنون در پیام‌های اعلان مانیتور درست پر می‌شوند
+- رفع: **ایمیل با فاصله** — ایمیل‌های دارای فاصله قبل از عملیات v3 روی پنل rename می‌شوند
+- رفع: **ایموجی در iOS** — ایموجی در پیام‌ها روی iOS درست حفظ می‌شود؛ SSL بعد از آپلود خودکار اعمال می‌شود
+- رفع: **بارگذاری مجدد Nginx پس از SSL** — تمدید SSL به‌صورت خودکار Nginx را reload می‌کند
+- رفع: **Shadowsocks** — عملیات update/delete برای پروتکل Shadowsocks غیر v3 بازیابی شد
+- رفع: **مالکیت کاربر** — مالک به UUID پنل وابسته شد تا ویرایش سرور/inbound مالکیت را از دست ندهد
+
+---
+
 # Eve - Xui Manager v1.9.7
 
 ## [1.9.7] - 2026-05-19
