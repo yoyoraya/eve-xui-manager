@@ -89,7 +89,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.5"
+APP_VERSION = "2.3.6"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -21756,15 +21756,9 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
         except Exception:
             db.session.rollback()
 
-        results = []
-        if server_dicts:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                future_to_id = {executor.submit(fetch_worker, s): s['id'] for s in server_dicts}
-                for future in concurrent.futures.as_completed(future_to_id):
-                    results.append(future.result())
-
-        results_by_id = {r[0]: r for r in results if isinstance(r, tuple) and len(r) >= 7}
-
+        # ── Seed working maps from the current cache so partial updates MERGE ──
+        # (a warm refresh keeps every server's data on screen and replaces it
+        #  server-by-server; a cold start fills in progressively from empty).
         existing_inbounds = GLOBAL_SERVER_DATA.get('inbounds') or []
         existing_by_server = defaultdict(list)
         for inbound in existing_inbounds:
@@ -21790,23 +21784,25 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
 
         now_iso = _utc_iso_now()
         new_by_server = dict(existing_by_server)
+        servers_by_id = {int(s.id): s for s in servers}
+        server_order = [int(s.id) for s in servers]
 
-        for srv in servers:
-            sid = int(srv.id)
+        def _commit_snapshot():
+            """Publish the current (possibly partial) state to GLOBAL_SERVER_DATA
+            so the dashboard renders servers as they finish instead of blocking on
+            the slowest panel. Cheap relative to the network fetches it follows."""
+            flat = []
+            for _sid in server_order:
+                flat.extend(new_by_server.get(_sid, []))
+            statuses = [status_map.get(_sid) or {"server_id": _sid, "success": False, "error": "No data"}
+                        for _sid in server_order]
+            GLOBAL_SERVER_DATA['inbounds'] = flat
+            GLOBAL_SERVER_DATA['stats'] = _recompute_global_stats_from_server_statuses(statuses)
+            GLOBAL_SERVER_DATA['servers_status'] = statuses
+            GLOBAL_SERVER_DATA['last_update'] = _utc_iso_now()
 
-            if sid in skipped_ids:
-                info = _backoff_get(sid)
-                st = status_map.get(sid) or {"server_id": sid}
-                st['reachable'] = False
-                st['reachable_error'] = (info.get('last_error') or 'Backoff')
-                st['reachable_checked_at'] = now_iso
-                st['backoff_until'] = int(info.get('next_allowed_at', 0) or 0)
-                status_map[sid] = st
-                continue
-
-            res = results_by_id.get(sid) or (sid, None, None, None, None, "Timeout", 'auto')
+        def _apply_result(sid, res):
             _, inbounds, online_index, status_payload, status_error, error, detected_type = res
-
             if error:
                 _backoff_record_failure(sid, error)
                 st = status_map.get(sid) or {"server_id": sid}
@@ -21819,7 +21815,6 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 st['reachable'] = False
                 st['reachable_error'] = error
                 st['reachable_checked_at'] = now_iso
-                # Always expose the error in panel_status_error so the UI badge shows it.
                 st['panel_status_error'] = (status_error or error)
                 st['panel_status_checked_at'] = now_iso
                 if status_payload:
@@ -21829,14 +21824,12 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                     st['xray_core'] = status_payload.get('xray_core')
                     st['online_count'] = status_payload.get('online_count')
                 status_map[sid] = st
-                # keep existing inbounds block (if any)
-                continue
+                return  # keep existing inbounds block (if any)
 
             _backoff_record_success(sid)
-
-            if persist_detected_panel_type(srv, detected_type):
-                app.logger.info(f"Detected panel type for server {srv.id} as {detected_type}")
-
+            srv = servers_by_id.get(sid)
+            if srv is not None and persist_detected_panel_type(srv, detected_type):
+                app.logger.info(f"Detected panel type for server {sid} as {detected_type}")
             if not isinstance(inbounds, list):
                 inbounds = []
             processed, stats = process_inbounds(inbounds, srv, admin_user, '*', {}, online_index=online_index)
@@ -21848,7 +21841,7 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
                 "server_id": sid,
                 "success": True,
                 "stats": stats,
-                "panel_type": srv.panel_type,
+                "panel_type": getattr(srv, 'panel_type', None),
                 "reachable": True,
                 "reachable_error": None,
                 "reachable_checked_at": now_iso,
@@ -21863,25 +21856,51 @@ def fetch_and_update_global_data(force: bool = False, server_ids=None):
             })
             status_map[sid] = st
 
-        # Flatten inbounds in stable order (server order)
-        all_inbounds = []
-        for srv in servers:
-            all_inbounds.extend(new_by_server.get(int(srv.id), []))
+        # Backoff-skipped servers: mark unreachable up-front (keep their cached inbounds).
+        for sid in skipped_ids:
+            info = _backoff_get(sid)
+            st = status_map.get(sid) or {"server_id": sid}
+            st['reachable'] = False
+            st['reachable_error'] = (info.get('last_error') or 'Backoff')
+            st['reachable_checked_at'] = now_iso
+            st['backoff_until'] = int(info.get('next_allowed_at', 0) or 0)
+            status_map[sid] = st
 
-        server_statuses = []
-        for srv in servers:
-            sid = int(srv.id)
-            server_statuses.append(status_map.get(sid) or {"server_id": sid, "success": False, "error": "No data"})
+        # Publish the seed/skip state immediately so a cold load shows structure fast.
+        _commit_snapshot()
 
-        total_stats = _recompute_global_stats_from_server_statuses(server_statuses)
+        # Fetch concurrently and commit after EACH server completes → the grid
+        # fills in progressively instead of waiting for the whole fan-out.
+        pending_ids = {int(s['id']) for s in server_dicts}
+        last_publish = 0.0
+        if server_dicts:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_id = {executor.submit(fetch_worker, s): int(s['id']) for s in server_dicts}
+                for future in concurrent.futures.as_completed(future_to_id):
+                    sid = future_to_id[future]
+                    pending_ids.discard(sid)
+                    try:
+                        res = future.result()
+                        if not (isinstance(res, tuple) and len(res) >= 7):
+                            res = (sid, None, None, None, None, "Timeout", 'auto')
+                    except Exception as e:
+                        res = (sid, None, None, None, None, str(e) or "Timeout", 'auto')
+                    try:
+                        _apply_result(sid, res)
+                    except Exception:
+                        app.logger.exception(f"Failed to apply fetch result for server {sid}")
+                    _commit_snapshot()
+                    nowt = time.time()
+                    if nowt - last_publish >= 1.0:
+                        publish_snapshot_to_redis()
+                        last_publish = nowt
 
-        GLOBAL_SERVER_DATA['inbounds'] = all_inbounds
-        GLOBAL_SERVER_DATA['stats'] = total_stats
-        GLOBAL_SERVER_DATA['servers_status'] = server_statuses
-        GLOBAL_SERVER_DATA['last_update'] = now_iso
+        # Defensive: any server that never produced a result → timeout entry.
+        for sid in list(pending_ids):
+            _apply_result(sid, (sid, None, None, None, None, "Timeout", 'auto'))
 
-        # Share the freshly-computed snapshot with the other workers via Redis
-        # (no-op when Redis is not configured/available).
+        # Final authoritative commit + publish to the other workers (no-op w/o Redis).
+        _commit_snapshot()
         publish_snapshot_to_redis()
 
     except Exception as e:

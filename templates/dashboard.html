@@ -1506,6 +1506,9 @@
     const serverRefreshControllers = new Map(); // serverId -> AbortController
     let activeRefreshJobId = null;
     let refreshJobPollTimer = null;
+    // True while a full refresh job is in flight — used to keep the skeleton up
+    // (instead of flashing "No servers") and to pull partial data progressively.
+    let _dashboardRefreshing = false;
     const refreshJobContext = new Map(); // jobId -> { serverId?: number|null }
     const postActionRefreshState = new Map(); // serverId -> { nextAllowedAt:number, timer:number|null }
     const lastUserCacheByServer = new Map(); // serverId -> { inboundId: email|null }
@@ -2871,6 +2874,7 @@
 
     function stopRefreshJobPolling() {
         activeRefreshJobId = null;
+        _dashboardRefreshing = false;
         if (refreshJobPollTimer) {
             clearTimeout(refreshJobPollTimer);
             refreshJobPollTimer = null;
@@ -2881,6 +2885,7 @@
         if (!jobId) return;
         if (activeRefreshJobId === jobId) return;
         activeRefreshJobId = jobId;
+        _dashboardRefreshing = true;
 
         if (refreshJobPollTimer) {
             clearTimeout(refreshJobPollTimer);
@@ -2889,6 +2894,10 @@
 
         const pollStart = Date.now();
         const MAX_POLL_MS = 120000;
+        // Cold load = grid had no data when this refresh started. While the
+        // server fetches panels (and commits the cache server-by-server), pull
+        // the partial snapshot each tick so the grid fills in progressively.
+        const startedCold = !(Array.isArray(allInboundsData) && allInboundsData.length > 0) && serverId === null;
 
         const pollOnce = async () => {
             if (!activeRefreshJobId) return;
@@ -2929,6 +2938,13 @@
                     refreshJobContext.delete(jobId);
                     handleRefreshError();
                     return;
+                }
+
+                // Still running: on a cold load, render whatever the server has
+                // committed so far so the grid fills server-by-server instead of
+                // sitting on the skeleton until the whole fan-out finishes.
+                if (startedCold) {
+                    await refreshData(true, { mode: 'cache', poll: false });
                 }
             } catch (e) {
                 // Keep polling; network hiccups shouldn't break the UI.
@@ -2984,6 +3000,9 @@
                 const isAsyncJobPending = Boolean(jobId && (jobState === 'queued' || jobState === 'running'));
                 const hasSnapshotOnScreen = Array.isArray(allInboundsData) && allInboundsData.length > 0;
                 const shouldApplySnapshotNow = !isAsyncJobPending || !poll || !hasSnapshotOnScreen;
+                // Mark "refreshing" before the first render so an empty cold-start
+                // payload keeps the skeleton instead of flashing "No servers".
+                if (isAsyncJobPending && poll) _dashboardRefreshing = true;
 
                 if (shouldApplySnapshotNow) {
                     allInboundsData = data.inbounds;
@@ -3409,6 +3428,9 @@
         let html = '';
 
         if (inbounds.length === 0 && (!pendingServers || pendingServers.length === 0)) {
+            // A refresh is still fetching panels — keep the skeleton up instead of
+            // briefly flashing "No servers added" before the data lands.
+            if (_dashboardRefreshing) { showDashboardSkeleton(); return; }
             container.innerHTML = `
                 <div class="empty-state">
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
