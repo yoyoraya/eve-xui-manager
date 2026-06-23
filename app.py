@@ -89,7 +89,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.8"
+APP_VERSION = "2.3.9"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -18987,6 +18987,58 @@ def test_sms_connection():
     if r.status_code == 200:
         return jsonify({'success': True, 'ready': True, 'message': 'Gateway reachable, key valid, and ready to send.'})
     return jsonify({'success': False, 'error': f'Gateway /ready returned HTTP {r.status_code}.'}), 400
+
+
+@app.route('/api/sms/test-send', methods=['POST'])
+@superadmin_required
+def sms_test_send():
+    """Send a real test SMS so the admin can confirm the gateway works end-to-end.
+
+    Recipient resolution (in order):
+      1) the logged-in superadmin's own Support SMS number (their profile), then
+      2) the panel-wide Support SMS number from the Contact section.
+    If neither is set, returns a helpful message telling them where to add one.
+    Bypasses the enabled/trigger/owner gates — it only needs the gateway set up.
+    """
+    cfg = _get_sms_runtime_settings()
+    if not (cfg.get('base_url') and cfg.get('api_key')):
+        return jsonify({'success': False,
+                        'error': 'GMweb gateway is not configured. Set the Base URL and API key (and Save) first.'}), 400
+
+    user = db.session.get(Admin, session['admin_id'])
+    own_raw = (getattr(user, 'support_sms', None) or '').strip()
+    contact_conf = db.session.get(SystemConfig, 'support_sms')
+    contact_raw = ((contact_conf.value if contact_conf else '') or '').strip()
+
+    source = None
+    recipient = ''
+    if own_raw:
+        recipient = _extract_iran_mobile_from_text(own_raw)
+        if recipient:
+            source = 'superadmin_profile'
+    if not recipient and contact_raw:
+        recipient = _extract_iran_mobile_from_text(contact_raw)
+        if recipient:
+            source = 'panel_contact'
+
+    if not recipient:
+        if own_raw or contact_raw:
+            bad = own_raw or contact_raw
+            return jsonify({'success': False,
+                            'error': f'The configured number ("{bad}") is not a valid Iranian mobile. Fix it in your profile (Support SMS) or in the Contact section.'}), 400
+        return jsonify({'success': False, 'needs_number': True,
+                        'error': 'No phone number set. Add your Support SMS number in your profile, or set the panel-wide Support SMS in the Contact section, then test again.'}), 400
+
+    text = ('EVE panel — test SMS ✅\n'
+            'پیام تستی پنل. اگر این پیام را دریافت کردید، اتوماسیون SMS درست کار می‌کند.')
+    res = _send_sms_via_gmweb(recipient, text, cfg)
+    if res.get('sent'):
+        src_label = 'your profile number' if source == 'superadmin_profile' else 'the panel contact number'
+        return jsonify({'success': True, 'recipient': recipient, 'source': source,
+                        'message': f'Test SMS sent to {recipient} ({src_label}).'})
+    return jsonify({'success': False, 'recipient': recipient,
+                    'error': f'Send failed ({res.get("reason") or "unknown"}).',
+                    'status_code': res.get('status_code')}), 400
 
 
 @app.route('/api/whatsapp/test-connection', methods=['POST'])

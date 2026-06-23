@@ -801,7 +801,14 @@
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <button id="sms-test-connection" class="btn btn-secondary" onclick="testSmsConnectionSettings()">Test Connection</button>
+                        <button id="sms-test-send" class="btn btn-primary" onclick="sendTestSms()">Send Test SMS</button>
                     </div>
+                </div>
+
+                <div class="form-group" style="background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px;">
+                    <strong>Send a test SMS</strong>
+                    <div style="margin-top: 4px; font-size: 0.85rem;">Sends a real test message to <strong>your own Support SMS number</strong> (set in your profile). If you haven't set one, it falls back to the panel-wide <strong>Support SMS</strong> in the Contact section. If neither is set, you'll be told where to add a number.</div>
+                    <div id="sms-test-result" style="margin-top: 8px; font-size: 0.85rem;"></div>
                 </div>
 
                 <div class="form-group" style="background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.3); border-radius: 10px; padding: 12px;">
@@ -2578,6 +2585,33 @@
             }
         } catch (e) {
             showToast('Network error', 'error');
+        }
+    }
+
+    async function sendTestSms() {
+        const btn = document.getElementById('sms-test-send');
+        const resultEl = document.getElementById('sms-test-result');
+        if (resultEl) { resultEl.textContent = ''; resultEl.style.color = ''; }
+        // Persist current form values first so the test uses the on-screen gateway.
+        const saved = await saveSmsSettings(true);
+        if (!saved) { showToast('Could not save SMS settings before testing', 'error'); return; }
+        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+        try {
+            const res = await fetch('/api/sms/test-send', { method: 'POST' });
+            const data = await res.json();
+            if (data && data.success) {
+                showToast(data.message || 'Test SMS sent', 'success');
+                if (resultEl) { resultEl.style.color = 'var(--success, #10b981)'; resultEl.textContent = '✅ ' + (data.message || 'Test SMS sent.'); }
+            } else {
+                const msg = (data && data.error) ? data.error : 'Test SMS failed';
+                showToast(msg, 'error');
+                if (resultEl) { resultEl.style.color = '#f87171'; resultEl.textContent = '⚠️ ' + msg; }
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+            if (resultEl) { resultEl.style.color = '#f87171'; resultEl.textContent = '⚠️ Network error'; }
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Send Test SMS'; }
         }
     }
 
