@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.18"
+APP_VERSION = "2.3.19"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -5009,9 +5009,11 @@ SMS_COOLDOWN_HOURS_ENDED_KEY       = 'sms_cooldown_hours_ended'
 SMS_EXPIRED_MAX_AGE_DAYS_KEY    = 'sms_expired_max_age_days'  # don't SMS accounts expired longer than this (0 = use Monitor hide_days)
 SMS_MIN_INTERVAL_SECONDS_KEY    = 'sms_min_interval_seconds'
 SMS_DAILY_LIMIT_KEY             = 'sms_daily_limit'
+SMS_SEND_PACE_SECONDS_KEY       = 'sms_send_pace_seconds'  # global gap between ANY two sends so the gateway doesn't return HTTP 429
 
 SMS_SEND_TRACKER = {'daily': {}, 'per_recipient': {}}
 SMS_SCAN_CANCEL = threading.Event()  # set → running scan aborts after current item
+SMS_LAST_SEND_TS = [0.0]             # monotonic-ish wall clock of the previous send (global pace)
 SMS_SEND_TRACKER_LOCK = threading.Lock()
 
 
@@ -5025,6 +5027,7 @@ def _get_sms_runtime_settings() -> dict:
         SMS_COOLDOWN_HOURS_EXPIRED_KEY, SMS_COOLDOWN_HOURS_ENDED_KEY,
         SMS_EXPIRED_MAX_AGE_DAYS_KEY,
         SMS_MIN_INTERVAL_SECONDS_KEY, SMS_DAILY_LIMIT_KEY,
+        SMS_SEND_PACE_SECONDS_KEY,
         SMS_TRIGGER_NEAR_EXPIRY_KEY, SMS_TRIGGER_LOW_VOLUME_KEY,
         SMS_TRIGGER_EXPIRED_KEY, SMS_TRIGGER_ENDED_KEY,
     ]
@@ -5080,6 +5083,7 @@ def _get_sms_runtime_settings() -> dict:
         'expired_max_age_days': _int(SMS_EXPIRED_MAX_AGE_DAYS_KEY, 30, lo=0, hi=3650),
         'min_interval_seconds': _int(SMS_MIN_INTERVAL_SECONDS_KEY, 30, lo=0, hi=3600),
         'daily_limit': _int(SMS_DAILY_LIMIT_KEY, 200, lo=1, hi=100000),
+        'send_pace_seconds': _float(SMS_SEND_PACE_SECONDS_KEY, 3.0, lo=0.0, hi=60.0),
     }
 
 
@@ -5477,7 +5481,29 @@ def _run_sms_depletion_scan(job_id: str | None = None, triggered_by: str = 'auto
             _sms_scan_inc('skipped_rate')
             continue
 
+        # Global pace: keep a gap between ANY two sends so we don't burst the
+        # gateway into HTTP 429 (it rate-limits rapid /send calls).
+        pace = float(cfg.get('send_pace_seconds') or 0)
+        if pace > 0 and SMS_LAST_SEND_TS[0] > 0:
+            gap = pace - (time.time() - SMS_LAST_SEND_TS[0])
+            if gap > 0:
+                time.sleep(min(gap, 60))
+
         res = _send_sms_via_gmweb(recipient, text_msg, cfg)
+        # Gateway rate-limited: back off once and retry. If still limited, stop the
+        # whole run rather than hammering it with the rest of the batch (the next
+        # scheduled scan resumes where this left off).
+        if (not res.get('sent')) and res.get('status_code') == 429:
+            time.sleep(5)
+            res = _send_sms_via_gmweb(recipient, text_msg, cfg)
+            if (not res.get('sent')) and res.get('status_code') == 429:
+                SMS_LAST_SEND_TS[0] = time.time()
+                _sms_scan_inc('failed')
+                _sms_log_row(jid, email_l, sid_norm, server_name, state, recipient, 'failed', 'http_429')
+                _sms_scan_set(stopped='gateway_rate_limited', state='done',
+                              finished_at=_utc_iso_now(), current=None)
+                return {'scanned': total_clients, 'sent': sent, 'stopped': 'gateway_rate_limited'}
+        SMS_LAST_SEND_TS[0] = time.time()
         if res.get('sent'):
             try:
                 db.session.add(WhatsappBotLog(email=email_l, server_id=(sid_norm or 0), event=event))
@@ -11652,6 +11678,7 @@ def settings_page():
                          sms_expired_max_age_days=sms_cfg.get('expired_max_age_days', 30),
                          sms_min_interval_seconds=sms_cfg.get('min_interval_seconds', 30),
                          sms_daily_limit=sms_cfg.get('daily_limit', 200),
+                         sms_send_pace_seconds=sms_cfg.get('send_pace_seconds', 3.0),
                          whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
                          whatsapp_enabled=whatsapp_cfg.get('enabled_requested', False),
                          whatsapp_provider=whatsapp_cfg.get('provider', 'baileys'),
@@ -19343,6 +19370,12 @@ def update_system_config():
                 sanitized_value = str(_parse_int(value, 30, min_value=0, max_value=3600))
             elif key == SMS_DAILY_LIMIT_KEY:
                 sanitized_value = str(_parse_int(value, 200, min_value=1, max_value=100000))
+            elif key == SMS_SEND_PACE_SECONDS_KEY:
+                try:
+                    _p = max(0.0, min(60.0, float(value)))
+                except (TypeError, ValueError):
+                    _p = 3.0
+                sanitized_value = str(_p)
             else:
                 sanitized_value = sanitize_html(str(value))
 

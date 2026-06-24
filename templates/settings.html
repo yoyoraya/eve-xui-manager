@@ -938,7 +938,7 @@
 
                 <div class="form-group">
                     <label>Rate limits</label>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
                         <div>
                             <small class="text-secondary">Min seconds between SMS to same number</small>
                             <input type="number" id="sms-min-interval" class="form-control" min="0" max="3600" value="{{ sms_min_interval_seconds }}">
@@ -947,7 +947,12 @@
                             <small class="text-secondary">Max SMS per day</small>
                             <input type="number" id="sms-daily-limit" class="form-control" min="1" max="100000" value="{{ sms_daily_limit }}">
                         </div>
+                        <div>
+                            <small class="text-secondary">Gap between any two sends (sec)</small>
+                            <input type="number" id="sms-send-pace" class="form-control" min="0" max="60" step="0.5" value="{{ sms_send_pace_seconds }}">
+                        </div>
                     </div>
+                    <small class="text-secondary" style="display:block;margin-top:4px;">The gateway returns HTTP 429 if sends are too fast. 3s ≈ 20 SMS/min. Increase if you still see 429 in the log.</small>
                 </div>
 
                 <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
@@ -2660,6 +2665,7 @@
             sms_expired_max_age_days: Number((document.getElementById('sms-expired-max-age-days') || {}).value || 30),
             sms_min_interval_seconds: Number((document.getElementById('sms-min-interval') || {}).value || 30),
             sms_daily_limit: Number((document.getElementById('sms-daily-limit') || {}).value || 200),
+            sms_send_pace_seconds: Number((document.getElementById('sms-send-pace') || {}).value || 3),
         };
     }
 
