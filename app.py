@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.31"
+APP_VERSION = "2.3.32"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -5106,18 +5106,30 @@ def _get_sms_runtime_settings() -> dict:
     }
 
 
+def _tehran_hour(now_utc=None) -> int:
+    """Current hour (0-23) in Asia/Tehran. Uses the real IANA zone so it stays
+    correct regardless of the panel's configured timezone (and any future DST
+    change); falls back to a fixed +3:30 offset only if zoneinfo is unavailable."""
+    base = now_utc or datetime.utcnow()
+    if ZoneInfo is not None:
+        try:
+            return base.replace(tzinfo=timezone.utc).astimezone(ZoneInfo('Asia/Tehran')).hour
+        except Exception:
+            pass
+    return (base + timedelta(hours=3, minutes=30)).hour
+
+
 def _sms_in_quiet_hours(cfg: dict, now_utc=None) -> bool:
-    """True when the current Tehran time falls inside the configured quiet window,
-    during which no automated SMS is sent. Handles windows that wrap past midnight
-    (e.g. 22 → 6). A zero-length window (start == end) means 'disabled'."""
+    """True when the current Asia/Tehran time falls inside the configured quiet
+    window, during which no automated SMS is sent. Handles windows that wrap past
+    midnight (e.g. 22 → 6). A zero-length window (start == end) means 'disabled'."""
     if not cfg.get('quiet_enabled'):
         return False
     start = int(cfg.get('quiet_start', 0)) % 24
     end = int(cfg.get('quiet_end', 0)) % 24
     if start == end:
         return False
-    teh = (now_utc or datetime.utcnow()) + timedelta(hours=3, minutes=30)
-    h = teh.hour
+    h = _tehran_hour(now_utc)
     if start < end:
         return start <= h < end
     return h >= start or h < end  # wraps midnight
