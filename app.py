@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.28"
+APP_VERSION = "2.3.29"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -6287,7 +6287,10 @@ class SmsSendLog(db.Model):
             'status': self.status,
             'reason': self.reason,
             'job_id': self.job_id,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
+            # Stored as naive UTC (datetime.utcnow). Emit an explicit 'Z' so the
+            # browser parses it as UTC and can convert to the viewer's timezone
+            # (Asia/Tehran) instead of mis-reading it as local time.
+            'created_at': (self.created_at.isoformat() + 'Z') if self.created_at else None,
         }
 
 

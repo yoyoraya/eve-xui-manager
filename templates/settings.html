@@ -2815,6 +2815,36 @@
         renew: '🔄 Renew', created: '✨ Created'
     };
 
+    // Server timestamps are UTC. Parse robustly: a naive ISO (no timezone) is
+    // treated as UTC since that's how the server stores it.
+    function _parseUtcDate(iso) {
+        if (!iso) return null;
+        let s = String(iso);
+        if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    // Format a log timestamp as a Jalali (Persian) date + Tehran-time clock,
+    // e.g. "1405/04/03 18:59:13". Latin digits keep it aligned with the rest of
+    // the table; falls back to the locale default if Intl/persian isn't available.
+    const _jalaliFmt = (() => {
+        try {
+            return new Intl.DateTimeFormat('fa-IR-u-ca-persian-nu-latn', {
+                timeZone: 'Asia/Tehran',
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            });
+        } catch (_) { return null; }
+    })();
+    function formatJalaliTehran(iso) {
+        const d = _parseUtcDate(iso);
+        if (!d) return iso || '';
+        try {
+            return _jalaliFmt ? _jalaliFmt.format(d) : d.toLocaleString();
+        } catch (_) { return d.toLocaleString(); }
+    }
+
     function _setSmsRunBtn(running) {
         const runBtn  = document.getElementById('sms-scan-run-btn');
         const stopBtn = document.getElementById('sms-scan-stop-btn');
@@ -2994,8 +3024,7 @@
             }
             const statusColor = { sent: '#22c55e', failed: '#ef4444', skipped: '#f59e0b' };
             body.innerHTML = logs.map(row => {
-                let when = row.created_at || '';
-                try { when = new Date(row.created_at).toLocaleString(); } catch (_) {}
+                const when = formatJalaliTehran(row.created_at);
                 const sc = statusColor[row.status] || '#94a3b8';
                 const statusTxt = row.reason ? `${row.status} (${row.reason})` : row.status;
                 return `<tr style="border-top:1px solid var(--border-color,#2a2a3a);">
