@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.25"
+APP_VERSION = "2.3.26"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -5097,8 +5097,11 @@ def _get_sms_runtime_settings() -> dict:
 
 
 def _account_has_reseller_owner(server_id, email) -> bool:
-    """True when the account is owned by a reseller — SMS automation must then
-    skip it. No ClientOwnership row ⇒ system/admin/superadmin account ⇒ eligible."""
+    """True only when the account's owner is an actual reseller — SMS automation
+    then skips it. A ClientOwnership row is written for EVERY creator (admin /
+    superadmin / reseller) for billing/tracking, so the row's mere existence is not
+    enough: admin and superadmin are system accounts and must stay eligible. We
+    flag the account only if at least one owning Admin has role == 'reseller'."""
     try:
         email_l = (email or '').strip().lower()
         if not email_l:
@@ -5107,10 +5110,12 @@ def _account_has_reseller_owner(server_id, email) -> bool:
             sid = int(server_id)
         except (TypeError, ValueError):
             sid = server_id
-        row = ClientOwnership.query.filter(
-            ClientOwnership.server_id == sid,
-            db.func.lower(ClientOwnership.client_email) == email_l,
-        ).first()
+        row = (db.session.query(ClientOwnership.id)
+               .join(Admin, Admin.id == ClientOwnership.reseller_id)
+               .filter(ClientOwnership.server_id == sid,
+                       db.func.lower(ClientOwnership.client_email) == email_l,
+                       Admin.role == 'reseller')
+               .first())
         return row is not None
     except Exception:
         return False
