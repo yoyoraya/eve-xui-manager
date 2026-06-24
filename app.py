@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.19"
+APP_VERSION = "2.3.20"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -4890,6 +4890,10 @@ def _run_whatsapp_depletion_scan() -> dict:
                 continue
             scanned += 1
 
+            # Operator opt-out: comment tagged #nopm ⇒ no WhatsApp private message.
+            if _comment_opted_out(client.get('comment'), 'nopm'):
+                continue
+
             recipient = _extract_iran_mobile_from_text(email, client.get('comment') or '')
             if not recipient:
                 continue
@@ -5121,6 +5125,22 @@ def _recent_bot_message_within(email_l: str, sid_norm, hours: int) -> bool:
         ).first() is not None
     except Exception:
         return False
+
+
+def _comment_opted_out(comment: str | None, *tags: str) -> bool:
+    """True if the client comment contains an opt-out hashtag (e.g. #nosms / #nopm)
+    anywhere in the text — even mixed with a phone number or other notes. The tag
+    is matched as a token: a trailing ASCII letter/digit (#nosmsx, #nosms2) does NOT
+    count, but a space / end / Persian char right after the tag does. '#' optionally
+    followed by a space so '# nosms' also works."""
+    s = (comment or '').lower()
+    if '#' not in s:
+        return False
+    for t in tags:
+        core = re.escape(t.lstrip('#').lower())
+        if re.search(r'#\s*' + core + r'(?![a-z0-9])', s):
+            return True
+    return False
 
 
 def _clear_message_cooldown(email: str, server_id) -> None:
@@ -5420,6 +5440,11 @@ def _run_sms_depletion_scan(job_id: str | None = None, triggered_by: str = 'auto
                     days_ago = 0
                 if days_ago > expired_max_age:
                     continue
+
+            # Operator opt-out: client comment tagged #nosms ⇒ never SMS them,
+            # regardless of state/enable/expiry (e.g. user said "won't renew").
+            if _comment_opted_out(client.get('comment'), 'nosms'):
+                continue
 
             recipient = _extract_iran_mobile_from_text(email, client.get('comment') or '')
             if not recipient:
