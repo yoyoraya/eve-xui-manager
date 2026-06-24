@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.33"
+APP_VERSION = "2.3.34"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -17355,13 +17355,21 @@ def reseller_statement():
                 row_d['eff_volume_gb'] = eff_vol
                 row_d['eff_days'] = eff_days
                 row_d['is_gift'] = is_gift
-                b = by_package.setdefault(pname, {'count': 0, 'spent': 0, 'volume_gb': 0, 'days': 0, 'gifts': 0})
+                b = by_package.setdefault(pname, {'count': 0, 'spent': 0, 'volume_gb': 0, 'days': 0, 'gifts': 0, 'items': []})
                 b['count'] += 1
                 b['spent'] += charge
                 b['volume_gb'] += eff_vol
                 b['days'] += eff_days
                 if is_gift:
                     b['gifts'] += 1
+                # Embed the per-user line items so the UI drill-down doesn't have to
+                # re-match anything client-side.
+                b['items'].append({
+                    'email': r.client_email or '—',
+                    'vol': eff_vol, 'days': eff_days,
+                    'amount': charge, 'gift': is_gift, 'type': t,
+                    'date': format_jalali(r.created_at),
+                })
             sname = (r.server.name if r.server else None) or '—'
             sb = by_server.setdefault(sname, {'count': 0, 'spent': 0})
             sb['count'] += 1

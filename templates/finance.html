@@ -2247,25 +2247,24 @@
             URL.revokeObjectURL(a.href);
         });
 
-        // Build the per-user breakdown for a package (the drill-down rows).
-        function pkgDetailRows(pkgName) {
-            const rs = (lastData.rows || []).filter((r) =>
-                (r.type === 'purchase' || r.type === 'renew') && (r.pkg || '—') === pkgName);
-            if (!rs.length) {
+        // Build the per-user breakdown for a package from the items the server
+        // embedded in each package group (no client-side re-matching).
+        function pkgDetailRows(pkg) {
+            const items = (pkg && pkg.items) || [];
+            if (!items.length) {
                 return '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:10px;">No line items.</td></tr>';
             }
-            return rs.map((r) => {
-                const amt = Math.abs(Number(r.amount || 0));
-                const amtCell = r.is_gift
+            return items.map((it) => {
+                const amtCell = it.gift
                     ? '<span style="color:#a78bfa;font-weight:600;">🎁 Gift</span>'
-                    : money(amt);
-                const badge = r.type === 'renew' ? '🔄' : '✨';
+                    : money(Math.abs(Number(it.amount || 0)));
+                const badge = it.type === 'renew' ? '🔄' : '✨';
                 return `<tr>
-                    <td>${badge} ${escapeAttr(r.client_email || '—')}</td>
-                    <td>${r.eff_volume_gb != null ? r.eff_volume_gb : 0}</td>
-                    <td>${r.eff_days != null ? r.eff_days : 0}</td>
+                    <td>${badge} ${escapeAttr(it.email || '—')}</td>
+                    <td>${it.vol != null ? it.vol : 0}</td>
+                    <td>${it.days != null ? it.days : 0}</td>
                     <td>${amtCell}</td>
-                    <td>${escapeAttr(r.date_jalali || '')}</td></tr>`;
+                    <td>${escapeAttr(it.date || '')}</td></tr>`;
             }).join('');
         }
 
@@ -2316,7 +2315,7 @@
                     <tr class="stmt-pkg-detail" style="display:none;"><td colspan="5" style="padding:0;background:rgba(148,163,184,0.05);">
                         <table class="stmt-subtable"><thead><tr>
                             <th>User</th><th>GB</th><th>Days</th><th>Amount</th><th>Date</th>
-                        </tr></thead><tbody>${pkgDetailRows(p.package)}</tbody></table>
+                        </tr></thead><tbody>${pkgDetailRows(p)}</tbody></table>
                     </td></tr>`;
                 }).join('')
                 : '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">—</td></tr>';
