@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.20"
+APP_VERSION = "2.3.21"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -5141,6 +5141,17 @@ def _comment_opted_out(comment: str | None, *tags: str) -> bool:
         if re.search(r'#\s*' + core + r'(?![a-z0-9])', s):
             return True
     return False
+
+
+def _toggle_optout_tags(comment: str | None, add: bool) -> str:
+    """Add or remove the #nosms #nopm opt-out tags in a client comment, preserving
+    any phone number / other notes already there. Idempotent (existing tags are
+    stripped first, then re-added only when add=True)."""
+    cleaned = re.sub(r'\s*#\s*(?:nosms|nopm)(?![a-z0-9])', '', comment or '',
+                     flags=re.IGNORECASE).strip()
+    if add:
+        return (cleaned + ' #nosms #nopm').strip()
+    return cleaned
 
 
 def _clear_message_cooldown(email: str, server_id) -> None:
@@ -12224,6 +12235,14 @@ def _toggle_client_core(user, server, inbound_id: int, email: str, enable: bool)
                 return False, "Client not found", 404
 
         target_client['enable'] = bool(enable)
+        # Manual enable/disable doubles as an SMS/WhatsApp opt-out switch: disabling
+        # tags the comment with #nosms #nopm, enabling removes them. x-ui's own
+        # auto-disable on expiry does NOT pass through here, so an expired account
+        # is never auto-opted-out by this.
+        try:
+            target_client['comment'] = _toggle_optout_tags(target_client.get('comment'), add=not enable)
+        except Exception:
+            pass
         client_identifier = target_client.get('id') or target_client.get('password') or target_client.get('email')
 
         # v3: enable/disable via the first-class client update (legacy updateClient is 404).
