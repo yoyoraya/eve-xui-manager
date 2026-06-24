@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.30"
+APP_VERSION = "2.3.31"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -5019,6 +5019,12 @@ SMS_EXPIRED_MAX_AGE_DAYS_KEY    = 'sms_expired_max_age_days'  # don't SMS accoun
 SMS_MIN_INTERVAL_SECONDS_KEY    = 'sms_min_interval_seconds'
 SMS_DAILY_LIMIT_KEY             = 'sms_daily_limit'
 SMS_SEND_PACE_SECONDS_KEY       = 'sms_send_pace_seconds'  # global gap between ANY two sends so the gateway doesn't return HTTP 429
+# Quiet hours (Tehran time): no automated SMS goes out inside this window. Scan
+# candidates simply wait for the next run after the window; transactional
+# create/renew messages are parked in PendingSms and flushed once it ends.
+SMS_QUIET_ENABLED_KEY = 'sms_quiet_enabled'
+SMS_QUIET_START_KEY   = 'sms_quiet_start_hour'  # 0-23, inclusive
+SMS_QUIET_END_KEY     = 'sms_quiet_end_hour'    # 0-23, exclusive
 
 SMS_SEND_TRACKER = {'daily': {}, 'per_recipient': {}}
 SMS_SCAN_CANCEL = threading.Event()  # set → running scan aborts after current item
@@ -5039,6 +5045,7 @@ def _get_sms_runtime_settings() -> dict:
         SMS_SEND_PACE_SECONDS_KEY,
         SMS_TRIGGER_NEAR_EXPIRY_KEY, SMS_TRIGGER_LOW_VOLUME_KEY,
         SMS_TRIGGER_EXPIRED_KEY, SMS_TRIGGER_ENDED_KEY,
+        SMS_QUIET_ENABLED_KEY, SMS_QUIET_START_KEY, SMS_QUIET_END_KEY,
     ]
     c = _get_system_configs_batch(keys)
 
@@ -5093,7 +5100,27 @@ def _get_sms_runtime_settings() -> dict:
         'min_interval_seconds': _int(SMS_MIN_INTERVAL_SECONDS_KEY, 30, lo=0, hi=3600),
         'daily_limit': _int(SMS_DAILY_LIMIT_KEY, 200, lo=1, hi=100000),
         'send_pace_seconds': _float(SMS_SEND_PACE_SECONDS_KEY, 3.0, lo=0.0, hi=60.0),
+        'quiet_enabled': _bool(SMS_QUIET_ENABLED_KEY, False),
+        'quiet_start': _int(SMS_QUIET_START_KEY, 2, lo=0, hi=23),
+        'quiet_end': _int(SMS_QUIET_END_KEY, 8, lo=0, hi=23),
     }
+
+
+def _sms_in_quiet_hours(cfg: dict, now_utc=None) -> bool:
+    """True when the current Tehran time falls inside the configured quiet window,
+    during which no automated SMS is sent. Handles windows that wrap past midnight
+    (e.g. 22 → 6). A zero-length window (start == end) means 'disabled'."""
+    if not cfg.get('quiet_enabled'):
+        return False
+    start = int(cfg.get('quiet_start', 0)) % 24
+    end = int(cfg.get('quiet_end', 0)) % 24
+    if start == end:
+        return False
+    teh = (now_utc or datetime.utcnow()) + timedelta(hours=3, minutes=30)
+    h = teh.hour
+    if start < end:
+        return start <= h < end
+    return h >= start or h < end  # wraps midnight
 
 
 def _account_has_reseller_owner(server_id, email) -> bool:
@@ -5292,14 +5319,26 @@ def _fire_automation_sms(event_name: str, server_id, email: str, template_type: 
                 if not recipient:
                     _log('', 'skipped', 'no_recipient')
                     return
-                slot_ok, slot_reason = _sms_take_send_slot(recipient, cfg)
-                if not slot_ok:
-                    _log(recipient, 'skipped', slot_reason)
-                    return
                 content = _get_sms_template_content(template_type, default_template)
                 text = _render_text_template(content, tpl_vars)
                 if not (text or '').strip():
                     _log(recipient, 'skipped', 'empty_message')
+                    return
+                # Quiet hours: park the message and flush it after the window ends,
+                # so the customer isn't texted at 3am but still gets the confirmation.
+                if _sms_in_quiet_hours(cfg):
+                    try:
+                        db.session.add(PendingSms(
+                            recipient=recipient, text=text, event_name=event_name,
+                            email=email_l, server_id=(sid_norm or 0), server_name=server_name))
+                        db.session.commit()
+                        _log(recipient, 'queued', 'quiet_hours')
+                    except Exception:
+                        db.session.rollback()
+                    return
+                slot_ok, slot_reason = _sms_take_send_slot(recipient, cfg)
+                if not slot_ok:
+                    _log(recipient, 'skipped', slot_reason)
                     return
                 res = _send_sms_via_gmweb(recipient, text, cfg)
                 if res.get('sent'):
@@ -5455,6 +5494,11 @@ def _run_sms_depletion_scan(job_id: str | None = None, triggered_by: str = 'auto
     if not (cfg.get('base_url') and cfg.get('api_key')):
         _sms_scan_set(state='idle', reason='gateway_not_configured', finished_at=now_iso)
         return {'scanned': 0, 'sent': 0, 'reason': 'gateway_not_configured'}
+    # Quiet hours: don't send now. Candidates keep their cooldown untouched, so the
+    # next run after the window picks them up — a true "send after 8am" queue.
+    if _sms_in_quiet_hours(cfg):
+        _sms_scan_set(state='idle', reason='quiet_hours', finished_at=now_iso)
+        return {'scanned': 0, 'sent': 0, 'reason': 'quiet_hours'}
 
     jid = job_id or uuid.uuid4().hex
     cooldown_hours = cfg.get('cooldown_hours') or {}
@@ -5675,11 +5719,60 @@ def _sms_log_row(job_id, email_l, sid_norm, server_name, state, recipient, statu
             pass
 
 
+def _flush_pending_sms() -> int:
+    """Send SMS that were parked during quiet hours, oldest first, once the window
+    has ended. Respects the same per-recipient slot, daily limit, global pace and
+    429 back-off as the scan. Returns the number sent. Safe to call every tick."""
+    cfg = _get_sms_runtime_settings()
+    if not cfg.get('enabled') or not (cfg.get('base_url') and cfg.get('api_key')):
+        return 0
+    if _sms_in_quiet_hours(cfg):
+        return 0  # still inside the window — keep holding
+    try:
+        rows = PendingSms.query.order_by(PendingSms.created_at.asc()).limit(500).all()
+    except Exception:
+        return 0
+    sent = 0
+    for r in rows:
+        slot_ok, slot_reason = _sms_take_send_slot(r.recipient, cfg)
+        if not slot_ok:
+            if slot_reason == 'daily_limit_reached':
+                break  # out of budget today; retry next tick
+            continue
+        pace = float(cfg.get('send_pace_seconds') or 0)
+        if pace > 0 and SMS_LAST_SEND_TS[0] > 0:
+            gap = pace - (time.time() - SMS_LAST_SEND_TS[0])
+            if gap > 0:
+                time.sleep(min(gap, 60))
+        res = _send_sms_via_gmweb(r.recipient, r.text, cfg)
+        if (not res.get('sent')) and res.get('status_code') == 429:
+            time.sleep(5)
+            res = _send_sms_via_gmweb(r.recipient, r.text, cfg)
+        SMS_LAST_SEND_TS[0] = time.time()
+        if (not res.get('sent')) and res.get('status_code') == 429:
+            break  # gateway throttling — stop, the rest stays queued for next tick
+        try:
+            if res.get('sent'):
+                _sms_log_row(None, r.email, r.server_id, r.server_name, r.event_name, r.recipient, 'sent', 'quiet_flush')
+                sent += 1
+            else:
+                _sms_log_row(None, r.email, r.server_id, r.server_name, r.event_name, r.recipient, 'failed', res.get('reason'))
+            db.session.delete(r)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    return sent
+
+
 def sms_bot_worker():
     """Background loop running the SMS near-depletion scan periodically."""
     while True:
         try:
             with app.app_context():
+                # First drain anything parked during quiet hours (if the window ended).
+                flushed = _flush_pending_sms()
+                if flushed:
+                    app.logger.info(f"[sms-bot] flushed {flushed} queued (quiet-hours) SMS")
                 result = _run_sms_depletion_scan()
                 if result.get('sent'):
                     app.logger.info(f"[sms-bot] depletion scan sent={result.get('sent')} scanned={result.get('scanned')}")
@@ -6300,6 +6393,22 @@ class SmsSendLog(db.Model):
             # (Asia/Tehran) instead of mis-reading it as local time.
             'created_at': (self.created_at.isoformat() + 'Z') if self.created_at else None,
         }
+
+
+class PendingSms(db.Model):
+    """Transactional create/renew SMS that arrived during quiet hours. Parked here
+    and flushed once the quiet window ends, so a confirmation is never lost nor
+    sent at 3am. The depletion scan re-queues itself naturally, so only the
+    one-shot transactional sends need this."""
+    __tablename__ = 'pending_sms'
+    id = db.Column(db.Integer, primary_key=True)
+    recipient = db.Column(db.String(32), nullable=False)   # full mobile to send to
+    text = db.Column(db.Text, nullable=False)
+    event_name = db.Column(db.String(32), nullable=False)  # 'renew' | 'created'
+    email = db.Column(db.String(255))
+    server_id = db.Column(db.Integer, default=0)
+    server_name = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 def _add_health_log(level, category, message, action_taken=None, details=None, resolved=False):
@@ -11840,6 +11949,9 @@ def settings_page():
                          sms_min_interval_seconds=sms_cfg.get('min_interval_seconds', 30),
                          sms_daily_limit=sms_cfg.get('daily_limit', 200),
                          sms_send_pace_seconds=sms_cfg.get('send_pace_seconds', 3.0),
+                         sms_quiet_enabled=sms_cfg.get('quiet_enabled', False),
+                         sms_quiet_start=sms_cfg.get('quiet_start', 2),
+                         sms_quiet_end=sms_cfg.get('quiet_end', 8),
                          whatsapp_deployment_region=whatsapp_cfg.get('deployment_region', 'outside'),
                          whatsapp_enabled=whatsapp_cfg.get('enabled_requested', False),
                          whatsapp_provider=whatsapp_cfg.get('provider', 'baileys'),
@@ -19655,6 +19767,10 @@ def update_system_config():
                 except (TypeError, ValueError):
                     _p = 3.0
                 sanitized_value = str(_p)
+            elif key == SMS_QUIET_ENABLED_KEY:
+                sanitized_value = 'true' if _parse_bool(value) else 'false'
+            elif key in {SMS_QUIET_START_KEY, SMS_QUIET_END_KEY}:
+                sanitized_value = str(_parse_int(value, 0, min_value=0, max_value=23))
             else:
                 sanitized_value = sanitize_html(str(value))
 
@@ -19786,6 +19902,9 @@ def sms_scan_run():
         return jsonify({'success': False, 'error': 'GMweb gateway is not configured.'}), 400
     if not any(cfg.get(f'trigger_{s}') for s in ('near_expiry', 'low_volume', 'expired', 'ended')):
         return jsonify({'success': False, 'error': 'No state triggers are enabled (near expiry / low volume / expired / ended).'}), 400
+    if _sms_in_quiet_hours(cfg):
+        return jsonify({'success': False,
+                        'error': f"Quiet hours are active ({int(cfg.get('quiet_start', 0)):02d}:00–{int(cfg.get('quiet_end', 0)):02d}:00 Tehran). Sends are paused and resume automatically after the window. Turn off quiet hours to send now."}), 400
 
     running_job = _sms_scan_snapshot()
     if running_job.get('state') == 'running':

@@ -955,6 +955,32 @@
                     <small class="text-secondary" style="display:block;margin-top:4px;">The gateway returns HTTP 429 if sends are too fast. 3s ≈ 20 SMS/min. Increase if you still see 429 in the log.</small>
                 </div>
 
+                <div class="form-group">
+                    <label>Quiet hours (no SMS at night)</label>
+                    <div class="refresh-toggle" style="gap:10px;margin-bottom:8px;">
+                        <label class="toggle-switch" style="margin:0;">
+                            <input type="checkbox" id="sms-quiet-enabled" {% if sms_quiet_enabled %}checked{% endif %}>
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-label">Hold sends during these hours</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+                        <div>
+                            <small class="text-secondary">From (hour, Tehran)</small>
+                            <input type="number" id="sms-quiet-start" class="form-control" min="0" max="23" value="{{ sms_quiet_start }}">
+                        </div>
+                        <div>
+                            <small class="text-secondary">Until (hour, Tehran)</small>
+                            <input type="number" id="sms-quiet-end" class="form-control" min="0" max="23" value="{{ sms_quiet_end }}">
+                        </div>
+                    </div>
+                    <small class="text-secondary" style="display:block;margin-top:4px;">
+                        Example: <strong>2 → 8</strong> means no SMS between 2:00 and 8:00 AM. Messages wait in the queue;
+                        the scan picks them up after the window, and create/renew texts are flushed automatically once it ends.
+                        Times are Tehran (UTC+3:30), 24-hour. A window can cross midnight (e.g. 23 → 6).
+                    </small>
+                </div>
+
                 <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
                     <button class="btn btn-primary" onclick="saveSmsSettings()">Save SMS Settings</button>
                 </div>
@@ -2784,6 +2810,9 @@
             sms_min_interval_seconds: Number((document.getElementById('sms-min-interval') || {}).value || 30),
             sms_daily_limit: Number((document.getElementById('sms-daily-limit') || {}).value || 200),
             sms_send_pace_seconds: Number((document.getElementById('sms-send-pace') || {}).value || 3),
+            sms_quiet_enabled: !!(document.getElementById('sms-quiet-enabled') || {}).checked,
+            sms_quiet_start_hour: Number((document.getElementById('sms-quiet-start') || {}).value || 0),
+            sms_quiet_end_hour: Number((document.getElementById('sms-quiet-end') || {}).value || 0),
         };
     }
 
@@ -3022,7 +3051,7 @@
                 _renderSmsLogPager();
                 return;
             }
-            const statusColor = { sent: '#22c55e', failed: '#ef4444', skipped: '#f59e0b' };
+            const statusColor = { sent: '#22c55e', failed: '#ef4444', skipped: '#f59e0b', queued: '#38bdf8' };
             body.innerHTML = logs.map(row => {
                 const when = formatJalaliTehran(row.created_at);
                 const sc = statusColor[row.status] || '#94a3b8';
