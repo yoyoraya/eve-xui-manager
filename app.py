@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.39"
+APP_VERSION = "2.3.40"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -5281,9 +5281,13 @@ def _sms_take_send_slot(recipient: str, cfg: dict) -> tuple[bool, str | None]:
     return True, None
 
 
-def _send_sms_via_gmweb(to: str, text: str, cfg: dict | None = None) -> dict:
+def _send_sms_via_gmweb(to: str, text: str, cfg: dict | None = None, priority: str | None = None) -> dict:
     """POST a single SMS to the GMweb-API gateway. The gateway queues it and
-    returns 202 {jobId}; we treat 200/202 as accepted and don't track delivery."""
+    returns 202 {jobId}; we treat 200/202 as accepted and don't track delivery.
+
+    priority='high' tells the gateway to jump the queue (transactional create/renew
+    confirmations go out next, ahead of a running bulk reminder campaign). Omit for
+    normal FIFO (the bulk scan)."""
     cfg = cfg or _get_sms_runtime_settings()
     out = {'sent': False, 'reason': None, 'status_code': None}
     base = (cfg.get('base_url') or '').strip().rstrip('/')
@@ -5291,10 +5295,13 @@ def _send_sms_via_gmweb(to: str, text: str, cfg: dict | None = None) -> dict:
     if not base or not api_key:
         out['reason'] = 'gateway_not_configured'
         return out
+    payload = {'to': to, 'text': text}
+    if priority:
+        payload['priority'] = priority
     try:
         resp = requests.post(
             f"{base}/send",
-            json={'to': to, 'text': text},
+            json=payload,
             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
             timeout=int(cfg.get('timeout_seconds') or 15),
         )
@@ -5376,7 +5383,9 @@ def _fire_automation_sms(event_name: str, server_id, email: str, template_type: 
                 if not slot_ok:
                     _log(recipient, 'skipped', slot_reason)
                     return
-                res = _send_sms_via_gmweb(recipient, text, cfg)
+                # Transactional create/renew: high priority so the customer who just
+                # paid gets their confirmation next, ahead of any running bulk scan.
+                res = _send_sms_via_gmweb(recipient, text, cfg, priority='high')
                 if res.get('sent'):
                     _log(recipient, 'sent', None)
                 else:
@@ -5796,10 +5805,10 @@ def _flush_pending_sms() -> int:
             gap = pace - (time.time() - SMS_LAST_SEND_TS[0])
             if gap > 0:
                 time.sleep(min(gap, 60))
-        res = _send_sms_via_gmweb(r.recipient, r.text, cfg)
+        res = _send_sms_via_gmweb(r.recipient, r.text, cfg, priority='high')
         if (not res.get('sent')) and res.get('status_code') == 429:
             time.sleep(5)
-            res = _send_sms_via_gmweb(r.recipient, r.text, cfg)
+            res = _send_sms_via_gmweb(r.recipient, r.text, cfg, priority='high')
         SMS_LAST_SEND_TS[0] = time.time()
         if (not res.get('sent')) and res.get('status_code') == 429:
             break  # gateway throttling — stop, the rest stays queued for next tick
@@ -20002,7 +20011,7 @@ def sms_test_send():
 
     text = ('EVE panel — test SMS ✅\n'
             'پیام تستی پنل. اگر این پیام را دریافت کردید، اتوماسیون SMS درست کار می‌کند.')
-    res = _send_sms_via_gmweb(recipient, text, cfg)
+    res = _send_sms_via_gmweb(recipient, text, cfg, priority='high')
     if res.get('sent'):
         src_label = 'your profile number' if source == 'superadmin_profile' else 'the panel contact number'
         return jsonify({'success': True, 'recipient': recipient, 'source': source,
