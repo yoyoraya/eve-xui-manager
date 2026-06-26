@@ -3017,7 +3017,7 @@
 
     function pollSmsScanStatus() {
         if (smsScanPollTimer) clearTimeout(smsScanPollTimer);
-        fetch('/api/sms/scan/status')
+        fetch('/api/sms/scan/status?_=' + Date.now(), { cache: 'no-store' })
             .then(r => r.json())
             .then(data => {
                 const job = (data && data.job) || {};
@@ -3095,7 +3095,8 @@
         if (!body) return;
         try {
             const offset = smsLogPage * SMS_LOG_PAGE_SIZE;
-            const res = await fetch(`/api/sms/logs?limit=${SMS_LOG_PAGE_SIZE}&offset=${offset}`);
+            // cache-bust + no-store so the browser never serves a stale log.
+            const res = await fetch(`/api/sms/logs?limit=${SMS_LOG_PAGE_SIZE}&offset=${offset}&_=${Date.now()}`, { cache: 'no-store' });
             const data = await res.json();
             const logs = (data && data.logs) || [];
             smsLogTotal = Number((data && data.total) || logs.length);
@@ -5969,8 +5970,30 @@
             // Show recent sends and resume progress if a scan is in flight.
             if (typeof loadSmsLogs === 'function') loadSmsLogs();
             if (typeof pollSmsScanStatus === 'function') pollSmsScanStatus();
+            startSmsLogAuto();
+        } else {
+            stopSmsLogAuto();
         }
     };
+
+    // Keep the log live while the SMS tab is open: refresh every 5s, newest page
+    // only (don't yank the user off a page they paged back to), paused when the
+    // tab/window is hidden. No-store fetch already prevents stale browser cache.
+    let _smsLogAutoTimer = null;
+    function startSmsLogAuto() {
+        stopSmsLogAuto();
+        _smsLogAutoTimer = setInterval(() => {
+            if (document.hidden) return;
+            if (typeof smsLogPage === 'number' && smsLogPage !== 0) return;
+            if (typeof loadSmsLogs === 'function') loadSmsLogs();
+        }, 5000);
+    }
+    function stopSmsLogAuto() {
+        if (_smsLogAutoTimer) { clearInterval(_smsLogAutoTimer); _smsLogAutoTimer = null; }
+    }
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && _smsLogAutoTimer && smsLogPage === 0 && typeof loadSmsLogs === 'function') loadSmsLogs();
+    });
 </script>
 
 <script nonce="{{ csp_nonce }}">

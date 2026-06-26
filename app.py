@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.3.44"
+APP_VERSION = "2.3.45"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -20305,8 +20305,12 @@ def sms_logs():
         q = q.filter(SmsSendLog.state == state_filter)
     total = q.count()
     rows = q.order_by(SmsSendLog.created_at.desc()).offset(offset).limit(limit).all()
-    return jsonify({'success': True, 'logs': [r.to_dict() for r in rows],
+    resp = jsonify({'success': True, 'logs': [r.to_dict() for r in rows],
                     'total': total, 'offset': offset, 'limit': limit})
+    # Never let a proxy/browser serve a stale log — it must always reflect now.
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 
 @app.route('/api/whatsapp/test-connection', methods=['POST'])
