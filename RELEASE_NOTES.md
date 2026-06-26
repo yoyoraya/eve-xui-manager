@@ -1,4 +1,32 @@
-# Eve - Xui Manager v2.3.2
+# Eve - Xui Manager v2.4.0
+
+## [2.4.0] - 2026-06-26
+
+A big release since **2.3.0**: a brand-new **SMS Automation** subsystem, **3x-ui v3.4+** support, reseller **finance statements**, and major dashboard **performance** work.
+
+English:
+- 📲 **SMS Automation (GMweb / Google Messages gateway)** — auto-send on **create**, **renew**, and **near-depletion** (low-volume / near-expiry / expired / volume-ended) using your own SMS templates
+- 👑 **Royalty SMS** — nudge owner-less *idle* accounts (active, zero traffic in the window). A **cap-fair queue** spreads a huge list (e.g. 1500 users) over several days, **each user once**, fully logged
+- 🧾 **Send queue & live log** — paginated, **Jalali + Tehran** times, auto-refresh, always-fresh; **Send Test SMS**, **Start now**, **Stop & disable**, live progress
+- 🌙 **Quiet hours**, ⏱️ **cooldowns** (shared with WhatsApp), **429 backoff**, **Idempotency-Key** (no double-send)
+- 🔒 **Owner-only**: never texts reseller-owned accounts · 🚫 **`#nosms` / `#nopm`** opt-out tags (auto-managed on disable/enable/renew)
+- 🧩 **3x-ui v3.4 / v3.4.1**: account creation fixed for node-hosted panels (default `security=auto`); renew/read/subscription verified
+- 💰 **Reseller finance statement** — accounts / cost / packages, per-package drill-down, "should-deposit"
+- 🔐 **Reseller permissions** — gate **Free** create/renew/reset and **WhatsApp automation** per reseller
+- ⚡ **Performance** — progressive server-by-server dashboard load, no per-request deepcopy, gzip/br compression
+- 🛠️ **Fixes** — real panel error on renew 400 (e.g. Duplicate subId), v3 "Assigned inbounds", /admins 500, mobile/desktop responsive settings, setup.sh backup pruning, i18n labels
+
+فارسی:
+- 📲 **اتوماسیون SMS (گیت‌وی GMweb / Google Messages)** — ارسال خودکار هنگام **ساخت**، **تمدید** و **نزدیک اتمام** (حجم کم / نزدیک انقضا / منقضی / اتمام حجم) با تمپلیت‌های خودت
+- 👑 **SMS رویالتی** — یادآوری به اکانت‌های idle بدون مالک (فعال ولی بدون مصرف در بازه). **صف منصفانه با سقف روزانه** یک لیست بزرگ (مثلاً ۱۵۰۰ نفر) را در چند روز پخش می‌کند، هر کاربر یک‌بار، با لاگ کامل
+- 🧾 **صف و لاگ زنده‌ی ارسال** — صفحه‌بندی، زمان **جلالی + تهران**، رفرش خودکار، همیشه تازه؛ **تست SMS**، **شروع فوری**، **توقف و غیرفعال**، پیشرفت زنده
+- 🌙 **ساعت سکوت**، ⏱️ **cooldown** (مشترک با واتساپ)، **بک‌آف 429**، **Idempotency-Key** (بدون ارسال دوباره)
+- 🔒 **فقط اکانت‌های سیستم**: هرگز به اکانت رسلر پیام نمی‌دهد · 🚫 تگ‌های **`#nosms` / `#nopm`** (خودکار روی disable/enable/تمدید)
+- 🧩 **3x-ui v3.4 / v3.4.1**: ساخت اکانت روی پنل‌های node-دار درست شد (پیش‌فرض `security=auto`)؛ تمدید/خواندن/ساب تأیید شد
+- 💰 **صورت‌حساب رسلر** — اکانت‌ها / هزینه / پکیج‌ها، جزئیات هر پکیج، «مبلغ واریزی لازم»
+- 🔐 **پرمیشن‌های رسلر** — کنترل **Free** و **اتوماسیون واتساپ** به‌ازای هر رسلر
+- ⚡ **کارایی** — لود تدریجی سرور‌به‌سرور داشبورد، حذف deepcopy، فشرده‌سازی gzip/br
+- 🛠️ **رفع باگ** — خطای واقعی پنل روی تمدید 400 (مثل Duplicate subId)، «Assigned inbounds» در v3، خطای 500 صفحه admins، ریسپانسیو موبایل/دسکتاپ، هرس بکاپ setup.sh، لیبل‌های چندزبانه
 
 ## [2.3.2] - 2026-06-20
 

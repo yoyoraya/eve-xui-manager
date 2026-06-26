@@ -4,6 +4,47 @@ All notable changes to Eve - Xui Manager are documented in this file.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-06-26
+
+> Big release since **2.3.0** — a whole new **SMS Automation** subsystem, **3x-ui v3.4+** support, reseller **finance statements**, and major dashboard **performance** work.
+
+### 📲 SMS Automation — new subsystem (GMweb / Google Messages gateway)
+- **Automated SMS** on **create**, **renew**, and **near-depletion** (low-volume / near-expiry / expired / volume-ended) — using your own SMS templates, so an automated text reads exactly like a manual one
+- **👑 Royalty SMS**: nudge owner-less *idle* accounts (active but zero traffic in the window). A **cap-fair queue** drains huge lists over several days — each user exactly once, every send & skip logged
+- **🧾 Send queue & live log**: paginated, **Jalali + Asia/Tehran** timestamps, auto-refreshes every 5s, `no-store` (always fresh), and shared across gunicorn workers via Redis
+- **🧪 Send Test SMS** to the superadmin / panel contact number · **Start now** / **Stop & disable** · live scan progress + cancel
+- **🌙 Quiet hours** (Asia/Tehran): hold reminder SMS overnight and flush after the window — create/renew confirmations always go out immediately
+- **⏱️ Fairness & safety**: per-state hourly cooldown shared with WhatsApp (no double-ping, reset on renewal), global send pace + **HTTP 429 backoff**, and an **Idempotency-Key** so retries never double-send
+- **🔒 Owner gating**: only owner-less (system/superadmin) accounts are messaged — reseller-owned accounts are never texted from the system number
+- **🚫 Opt-out tags** `#nosms` / `#nopm` in the client comment suppress messaging; manual **disable** adds them, **enable/renew** strips them
+- Options: skip unlimited accounts, expired max-age cap, volume-ended cutoff
+
+### 🧩 3x-ui v3.4 / v3.4.1 compatibility
+- **Account creation now works on v3.4+ panels** (node-hosted inbounds): client payload defaults `security=auto`. v3.4 made that field required — its absence made the panel silently drop the new client (empty 200)
+- Renew / disable / read / subscription / online detection verified working on v3.4.1
+
+### 💰 Reseller Finance
+- **Reseller statement**: accounts / cost / packages with **per-package drill-down** (gift + GB/days fallback) and a **"should-deposit"** figure
+
+### 🔐 Reseller Permissions
+- **Free creation/renew/reset** gated behind a per-user permission
+- **Per-reseller WhatsApp automation** permission
+
+### ⚡ Performance
+- **Progressive, server-by-server dashboard load** — no more waiting for every panel before anything shows
+- Removed the per-request **deepcopy** on the `/api/refresh` hot path
+- **gzip/br compression** to shrink large `/api/refresh` payloads
+
+### 🛠️ Fixes & polish
+- **Renew** surfaces the **real panel error** on HTTP 400 (e.g. *Duplicate subId*) instead of a generic message
+- **"Assigned inbounds"** now shows reliably for v3 servers in Edit Client
+- Fixed a **500 on /admins** (an escaped apostrophe broke a Jinja string)
+- **Settings** fully responsive on mobile + no horizontal overflow at desktop widths (e.g. 1440px)
+- **setup.sh** prunes old app-dir backups on update so `/opt` stops filling
+- Subscription page loads **all inbounds** for v3 multi-inbound clients
+- **i18n**: reseller permission labels localized by panel language
+- Online update auto-verifies and installs requirements
+
 ## [2.3.2] - 2026-06-20
 
 ### 📱 WhatsApp Automation Scope
