@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.4.2"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -14240,6 +14240,22 @@ def renew_client(server_id, inbound_id, email):
                     verify["ok"] = False
                     verify["error"] = str(exc)
 
+                # Safety net: renew always pushes enable=True, but if the panel
+                # read-back shows the client STILL disabled, re-assert it once so a
+                # renewed account is never left suspended (whatever caused it).
+                try:
+                    if verify.get("observed", {}).get("enable") is False:
+                        target_client["enable"] = True
+                        if _is_v3:
+                            v3_update_client(server, session_obj, email, target_client)
+                        else:
+                            session_obj.post(full_url, json=update_payload, verify=False, timeout=10)
+                        verify["observed"]["enable"] = True
+                        verify["re_enabled"] = True
+                        app.logger.warning(f"Renew re-asserted enable for {email} (panel had it disabled)")
+                except Exception:
+                    pass
+
                 # Build copyable success text (dynamic template)
                 now_utc = datetime.utcnow()
 
@@ -18867,7 +18883,7 @@ def client_subscription(server_id, sub_id):
     # Renewal packages to show on the sub page, based on the account owner.
     sub_packages_payload = _build_sub_page_packages(sub_owner_reseller)
 
-    return render_template(
+    _sub_html = render_template(
         'subscription.html',
         client=client_payload,
         apps=apps_payload,
@@ -18882,6 +18898,13 @@ def client_subscription(server_id, sub_id):
         server_id=server_id,
         sub_id=normalized_sub_id,
     )
+    # The subscription page must be LIVE (status/usage/expiry) — never let a
+    # browser or proxy serve a stale cached copy.
+    _resp = make_response(_sub_html)
+    _resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    _resp.headers['Pragma'] = 'no-cache'
+    _resp.headers['Expires'] = '0'
+    return _resp
 
 @app.route('/sub-manager')
 @user_management_required
