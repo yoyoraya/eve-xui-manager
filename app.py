@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.4.6"
+APP_VERSION = "2.4.7"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -13917,8 +13917,15 @@ def renew_client(server_id, inbound_id, email):
     # right after completion is also blocked) and released immediately on failure.
     _renew_lock_key = f"renew:lock:{server_id}:{(email or '').strip().lower()}"
     if not _acquire_renew_lock(_renew_lock_key, ttl=45):
-        return _finish({"success": False,
-                        "error": "این اکانت همین الان در حال تمدید است — چند لحظه صبر کنید و دوباره نزنید."}, 409)
+        _lang = _get_panel_ui_lang()
+        _msg = ("این اکانت همین الان در حال تمدید است — چند لحظه صبر کنید و سپس Re-check بزنید."
+                if _lang == 'fa' else
+                "This account is already being renewed — please wait a moment, then press Re-check.")
+        # Not an error to throw at the user: the renew IS happening. Signal the UI
+        # to open the result modal in an "in progress" state (with Re-check) rather
+        # than a red error toast, and never double-charge.
+        return _finish({"success": False, "code": "renew_in_progress", "error": _msg,
+                        "server_id": server_id, "inbound_id": inbound_id, "email": email}, 409)
 
     try:
         if not target_client:

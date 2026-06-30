@@ -4399,10 +4399,16 @@
 
     let lastRenewContext = null;
 
-    function renderRenewApiStatus(data) {
+    function renderRenewApiStatus(data, opts) {
         try {
             const box = document.getElementById('renew-api-status');
             if (!box) return;
+
+            if (opts && opts.inProgress) {
+                box.innerHTML = `<span class="status-pill" style="background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.35); color: #fde68a;">⏳ In progress</span>`;
+                box.style.display = 'flex';
+                return;
+            }
 
             const trace = (data && data.trace_id) ? String(data.trace_id) : '';
             const timing = (data && data.timing) ? data.timing : {};
@@ -4434,6 +4440,24 @@
         } catch (e) {
             // ignore
         }
+    }
+
+    // A duplicate/while-running renew: show the result modal in an "in progress"
+    // state (not a red error) with Re-check, so the user can watch it become
+    // Verified once the first request finishes. No double charge happens server-side.
+    function showRenewInProgress(serverId, inboundId, email, note) {
+        try { closeRenewModal(); } catch (e) {}
+        lastRenewContext = {
+            serverId: String(serverId), inboundId: String(inboundId), email: String(email),
+            expectedExpiryTime: null, expectedTotalGB: null,
+        };
+        const prev = document.getElementById('renew-prev-state');
+        if (prev) prev.innerHTML = `<span style="color:#818cf8;font-weight:600;">${escapeHtml(email)}</span>`;
+        const txt = document.getElementById('renew-success-text');
+        if (txt) txt.innerText = note || 'Renewing… press Re-check in a moment.';
+        renderRenewApiStatus({}, { inProgress: true });
+        const modal = document.getElementById('renew-success-modal');
+        if (modal) modal.classList.remove('hidden');
     }
 
     async function recheckRenewal() {
@@ -4686,6 +4710,11 @@
                     updateWalletDisplay(data.remaining_credit);
                 }
                 queueSilentServerRefresh(serverId);
+            } else if (data.code === 'renew_in_progress') {
+                // The renew is already running (slow v3.4 panel + a retry). Don't
+                // throw a red error — open the result modal in an "in progress"
+                // state so the user can Re-check until it shows Verified.
+                showRenewInProgress(serverId, inboundId, email, data.error || '');
             } else {
                 // Business errors are downgraded to HTTP 200 by the server (so the
                 // CDN doesn't swallow the JSON); the real code is in X-Eve-Status.
