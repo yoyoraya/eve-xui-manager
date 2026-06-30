@@ -97,7 +97,7 @@ from jdatetime import datetime as jdatetime_class
 from sqlalchemy import or_, and_, func, text, inspect, case
 from sqlalchemy.orm import joinedload
 
-APP_VERSION = "2.4.4"
+APP_VERSION = "2.4.5"
 GITHUB_REPO = "yoyoraya/eve-xui-manager"
 APP_START_TS = time.time()
 
@@ -5403,6 +5403,23 @@ def _fire_automation_sms(event_name: str, server_id, email: str, template_type: 
                 if not recipient:
                     _log('', 'skipped', 'no_recipient')
                     return
+                # Dedup: v3.4 node panels can take 10-18s to apply a client update,
+                # so a slow/timed-out request gets retried by the operator while the
+                # first renew already succeeded — which used to text the customer
+                # 4-5 times. Skip if the SAME transactional SMS was already sent to
+                # this account in the last few minutes.
+                try:
+                    _dup = SmsSendLog.query.filter(
+                        SmsSendLog.email == email_l,
+                        SmsSendLog.state == event_name,
+                        SmsSendLog.status == 'sent',
+                        SmsSendLog.created_at >= (datetime.utcnow() - timedelta(seconds=300)),
+                    ).first()
+                    if _dup:
+                        _log(recipient, 'skipped', 'duplicate_suppressed')
+                        return
+                except Exception:
+                    pass
                 content = _get_sms_template_content(template_type, default_template)
                 text = _render_text_template(content, tpl_vars)
                 if not (text or '').strip():
@@ -13681,6 +13698,29 @@ def client_last_renewal(email):
     return jsonify({'success': True, 'renewals': renewals, 'last_gift': last_gift, 'gift_count': gift_count})
 
 
+def _acquire_renew_lock(key: str, ttl: int = 45) -> bool:
+    """Best-effort cross-worker lock so a slow v3.4 renew (panel takes 10-18s to
+    push to the node) can't be charged / SMS'd twice when the operator retries.
+    Returns True if acquired (or when Redis is unavailable — don't block renews)."""
+    r = get_redis()
+    if r is None:
+        return True
+    try:
+        return bool(r.set(key, '1', nx=True, ex=ttl))
+    except Exception:
+        return True
+
+
+def _release_renew_lock(key: str) -> None:
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        r.delete(key)
+    except Exception:
+        pass
+
+
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew', methods=['POST'])
 @login_required
 def renew_client(server_id, inbound_id, email):
@@ -13854,7 +13894,16 @@ def renew_client(server_id, inbound_id, email):
     timing["login_ms"] = int((time.perf_counter() - t_login0) * 1000)
     if error:
         return _finish({"success": False, "error": error}, 400)
-    
+
+    # One renew per (server, account) at a time. The v3.4 panel update is slow,
+    # so a timed-out request gets retried while the first is still running — which
+    # would double-charge + double-SMS. Held for the TTL on SUCCESS (so a retry
+    # right after completion is also blocked) and released immediately on failure.
+    _renew_lock_key = f"renew:lock:{server_id}:{(email or '').strip().lower()}"
+    if not _acquire_renew_lock(_renew_lock_key, ttl=45):
+        return _finish({"success": False,
+                        "error": "این اکانت همین الان در حال تمدید است — چند لحظه صبر کنید و دوباره نزنید."}, 409)
+
     try:
         if not target_client:
             # Fallback to fetching from panel if not in cache
@@ -14444,9 +14493,11 @@ def renew_client(server_id, inbound_id, email):
             detail += (' — این اکانت subId تکراری دارد (با یک اکانت دیگر یکسان شده) و پنل اجازه‌ی '
                        'آپدیت نمی‌دهد. در پنل، subId این کلاینت را یکتا کن (یا اکانت را دوباره بساز)، '
                        'سپس تمدید کن.')
+        _release_renew_lock(_renew_lock_key)  # failed → allow an immediate retry
         return _finish({"success": False, "error": detail}, 400)
     except Exception as e:
         app.logger.error(f"Renew error: {str(e)}")
+        _release_renew_lock(_renew_lock_key)  # failed → allow an immediate retry
         return _finish({"success": False, "error": str(e)}, 400)
 
 
