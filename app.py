@@ -13050,13 +13050,40 @@ def edit_client(server_id, inbound_id, email):
         return jsonify({"success": False, "error": error}), 400
         
     try:
-        inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
-        if fetch_err:
-            return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+        # The dashboard cache already carries the panel's raw client object. For
+        # the common v3 field-edit case (no rename), reuse it and avoid a full,
+        # slow inbounds read before the actual update. Renames still fetch the
+        # authoritative server list so duplicate-email validation stays strict.
+        inbounds = None
+        target_client = None
+        fetched_inbound_row_edit = None
+        if (server_is_v3(server) and new_email == email
+                and _v3_sanitize_email(email) == email):
+            try:
+                with GLOBAL_REFRESH_LOCK:
+                    for ib in (GLOBAL_SERVER_DATA.get('inbounds') or []):
+                        if (int(ib.get('server_id', -1)) != int(server_id)
+                                or int(ib.get('id', -1)) != int(inbound_id)):
+                            continue
+                        for cached_client in (ib.get('clients') or []):
+                            if ((cached_client.get('email') or '').strip().lower()
+                                    == (email or '').strip().lower()):
+                                raw = cached_client.get('raw_client')
+                                if isinstance(raw, dict):
+                                    target_client = copy.deepcopy(raw)
+                                    break
+                        if target_client:
+                            break
+            except Exception:
+                target_client = None
 
-        persist_detected_panel_type(server, detected_type)
-            
-        target_client, fetched_inbound_row_edit = find_client(inbounds, inbound_id, email)
+        if not target_client:
+            inbounds, fetch_err, detected_type = fetch_inbounds(session_obj, server.host, server.panel_type)
+            if fetch_err:
+                return jsonify({"success": False, "error": "Failed to fetch inbounds"}), 400
+            persist_detected_panel_type(server, detected_type)
+            target_client, fetched_inbound_row_edit = find_client(inbounds, inbound_id, email)
+
         if not target_client and server_is_v3(server):
             # Spaced-name client: panel stores it space-free → retry sanitized.
             _ce = _v3_sanitize_email(email)
@@ -13077,7 +13104,7 @@ def edit_client(server_id, inbound_id, email):
 
         # Check for duplicate email on the same server (excluding current client)
         if new_email != email:
-            for ib in inbounds:
+            for ib in (inbounds or []):
                 settings = _json_field(ib.get('settings'), {})
                 clients = settings.get('clients', [])
                 for c in clients:
@@ -13737,6 +13764,116 @@ def _release_renew_lock(key: str) -> None:
         pass
 
 
+def _fire_renew_postcheck(server_id: int, inbound_id: int, email: str,
+                          client_snapshot: dict) -> None:
+    """Reconcile a completed renew without holding the browser request open.
+
+    v3 node panels may take several seconds to make an update visible.  The
+    renew call has already received a successful response from the panel at
+    this point, so the read-back and the defensive re-enable are post-commit
+    maintenance rather than part of the operator-facing critical path.
+    """
+    snapshot = copy.deepcopy(client_snapshot or {})
+
+    def _worker():
+        with app.app_context():
+            try:
+                server = db.session.get(Server, server_id)
+                if not server:
+                    return
+                session_obj, error = get_xui_session(server)
+                if error:
+                    return
+                lookup_email = email
+                observed = None
+                expected_expiry = int(snapshot.get('expiryTime') or 0)
+                expected_total = int(snapshot.get('totalGB') or 0)
+                # A successful v3 response can precede read-after-write
+                # visibility on every node. Retry only in this background task;
+                # never put this settling delay back on the browser request.
+                for attempt in range(3):
+                    inbounds, fetch_err, _ = fetch_inbounds(
+                        session_obj, server.host, server.panel_type,
+                    )
+                    if not fetch_err and inbounds:
+                        observed, _ = find_client(inbounds, inbound_id, lookup_email)
+                        if not observed and server_is_v3(server):
+                            clean = _v3_sanitize_email(lookup_email)
+                            if clean and clean != lookup_email:
+                                observed, _ = find_client(inbounds, inbound_id, clean)
+                                if observed:
+                                    lookup_email = clean
+                        if observed:
+                            observed_expiry = int(observed.get('expiryTime') or 0)
+                            observed_total = int(observed.get('totalGB') or 0)
+                            if observed_expiry == expected_expiry and observed_total == expected_total:
+                                break
+                    if attempt < 2:
+                        time.sleep(1)
+                if not observed:
+                    return
+
+                observed_expiry = int(observed.get('expiryTime') or 0)
+                observed_total = int(observed.get('totalGB') or 0)
+                if observed_expiry != expected_expiry or observed_total != expected_total:
+                    app.logger.warning(
+                        f"Renew post-check still stale for {lookup_email}; "
+                        "leaving optimistic cache intact"
+                    )
+                    return
+
+                # The primary update always sends enable=True.  Keep the old
+                # safety net, but run its possible second slow panel update off
+                # the request path.
+                if observed.get('enable') is False:
+                    snapshot['enable'] = True
+                    if server_is_v3(server):
+                        reenabled, _response, reenable_error = v3_update_client(
+                            server, session_obj, lookup_email, snapshot,
+                        )
+                        if reenabled:
+                            observed['enable'] = True
+                            app.logger.warning(
+                                f"Renew post-check re-asserted enable for {lookup_email} "
+                                f"(panel had it disabled)"
+                            )
+                        else:
+                            app.logger.error(
+                                f"Renew post-check could not re-enable {lookup_email}: "
+                                f"{reenable_error}"
+                            )
+
+                patch_cached_client(
+                    server_id, lookup_email,
+                    client_uuid=str(observed.get('id')) if observed.get('id') else None,
+                    total_gb_bytes=observed_total,
+                    expiry_ts=observed_expiry,
+                    enable=bool(observed.get('enable', True)),
+                    comment=observed.get('comment'),
+                )
+            except Exception:
+                app.logger.exception('[renew-postcheck] failed')
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _fire_renew_whatsapp(server_id: int, email: str, text: str,
+                         recipient_comment: str = '') -> None:
+    """Send the transactional renew WhatsApp message off the request path."""
+    def _worker():
+        with app.app_context():
+            try:
+                if _whatsapp_automation_allowed_for_account(server_id, email):
+                    _send_whatsapp_message(
+                        'renew_success', email, text,
+                        recipient_comment=recipient_comment,
+                    )
+            except Exception:
+                app.logger.exception('[renew-whatsapp] send failed')
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 @app.route('/api/client/<int:server_id>/<int:inbound_id>/<email>/renew', methods=['POST'])
 @login_required
 def renew_client(server_id, inbound_id, email):
@@ -14277,10 +14414,22 @@ def renew_client(server_id, inbound_id, email):
                         "totalGB": None,
                     },
                 }
+                # Fast path by default: the panel has already acknowledged the
+                # update. A second full inbounds read is useful for diagnostics,
+                # but it must not add another network round-trip to every renew.
+                # Callers may still explicitly request the legacy inline check.
+                defer_inline_verify = (
+                    server_is_v3(server)
+                    and not bool(data.get('verify_inline', False))
+                )
                 try:
-                    t_v0 = time.perf_counter()
-                    v_inbounds, v_err, _ = fetch_inbounds(session_obj, server.host, server.panel_type)
-                    timing["verify_fetch_ms"] = int((time.perf_counter() - t_v0) * 1000)
+                    if defer_inline_verify:
+                        v_inbounds, v_err = [], 'verification_deferred'
+                        timing["verify_fetch_ms"] = 0
+                    else:
+                        t_v0 = time.perf_counter()
+                        v_inbounds, v_err, _ = fetch_inbounds(session_obj, server.host, server.panel_type)
+                        timing["verify_fetch_ms"] = int((time.perf_counter() - t_v0) * 1000)
                     if v_err or not v_inbounds:
                         verify["ok"] = False
                         verify["error"] = v_err or "verify_fetch_failed"
@@ -14363,6 +14512,28 @@ def renew_client(server_id, inbound_id, email):
                         app.logger.warning(f"Renew re-asserted enable for {email} (panel had it disabled)")
                 except Exception:
                     pass
+
+                if defer_inline_verify:
+                    verify = {
+                        "attempted": False,
+                        "ok": None,
+                        "error": None,
+                        "expected": {
+                            "expiryTime": new_expiry,
+                            "totalGB": new_volume,
+                        },
+                        # These values were accepted by the update endpoint and
+                        # let the UI patch immediately. The background post-check
+                        # later reconciles the shared cache with panel state.
+                        "observed": {
+                            "expiryTime": new_expiry,
+                            "totalGB": new_volume,
+                            "enable": True,
+                        },
+                    }
+                    _fire_renew_postcheck(
+                        server.id, inbound_id, email, target_client,
+                    )
 
                 # Build copyable success text (dynamic template)
                 now_utc = datetime.utcnow()
@@ -14463,10 +14634,18 @@ def renew_client(server_id, inbound_id, email):
                 # Skip the automated send for reseller-owned accounts whose owner
                 # has not enabled WhatsApp automation — don't message their
                 # clients from the system number.
-                if _whatsapp_automation_allowed_for_account(server.id, email):
-                    whatsapp_delivery = _send_whatsapp_message('renew_success', email, _wa_text, recipient_comment=_client_comment)
-                else:
-                    whatsapp_delivery = {'sent': False, 'reason': 'reseller_automation_disabled'}
+                whatsapp_allowed = _whatsapp_automation_allowed_for_account(server.id, email)
+                whatsapp_scheduled = bool(
+                    whatsapp_allowed
+                    and whatsapp_runtime.get('enabled', False)
+                    and whatsapp_runtime.get('deployment_region') != 'iran'
+                    and whatsapp_runtime.get('trigger_renew_success', False)
+                )
+                whatsapp_delivery = {
+                    'sent': False,
+                    'scheduled': whatsapp_scheduled,
+                    'reason': None if whatsapp_allowed else 'reseller_automation_disabled',
+                }
 
                 # SMS automation (GMweb) — non-reseller-owned accounts only; runs
                 # in a background thread so it never delays the renew response.
@@ -14499,6 +14678,8 @@ def renew_client(server_id, inbound_id, email):
                 # Reset send counter + automation cooldown so a renewed account can
                 # be messaged again from scratch (both SMS and WhatsApp).
                 _clear_message_cooldown(email, server_id)
+                if whatsapp_scheduled:
+                    _fire_renew_whatsapp(server.id, email, _wa_text, _client_comment)
 
                 return _finish({"success": True, "copy_text": copy_text, "tpl_vars": _renew_tpl_vars, "verify": verify, "whatsapp": whatsapp_meta, "was_reactivated": _was_disabled})
 

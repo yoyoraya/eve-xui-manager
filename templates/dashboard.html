@@ -1093,7 +1093,7 @@
             
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="closeEditClientModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitEditClient()">Save Changes</button>
+                <button class="btn btn-primary" id="edit-client-save-btn" onclick="submitEditClient()">Save Changes</button>
             </div>
         </div>
     </div>
@@ -4424,6 +4424,8 @@
                 pill = ok
                     ? `<span class="status-pill active" style="background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.3); color: #bbf7d0;">Verified</span>`
                     : `<span class="status-pill inactive" style="background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.28); color: #fecaca;">Not verified</span>`;
+            } else if (data && data.success) {
+                pill = `<span class="status-pill active" style="background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.3); color: #bbf7d0;">Applied</span>`;
             } else {
                 pill = `<span class="status-pill inactive">Unknown</span>`;
             }
@@ -8289,6 +8291,15 @@
             return;
         }
 
+        const saveBtn = document.getElementById('edit-client-save-btn');
+        if (saveBtn && saveBtn.disabled) return;
+        const originalSaveText = saveBtn ? saveBtn.innerText : 'Save Changes';
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerText = 'Saving...';
+        }
+
+        try {
         // ── v3: apply inbound re-assignment FIRST, while every copy still shares
         // the old email (so the membership scan is consistent). If the original
         // inbound gets removed, retarget the field-edit below to a remaining one.
@@ -8420,6 +8431,12 @@
             }
         } catch (error) {
             showToast('Error updating client', 'error');
+        }
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerText = originalSaveText;
+            }
         }
     }
 
